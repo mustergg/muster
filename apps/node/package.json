@@ -1,0 +1,24 @@
+{
+  "name": "@muster/node",
+  "version": "0.1.0",
+  "description": "Muster main node — dedicated P2P community host",
+  "type": "module",
+  "private": true,
+  "bin": {
+    "muster-node": "./dist/cli/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev":   "node --watch dist/index.js",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@muster/core":     "workspace:*",
+    "@muster/crypto":   "workspace:*",
+    "@muster/protocol": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "typescript":  "^5.4.5"
+  }
+}

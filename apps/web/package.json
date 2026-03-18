@@ -1,0 +1,31 @@
+{
+  "name": "@muster/web",
+  "version": "0.1.0",
+  "description": "Muster web client — React browser application",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev":     "vite",
+    "build":   "tsc && vite build",
+    "preview": "vite preview",
+    "lint":    "eslint src --ext .ts,.tsx"
+  },
+  "dependencies": {
+    "@muster/core":     "workspace:*",
+    "@muster/crypto":   "workspace:*",
+    "@muster/i18n":     "workspace:*",
+    "@muster/protocol": "workspace:*",
+    "i18next":          "^23.11.5",
+    "react":            "^18.3.1",
+    "react-dom":        "^18.3.1",
+    "react-i18next":    "^14.1.2",
+    "zustand":          "^4.5.2"
+  },
+  "devDependencies": {
+    "@types/react":        "^18.3.3",
+    "@types/react-dom":    "^18.3.0",
+    "@vitejs/plugin-react":"^4.3.0",
+    "typescript":          "^5.4.5",
+    "vite":                "^5.2.12"
+  }
+}

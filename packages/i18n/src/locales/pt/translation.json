@@ -1,0 +1,165 @@
+{
+  "app": {
+    "name": "Muster",
+    "tagline": "A tua comunidade, as tuas regras."
+  },
+
+  "auth": {
+    "login": "Entrar",
+    "logout": "Sair",
+    "signup": "Criar conta",
+    "username": "Nome de utilizador",
+    "password": "Palavra-passe",
+    "confirmPassword": "Confirmar palavra-passe",
+    "usernamePlaceholder": "Escolhe um nome de utilizador",
+    "passwordPlaceholder": "Escolhe uma palavra-passe forte",
+    "confirmPasswordPlaceholder": "Repete a palavra-passe",
+    "loggingIn": "A entrar…",
+    "creatingAccount": "A criar conta…",
+    "errors": {
+      "usernameTaken": "Esse nome de utilizador já está em uso.",
+      "usernameInvalid": "O nome de utilizador só pode conter letras, números, underscores e hífens.",
+      "usernameTooShort": "O nome de utilizador deve ter pelo menos 3 caracteres.",
+      "usernameTooLong": "O nome de utilizador não pode ter mais de 32 caracteres.",
+      "passwordTooShort": "A palavra-passe deve ter pelo menos 8 caracteres.",
+      "passwordMismatch": "As palavras-passe não coincidem.",
+      "wrongPassword": "Palavra-passe incorreta. Verifica e tenta novamente.",
+      "accountNotFound": "Nenhuma conta encontrada com esse nome neste dispositivo.",
+      "keystoreCorrupted": "O ficheiro de keystore parece corrompido. Por favor restaura a partir da cópia de segurança.",
+      "networkError": "Não foi possível aceder à rede. Verifica a tua ligação."
+    },
+    "exportKeystore": "Exportar cópia de segurança",
+    "importKeystore": "Importar cópia de segurança",
+    "keystoreWarning": "A tua cópia de segurança contém a tua identidade encriptada. Guarda-a em local seguro — sem ela não consegues recuperar a conta se perderes acesso a este dispositivo."
+  },
+
+  "nav": {
+    "communities": "Comunidades",
+    "directMessages": "Mensagens diretas",
+    "squadChats": "Squad chats",
+    "settings": "Definições",
+    "addCommunity": "Adicionar comunidade",
+    "exploreCommunities": "Explorar comunidades"
+  },
+
+  "community": {
+    "channels": "Canais",
+    "members": "Membros",
+    "noChannels": "Ainda não há canais.",
+    "createChannel": "Criar canal",
+    "createCategory": "Criar categoria",
+    "inviteMembers": "Convidar membros",
+    "communitySettings": "Definições da comunidade",
+    "leaveConfirm": "Tens a certeza que queres sair de {{name}}?",
+    "deleteConfirm": "Eliminar permanentemente {{name}}? Esta ação não pode ser revertida.",
+    "roles": {
+      "owner": "Dono",
+      "admin": "Administrador",
+      "moderator": "Moderador",
+      "member": "Membro"
+    }
+  },
+
+  "channel": {
+    "textPlaceholder": "Mensagem em #{{name}}",
+    "emptyHistory": "Este é o início de #{{name}}.",
+    "loadingHistory": "A carregar histórico de mensagens…",
+    "failedHistory": "Não foi possível carregar o histórico.",
+    "edited": "(editado)",
+    "deleted": "Esta mensagem foi eliminada.",
+    "reply": "Responder",
+    "edit": "Editar",
+    "delete": "Eliminar",
+    "copyText": "Copiar texto",
+    "pinMessage": "Fixar mensagem",
+    "confirmDelete": "Eliminar esta mensagem?",
+    "voice": {
+      "join": "Entrar em voz",
+      "leave": "Sair do canal de voz",
+      "mute": "Silenciar",
+      "unmute": "Ativar microfone",
+      "deafen": "Desativar áudio",
+      "undeafen": "Ativar áudio",
+      "shareScreen": "Partilhar ecrã",
+      "stopSharing": "Parar partilha",
+      "connecting": "A ligar…",
+      "connected": "Ligado",
+      "disconnected": "Desligado",
+      "speakingIndicator": "{{name}} está a falar"
+    },
+    "temp": {
+      "label": "Canal temporário",
+      "closingIn": "Fecha quando ficar vazio",
+      "saveChat": "Guardar chat antes de fechar",
+      "chatWillBeDeleted": "O histórico deste canal será eliminado permanentemente quando fechar."
+    }
+  },
+
+  "messages": {
+    "today": "Hoje",
+    "yesterday": "Ontem",
+    "justNow": "Agora mesmo",
+    "minutesAgo": "Há {{count}} minuto",
+    "minutesAgo_plural": "Há {{count}} minutos"
+  },
+
+  "status": {
+    "online": "Online",
+    "idle": "Ausente",
+    "doNotDisturb": "Não incomodar",
+    "offline": "Offline"
+  },
+
+  "network": {
+    "connected": "Ligado",
+    "connecting": "A ligar à rede…",
+    "disconnected": "Desligado",
+    "peers": "{{count}} peer",
+    "peers_plural": "{{count}} peers",
+    "nodeType": {
+      "temporary": "Nó temporário",
+      "relay":     "Nó de relay",
+      "bootstrap": "Nó bootstrap"
+    },
+    "latency": "Latência: {{ms}}ms",
+    "reconnecting": "A reconectar…"
+  },
+
+  "settings": {
+    "title": "Definições",
+    "account": "Conta",
+    "appearance": "Aparência",
+    "notifications": "Notificações",
+    "privacy": "Privacidade e Segurança",
+    "network": "Rede",
+    "language": "Idioma",
+    "voiceVideo": "Voz e Vídeo",
+    "keybinds": "Atalhos de teclado",
+    "about": "Sobre o Muster"
+  },
+
+  "errors": {
+    "generic": "Algo correu mal. Tenta novamente.",
+    "offline": "Estás offline.",
+    "notFound": "Não encontrado.",
+    "forbidden": "Não tens permissão para fazer isso."
+  },
+
+  "common": {
+    "save": "Guardar",
+    "cancel": "Cancelar",
+    "confirm": "Confirmar",
+    "delete": "Eliminar",
+    "edit": "Editar",
+    "close": "Fechar",
+    "back": "Voltar",
+    "next": "Seguinte",
+    "loading": "A carregar…",
+    "search": "Pesquisar",
+    "copy": "Copiar",
+    "copied": "Copiado!",
+    "optional": "Opcional",
+    "or": "ou",
+    "and": "e"
+  }
+}
