@@ -79,8 +79,10 @@ export default function AuthPage(): React.JSX.Element {
           <label style={styles.label}>
             {t('auth.username')}
             <input
-              type="text"
-              value={username}
+				id="username"
+				name="username"
+				type="text"
+				value={username}
               onChange={(e) => setUsername(e.target.value)}
               placeholder={t('auth.usernamePlaceholder')}
               autoComplete="username"
@@ -92,11 +94,13 @@ export default function AuthPage(): React.JSX.Element {
           <label style={styles.label}>
             {t('auth.password')}
             <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder={t('auth.passwordPlaceholder')}
-              autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
+				id="password"
+				name="password"
+				type="password"
+				value={password}
+				onChange={(e) => setPassword(e.target.value)}
+				placeholder={t('auth.passwordPlaceholder')}
+				autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
               required
               disabled={loading}
             />
@@ -106,8 +110,10 @@ export default function AuthPage(): React.JSX.Element {
             <label style={styles.label}>
               {t('auth.confirmPassword')}
               <input
-                type="password"
-                value={confirm}
+				id="confirm-password"
+				name="confirm-password"
+				type="password"
+				value={confirm}
                 onChange={(e) => setConfirm(e.target.value)}
                 placeholder={t('auth.confirmPasswordPlaceholder')}
                 autoComplete="new-password"

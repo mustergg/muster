@@ -16,18 +16,17 @@
     "dev":   "tsc --watch"
   },
   "dependencies": {
-    "@muster/crypto":   "workspace:*",
-    "@muster/protocol": "workspace:*",
-    "@libp2p/websockets":          "^8.0.1",
-    "@libp2p/webrtc":              "^4.0.0",
-    "@libp2p/bootstrap":           "^10.0.0",
-    "@libp2p/kad-dht":             "^12.0.0",
-    "@chainsafe/libp2p-gossipsub": "^13.0.0",
-    "@libp2p/identify":            "^2.0.0",
-    "@libp2p/noise":               "^15.0.0",
-    "@libp2p/yamux":               "^6.0.0",
-    "@libp2p/peer-id":             "^4.0.0",
-    "libp2p":                      "^1.4.3"
+    "@muster/crypto":              "workspace:*",
+    "@muster/protocol":            "workspace:*",
+    "@libp2p/websockets":          "*",
+    "@libp2p/bootstrap":           "*",
+    "@libp2p/kad-dht":             "*",
+    "@libp2p/identify":            "*",
+    "@libp2p/noise":               "*",
+    "@libp2p/peer-id":             "*",
+    "@chainsafe/libp2p-gossipsub": "*",
+    "@chainsafe/libp2p-yamux":     "*",
+    "libp2p":                      "*"
   },
   "devDependencies": {
     "@types/node": "^20.14.0",
