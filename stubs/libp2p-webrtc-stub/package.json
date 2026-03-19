@@ -1,0 +1,6 @@
+{
+  "name": "@muster/libp2p-webrtc-stub",
+  "version": "1.0.0",
+  "type": "module",
+  "exports": { ".": "./dist/src/index.js" }
+}

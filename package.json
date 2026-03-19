@@ -2,21 +2,26 @@
   "name": "muster",
   "version": "0.1.0",
   "private": true,
+  "description": "Muster — Decentralized P2P community communication platform",
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=8.0.0"
+  },
   "scripts": {
     "dev:web":  "pnpm --filter @muster/web dev",
     "dev:node": "pnpm --filter @muster/node dev",
     "build":    "pnpm --filter './packages/**' build && pnpm --filter './apps/**' build",
     "test":     "pnpm --filter './packages/**' test",
-    "lint":     "pnpm --filter './packages/**' lint && pnpm --filter './apps/**' lint",
     "clean":    "find . -name 'dist' -not -path '*/node_modules/*' | xargs rm -rf"
   },
   "devDependencies": {
     "typescript": "^5.4.5"
   },
-"pnpm": {
-  "overrides": {
-    "@ipshipyard/node-datachannel": "npm:empty-module@*",
-    "node-datachannel": "npm:empty-module@*"
+  "pnpm": {
+    "overrides": {
+      "@libp2p/webrtc": "workspace:@muster/libp2p-webrtc-stub@*",
+      "@ipshipyard/node-datachannel": "npm:empty-module@*",
+      "node-datachannel": "npm:empty-module@*"
+    }
   }
-}
 }
