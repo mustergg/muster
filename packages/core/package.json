@@ -8,28 +8,29 @@
   "exports": {
     ".": {
       "import": "./dist/index.js",
-      "types":  "./dist/index.d.ts"
+      "types": "./dist/index.d.ts"
     }
   },
   "scripts": {
-    "build": "tsc",
-    "dev":   "tsc --watch"
+    "build": "npx tsc --project tsconfig.json",
+    "dev": "npx tsc --watch --project tsconfig.json"
   },
   "dependencies": {
-    "@muster/crypto":              "workspace:*",
-    "@muster/protocol":            "workspace:*",
-    "@libp2p/websockets":          "*",
-    "@libp2p/bootstrap":           "*",
-    "@libp2p/kad-dht":             "*",
-    "@libp2p/identify":            "*",
-    "@libp2p/noise":               "*",
-    "@libp2p/peer-id":             "*",
+    "@muster/crypto": "workspace:*",
+    "@muster/protocol": "workspace:*",
+    "@libp2p/websockets": "*",
+    "@libp2p/bootstrap": "*",
+    "@libp2p/kad-dht": "*",
+    "@libp2p/identify": "*",
+    "@libp2p/noise": "*",
+    "@libp2p/ping": "*",
+    "@libp2p/peer-id": "*",
     "@chainsafe/libp2p-gossipsub": "*",
-    "@chainsafe/libp2p-yamux":     "*",
-    "libp2p":                      "*"
+    "@chainsafe/libp2p-yamux": "*",
+    "libp2p": "*"
   },
   "devDependencies": {
     "@types/node": "^20.14.0",
-    "typescript":  "^5.4.5"
+    "typescript": "^5.4.5"
   }
 }

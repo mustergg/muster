@@ -29,6 +29,9 @@ importers:
       '@libp2p/peer-id':
         specifier: ^5.0.7
         version: 5.1.9
+      '@libp2p/ping':
+        specifier: ^3.0.13
+        version: 3.0.13
       '@libp2p/websockets':
         specifier: ^10.1.3
         version: 10.1.6
@@ -140,6 +143,9 @@ importers:
       '@libp2p/peer-id':
         specifier: '*'
         version: 5.1.9
+      '@libp2p/ping':
+        specifier: '*'
+        version: 3.0.13
       '@libp2p/websockets':
         specifier: '*'
         version: 10.1.6
