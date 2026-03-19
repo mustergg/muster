@@ -8,18 +8,18 @@
     "pnpm": ">=8.0.0"
   },
   "scripts": {
-    "dev:web":  "pnpm --filter @muster/web dev",
-    "dev:node": "pnpm --filter @muster/node dev",
-    "build":    "pnpm --filter './packages/**' build && pnpm --filter './apps/**' build",
-    "test":     "pnpm --filter './packages/**' test",
-    "clean":    "find . -name 'dist' -not -path '*/node_modules/*' | xargs rm -rf"
+    "dev:web":    "pnpm --filter @muster/web dev",
+    "dev:node":   "pnpm --filter @muster/node dev",
+    "build":      "pnpm --filter './packages/**' build && pnpm --filter './apps/**' build",
+    "test":       "pnpm --filter './packages/**' test",
+    "clean":      "find . -name 'dist' -not -path '*/node_modules/*' | xargs rm -rf",
+    "postinstall": "node scripts/fix-webrtc-stub.js"
   },
   "devDependencies": {
     "typescript": "^5.4.5"
   },
   "pnpm": {
     "overrides": {
-      "@libp2p/webrtc": "workspace:@muster/libp2p-webrtc-stub@*",
       "@ipshipyard/node-datachannel": "npm:empty-module@*",
       "node-datachannel": "npm:empty-module@*"
     }
