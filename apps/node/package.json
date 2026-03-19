@@ -4,17 +4,16 @@
   "description": "Muster main node — dedicated P2P community host",
   "type": "module",
   "private": true,
-  "bin": {
-    "muster-node": "./dist/cli/index.js"
-  },
+  "bin": { "muster-node": "./dist/cli/index.js" },
   "scripts": {
-    "build": "tsc",
+    "build": "npx tsc --project tsconfig.json",
     "dev":   "node --watch dist/index.js",
     "start": "node dist/index.js"
   },
   "dependencies": {
     "@muster/core":     "workspace:*",
     "@muster/crypto":   "workspace:*",
+    "@muster/db":       "workspace:*",
     "@muster/protocol": "workspace:*"
   },
   "devDependencies": {

@@ -1,23 +1,21 @@
 /**
- * Network store — manages the libp2p node lifecycle and connection state.
+ * Network store — manages the libp2p node lifecycle.
+ * Now also triggers DB initialisation after connecting.
  */
 
 import { create } from 'zustand';
 import { createMusterNode, type MusterNode } from '@muster/core';
+import { useDBStore } from './dbStore.js';
 
 export type NetworkStatus = 'disconnected' | 'connecting' | 'connected';
 
 interface NetworkState {
-  status: NetworkStatus;
-  node: MusterNode | null;
+  status:    NetworkStatus;
+  node:      MusterNode | null;
   peerCount: number;
-  peerId: string | null;
-  latencyMs: number | null;
+  peerId:    string | null;
 
-  /** Start the libp2p node and connect to the network */
-  connect: () => Promise<void>;
-
-  /** Stop the libp2p node cleanly */
+  connect:    () => Promise<void>;
   disconnect: () => Promise<void>;
 }
 
@@ -26,30 +24,22 @@ export const useNetworkStore = create<NetworkState>()((set, get) => ({
   node:      null,
   peerCount: 0,
   peerId:    null,
-  latencyMs: null,
 
   connect: async () => {
     if (get().status !== 'disconnected') return;
     set({ status: 'connecting' });
 
     try {
-      const node = await createMusterNode({
-        gossipD: 6,
-      });
+      const node = await createMusterNode({ gossipD: 6 });
 
-      // Track peer count
-      node.addEventListener('peer:connect', () => {
-        set({ peerCount: node.getPeers().length });
-      });
-      node.addEventListener('peer:disconnect', () => {
-        set({ peerCount: node.getPeers().length });
-      });
+      node.addEventListener('peer:connect',    () => set({ peerCount: node.getPeers().length }));
+      node.addEventListener('peer:disconnect', () => set({ peerCount: node.getPeers().length }));
 
-      set({
-        status:    'connected',
-        node,
-        peerId:    node.peerId.toString(),
-        peerCount: node.getPeers().length,
+      set({ status: 'connected', node, peerId: node.peerId.toString(), peerCount: node.getPeers().length });
+
+      // Initialise OrbitDB after P2P node is ready
+      useDBStore.getState().initDB().catch((err) => {
+        console.warn('[Network] DB init failed (non-fatal):', err);
       });
     } catch (err) {
       console.error('[Network] Failed to start node:', err);
@@ -59,10 +49,9 @@ export const useNetworkStore = create<NetworkState>()((set, get) => ({
   },
 
   disconnect: async () => {
+    await useDBStore.getState().closeDB();
     const { node } = get();
-    if (node) {
-      await node.stop();
-    }
+    if (node) await node.stop();
     set({ status: 'disconnected', node: null, peerCount: 0, peerId: null });
   },
 }));

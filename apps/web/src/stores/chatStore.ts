@@ -1,84 +1,78 @@
 /**
- * Chat store — holds message history per channel and dispatches
- * incoming/outgoing messages through the P2P network.
+ * Chat store — integrates GossipSub (real-time) with OrbitDB (persistence).
+ *
+ * Flow:
+ *   Send:    sign → publish via GossipSub → persist to OrbitDB
+ *   Receive: verify → display → persist to OrbitDB
+ *   Open:    load history from OrbitDB → subscribe to GossipSub
  */
 
 import { create } from 'zustand';
 import {
-  subscribe,
-  publish,
-  communityChannelTopic,
-  communityPresenceTopic,
+  subscribe, publish, communityChannelTopic,
 } from '@muster/core';
 import { generateId, now, type TextMessage, type MusterMessage } from '@muster/protocol';
+import type { StoredChatMessage } from '@muster/db';
 import { useNetworkStore } from './networkStore.js';
 import { useAuthStore } from './authStore.js';
+import { useDBStore } from './dbStore.js';
 
-export interface StoredMessage {
-  id: string;
-  channelId: string;
-  communityId: string;
-  senderPublicKeyHex: string;
-  senderUsername: string;
-  content: string;
-  ts: number;
-  edited?: boolean;
-  deleted?: boolean;
-}
+export type { StoredChatMessage };
 
-/** channelId → messages (newest last) */
-type ChannelMessages = Record<string, StoredMessage[]>;
-
-/** communityId:channelId → unsubscribe fn */
-type Unsubscribers = Record<string, () => void>;
+type ChannelMessages = Record<string, StoredChatMessage[]>;
+type Unsubscribers   = Record<string, () => void>;
 
 interface ChatState {
-  messages: ChannelMessages;
-  /** Map of publicKeyHex → username for peers we know about */
-  knownPeers: Record<string, string>;
+  messages:       ChannelMessages;
+  knownPeers:     Record<string, string>;
   _unsubscribers: Unsubscribers;
 
-  /**
-   * Subscribe to a channel's GossipSub topic.
-   * Incoming messages are appended to messages[channelId].
-   */
-  joinChannel: (communityId: string, channelId: string) => void;
-
-  /** Unsubscribe from a channel topic */
+  joinChannel:  (communityId: string, channelId: string) => Promise<void>;
   leaveChannel: (communityId: string, channelId: string) => void;
-
-  /**
-   * Publish a text message to a channel.
-   */
-  sendMessage: (
-    communityId: string,
-    channelId: string,
-    content: string,
-  ) => Promise<void>;
+  sendMessage:  (communityId: string, channelId: string, content: string) => Promise<void>;
 }
 
 export const useChatStore = create<ChatState>()((set, get) => ({
-  messages:     {},
-  knownPeers:   {},
+  messages:       {},
+  knownPeers:     {},
   _unsubscribers: {},
 
-  joinChannel: (communityId, channelId) => {
+  joinChannel: async (communityId, channelId) => {
     const key = `${communityId}:${channelId}`;
-    if (get()._unsubscribers[key]) return; // Already subscribed
+    if (get()._unsubscribers[key]) return;
 
-    const { node } = useNetworkStore.getState();
+    const { node }  = useNetworkStore.getState();
+    const { db }    = useDBStore.getState();
+
+    // Load history from OrbitDB if available
+    if (db) {
+      try {
+        const log      = await db.openMessageLog(communityId, channelId);
+        const history  = log.all();
+        if (history.length > 0) {
+          set((state) => ({
+            messages: { ...state.messages, [channelId]: history },
+          }));
+        }
+      } catch (err) {
+        console.warn('[Chat] Could not load history from OrbitDB:', err);
+      }
+    }
+
     if (!node) {
-      console.warn('[Chat] Cannot join channel — node not connected');
+      set((state) => ({
+        messages: { ...state.messages, [channelId]: state.messages[channelId] ?? [] },
+      }));
       return;
     }
 
     const topic = communityChannelTopic(communityId, channelId);
 
-    const unsub = subscribe(node, topic, (message: MusterMessage, senderPublicKeyHex: string) => {
+    const unsub = subscribe(node, topic, async (message: MusterMessage, senderPublicKeyHex: string) => {
       if (message.type !== 'chat.text') return;
       const textMsg = message as TextMessage;
 
-      const stored: StoredMessage = {
+      const stored: StoredChatMessage = {
         id:                 textMsg.id,
         channelId:          textMsg.channelId,
         communityId:        textMsg.communityId,
@@ -86,7 +80,12 @@ export const useChatStore = create<ChatState>()((set, get) => ({
         senderUsername:     get().knownPeers[senderPublicKeyHex] ?? senderPublicKeyHex.slice(0, 10),
         content:            textMsg.content,
         ts:                 textMsg.ts,
+        signature:          '',
       };
+
+      // Avoid duplicate messages
+      const existing = get().messages[channelId] ?? [];
+      if (existing.some((m) => m.id === stored.id)) return;
 
       set((state) => ({
         messages: {
@@ -94,6 +93,15 @@ export const useChatStore = create<ChatState>()((set, get) => ({
           [channelId]: [...(state.messages[channelId] ?? []), stored],
         },
       }));
+
+      // Persist to OrbitDB
+      if (db) {
+        try {
+          await db.persistMessage(stored);
+        } catch (err) {
+          console.warn('[Chat] Failed to persist received message:', err);
+        }
+      }
     });
 
     set((state) => ({
@@ -103,7 +111,7 @@ export const useChatStore = create<ChatState>()((set, get) => ({
   },
 
   leaveChannel: (communityId, channelId) => {
-    const key = `${communityId}:${channelId}`;
+    const key   = `${communityId}:${channelId}`;
     const unsub = get()._unsubscribers[key];
     if (unsub) {
       unsub();
@@ -116,12 +124,11 @@ export const useChatStore = create<ChatState>()((set, get) => ({
   },
 
   sendMessage: async (communityId, channelId, content) => {
-    const { node } = useNetworkStore.getState();
+    const { node }                           = useNetworkStore.getState();
     const { _keypair, publicKeyHex, username } = useAuthStore.getState();
+    const { db }                             = useDBStore.getState();
 
-    if (!node)        throw new Error('Not connected to network');
-    if (!_keypair)    throw new Error('Not authenticated');
-    if (!publicKeyHex || !username) throw new Error('Missing user info');
+    if (!_keypair || !publicKeyHex || !username) throw new Error('Not authenticated');
 
     const message: TextMessage = {
       v:                  1,
@@ -134,8 +141,7 @@ export const useChatStore = create<ChatState>()((set, get) => ({
       content,
     };
 
-    // Optimistic: add own message to local state immediately
-    const stored: StoredMessage = {
+    const stored: StoredChatMessage = {
       id:                 message.id,
       channelId,
       communityId,
@@ -143,8 +149,10 @@ export const useChatStore = create<ChatState>()((set, get) => ({
       senderUsername:     username,
       content,
       ts:                 message.ts,
+      signature:          '',
     };
 
+    // Optimistic update
     set((state) => ({
       messages: {
         ...state.messages,
@@ -152,7 +160,19 @@ export const useChatStore = create<ChatState>()((set, get) => ({
       },
     }));
 
-    const topic = communityChannelTopic(communityId, channelId);
-    await publish(node, topic, message, _keypair);
+    // Persist to OrbitDB
+    if (db) {
+      try {
+        await db.persistMessage(stored);
+      } catch (err) {
+        console.warn('[Chat] Failed to persist sent message:', err);
+      }
+    }
+
+    // Publish via GossipSub
+    if (node && _keypair) {
+      const topic = communityChannelTopic(communityId, channelId);
+      await publish(node, topic, message, _keypair);
+    }
   },
 }));

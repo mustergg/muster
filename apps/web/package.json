@@ -13,6 +13,7 @@
   "dependencies": {
     "@muster/core": "workspace:*",
     "@muster/crypto": "workspace:*",
+	"@muster/db":       "workspace:*",
     "@muster/i18n": "workspace:*",
     "@muster/protocol": "workspace:*",
     "i18next": "^23.11.5",
