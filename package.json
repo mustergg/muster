@@ -14,10 +14,6 @@
     "typescript": "^5.4.5"
   },
 "pnpm": {
-  "neverBuiltDependencies": [
-    "@ipshipyard/node-datachannel",
-    "node-datachannel"
-  ],
   "overrides": {
     "@ipshipyard/node-datachannel": "npm:empty-module@*",
     "node-datachannel": "npm:empty-module@*"
