@@ -1,25 +1,51 @@
 /**
- * Chat store — integrates GossipSub (real-time) with OrbitDB (persistence).
- *
- * Flow:
- *   Send:    sign → publish via GossipSub → persist to OrbitDB
- *   Receive: verify → display → persist to OrbitDB
- *   Open:    load history from OrbitDB → subscribe to GossipSub
+ * Chat store — messages with localStorage persistence.
+ * OrbitDB sync is best-effort and non-blocking.
  */
 
 import { create } from 'zustand';
-import {
-  subscribe, publish, communityChannelTopic,
-} from '@muster/core';
+import { subscribe, publish, communityChannelTopic } from '@muster/core';
 import { generateId, now, type TextMessage, type MusterMessage } from '@muster/protocol';
-import type { StoredChatMessage } from '@muster/db';
 import { useNetworkStore } from './networkStore.js';
 import { useAuthStore } from './authStore.js';
 import { useDBStore } from './dbStore.js';
 
-export type { StoredChatMessage };
+export interface StoredMessage {
+  id: string;
+  channelId: string;
+  communityId: string;
+  senderPublicKeyHex: string;
+  senderUsername: string;
+  content: string;
+  ts: number;
+  deleted?: boolean;
+}
 
-type ChannelMessages = Record<string, StoredChatMessage[]>;
+// ─── localStorage helpers ─────────────────────────────────────────────────────
+
+const LS_KEY = (communityId: string, channelId: string) =>
+  `muster:messages:${communityId}:${channelId}`;
+
+const MAX_STORED = 200; // max messages kept per channel in localStorage
+
+function lsLoadMessages(communityId: string, channelId: string): StoredMessage[] {
+  try {
+    const raw = localStorage.getItem(LS_KEY(communityId, channelId));
+    return raw ? (JSON.parse(raw) as StoredMessage[]) : [];
+  } catch { return []; }
+}
+
+function lsSaveMessages(communityId: string, channelId: string, messages: StoredMessage[]): void {
+  try {
+    // Keep only the latest MAX_STORED messages
+    const trimmed = messages.slice(-MAX_STORED);
+    localStorage.setItem(LS_KEY(communityId, channelId), JSON.stringify(trimmed));
+  } catch {}
+}
+
+// ─── Store ────────────────────────────────────────────────────────────────────
+
+type ChannelMessages = Record<string, StoredMessage[]>;
 type Unsubscribers   = Record<string, () => void>;
 
 interface ChatState {
@@ -27,7 +53,7 @@ interface ChatState {
   knownPeers:     Record<string, string>;
   _unsubscribers: Unsubscribers;
 
-  joinChannel:  (communityId: string, channelId: string) => Promise<void>;
+  joinChannel:  (communityId: string, channelId: string) => void;
   leaveChannel: (communityId: string, channelId: string) => void;
   sendMessage:  (communityId: string, channelId: string, content: string) => Promise<void>;
 }
@@ -37,42 +63,36 @@ export const useChatStore = create<ChatState>()((set, get) => ({
   knownPeers:     {},
   _unsubscribers: {},
 
-  joinChannel: async (communityId, channelId) => {
+  joinChannel: (communityId, channelId) => {
     const key = `${communityId}:${channelId}`;
     if (get()._unsubscribers[key]) return;
 
-    const { node }  = useNetworkStore.getState();
-    const { db }    = useDBStore.getState();
+    // Load from localStorage immediately — no async, always works
+    const history = lsLoadMessages(communityId, channelId);
+    set((state) => ({
+      messages: { ...state.messages, [channelId]: history },
+    }));
 
-    // Load history from OrbitDB if available
-    if (db) {
-      try {
-        const log      = await db.openMessageLog(communityId, channelId);
-        const history  = log.all();
-        if (history.length > 0) {
-          set((state) => ({
-            messages: { ...state.messages, [channelId]: history },
-          }));
-        }
-      } catch (err) {
-        console.warn('[Chat] Could not load history from OrbitDB:', err);
-      }
-    }
-
+    // Subscribe to GossipSub for real-time messages
+    const { node } = useNetworkStore.getState();
     if (!node) {
       set((state) => ({
-        messages: { ...state.messages, [channelId]: state.messages[channelId] ?? [] },
+        _unsubscribers: { ...state._unsubscribers, [key]: () => {} },
       }));
       return;
     }
 
     const topic = communityChannelTopic(communityId, channelId);
 
-    const unsub = subscribe(node, topic, async (message: MusterMessage, senderPublicKeyHex: string) => {
+    const unsub = subscribe(node, topic, (message: MusterMessage, senderPublicKeyHex: string) => {
       if (message.type !== 'chat.text') return;
       const textMsg = message as TextMessage;
 
-      const stored: StoredChatMessage = {
+      // Avoid duplicates
+      const existing = get().messages[channelId] ?? [];
+      if (existing.some((m) => m.id === textMsg.id)) return;
+
+      const stored: StoredMessage = {
         id:                 textMsg.id,
         channelId:          textMsg.channelId,
         communityId:        textMsg.communityId,
@@ -80,33 +100,25 @@ export const useChatStore = create<ChatState>()((set, get) => ({
         senderUsername:     get().knownPeers[senderPublicKeyHex] ?? senderPublicKeyHex.slice(0, 10),
         content:            textMsg.content,
         ts:                 textMsg.ts,
-        signature:          '',
       };
 
-      // Avoid duplicate messages
-      const existing = get().messages[channelId] ?? [];
-      if (existing.some((m) => m.id === stored.id)) return;
+      set((state) => {
+        const updated = [...(state.messages[channelId] ?? []), stored];
+        lsSaveMessages(communityId, channelId, updated);
+        return { messages: { ...state.messages, [channelId]: updated } };
+      });
 
-      set((state) => ({
-        messages: {
-          ...state.messages,
-          [channelId]: [...(state.messages[channelId] ?? []), stored],
-        },
-      }));
-
-      // Persist to OrbitDB
+      // Also try OrbitDB in background
+      const { db } = useDBStore.getState();
       if (db) {
-        try {
-          await db.persistMessage(stored);
-        } catch (err) {
-          console.warn('[Chat] Failed to persist received message:', err);
-        }
+        db.openMessageLog(communityId, channelId)
+          .then((log) => log.add({ ...stored, signature: '' }))
+          .catch(() => {});
       }
     });
 
     set((state) => ({
       _unsubscribers: { ...state._unsubscribers, [key]: unsub },
-      messages: { ...state.messages, [channelId]: state.messages[channelId] ?? [] },
     }));
   },
 
@@ -124,55 +136,48 @@ export const useChatStore = create<ChatState>()((set, get) => ({
   },
 
   sendMessage: async (communityId, channelId, content) => {
-    const { node }                           = useNetworkStore.getState();
     const { _keypair, publicKeyHex, username } = useAuthStore.getState();
-    const { db }                             = useDBStore.getState();
-
     if (!_keypair || !publicKeyHex || !username) throw new Error('Not authenticated');
 
-    const message: TextMessage = {
-      v:                  1,
+    const stored: StoredMessage = {
       id:                 generateId(),
-      ts:                 now(),
-      type:               'chat.text',
-      senderPublicKeyHex: publicKeyHex,
-      communityId,
-      channelId,
-      content,
-    };
-
-    const stored: StoredChatMessage = {
-      id:                 message.id,
       channelId,
       communityId,
       senderPublicKeyHex: publicKeyHex,
       senderUsername:     username,
       content,
-      ts:                 message.ts,
-      signature:          '',
+      ts:                 now(),
     };
 
-    // Optimistic update
-    set((state) => ({
-      messages: {
-        ...state.messages,
-        [channelId]: [...(state.messages[channelId] ?? []), stored],
-      },
-    }));
-
-    // Persist to OrbitDB
-    if (db) {
-      try {
-        await db.persistMessage(stored);
-      } catch (err) {
-        console.warn('[Chat] Failed to persist sent message:', err);
-      }
-    }
+    // Save to localStorage immediately
+    set((state) => {
+      const updated = [...(state.messages[channelId] ?? []), stored];
+      lsSaveMessages(communityId, channelId, updated);
+      return { messages: { ...state.messages, [channelId]: updated } };
+    });
 
     // Publish via GossipSub
+    const { node } = useNetworkStore.getState();
     if (node && _keypair) {
-      const topic = communityChannelTopic(communityId, channelId);
-      await publish(node, topic, message, _keypair);
+      const message: TextMessage = {
+        v:                  1,
+        id:                 stored.id,
+        ts:                 stored.ts,
+        type:               'chat.text',
+        senderPublicKeyHex: publicKeyHex,
+        communityId,
+        channelId,
+        content,
+      };
+      await publish(node, communityChannelTopic(communityId, channelId), message, _keypair);
+    }
+
+    // Also try OrbitDB in background
+    const { db } = useDBStore.getState();
+    if (db) {
+      db.openMessageLog(communityId, channelId)
+        .then((log) => log.add({ ...stored, signature: '' }))
+        .catch(() => {});
     }
   },
 }));
