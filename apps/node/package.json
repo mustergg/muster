@@ -1,10 +1,9 @@
 {
   "name": "@muster/node",
   "version": "0.1.0",
-  "description": "Muster main node — dedicated P2P community host",
+  "description": "Muster bootstrap node — lightweight P2P relay",
   "type": "module",
   "private": true,
-  "bin": { "muster-node": "./dist/cli/index.js" },
   "scripts": {
     "build": "npx tsc --project tsconfig.json",
     "dev":   "node --watch dist/index.js",
@@ -13,7 +12,6 @@
   "dependencies": {
     "@muster/core":     "workspace:*",
     "@muster/crypto":   "workspace:*",
-    "@muster/db":       "workspace:*",
     "@muster/protocol": "workspace:*"
   },
   "devDependencies": {
