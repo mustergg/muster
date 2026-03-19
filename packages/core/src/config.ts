@@ -14,6 +14,7 @@
 export const DEFAULT_BOOTSTRAP_PEERS: string[] = [
   // These will be replaced with real bootstrap node addresses before launch.
   // Format: /dns4/<hostname>/tcp/<port>/wss/p2p/<peerID>
+  '/dns4/musternode.duckdns.org/tcp/4002/ws/p2p/12D3KooWAaxCpxBHSQoHR2wUyovtvUXVf5XEz7NtvHYvADcxfxeP',
 ];
 
 /**
