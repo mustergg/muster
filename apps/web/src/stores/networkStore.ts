@@ -25,28 +25,29 @@ export const useNetworkStore = create<NetworkState>()((set, get) => ({
   peerCount: 0,
   peerId:    null,
 
-  connect: async () => {
-    if (get().status !== 'disconnected') return;
-    set({ status: 'connecting' });
-
-    try {
-      const node = await createMusterNode({ gossipD: 6 });
-
-      node.addEventListener('peer:connect',    () => set({ peerCount: node.getPeers().length }));
-      node.addEventListener('peer:disconnect', () => set({ peerCount: node.getPeers().length }));
-
-      set({ status: 'connected', node, peerId: node.peerId.toString(), peerCount: node.getPeers().length });
-
-      // Initialise OrbitDB after P2P node is ready
-      useDBStore.getState().initDB().catch((err) => {
-        console.warn('[Network] DB init failed (non-fatal):', err);
-      });
-    } catch (err) {
-      console.error('[Network] Failed to start node:', err);
-      set({ status: 'disconnected' });
-      throw err;
-    }
-  },
+ connect: async () => {
+  if (get().status !== 'disconnected') return;
+  console.log('[Network] Connecting...');
+  set({ status: 'connecting' });
+  try {
+    console.log('[Network] Creating libp2p node...');
+    const node = await createMusterNode({ gossipD: 6 });
+    console.log('[Network] Node created! Peer ID:', node.peerId.toString());
+    node.addEventListener('peer:connect',    () => {
+      console.log('[Network] Peer connected! Total:', node.getPeers().length);
+      set({ peerCount: node.getPeers().length });
+    });
+    node.addEventListener('peer:disconnect', () => set({ peerCount: node.getPeers().length }));
+    set({ status: 'connected', node, peerId: node.peerId.toString(), peerCount: node.getPeers().length });
+    useDBStore.getState().initDB().catch((err) => {
+      console.warn('[Network] DB init failed (non-fatal):', err);
+    });
+  } catch (err) {
+    console.error('[Network] Failed to start node:', err);
+    set({ status: 'disconnected' });
+    throw err;
+  }
+},
 
   disconnect: async () => {
     await useDBStore.getState().closeDB();

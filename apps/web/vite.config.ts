@@ -26,10 +26,6 @@ export default defineConfig({
     headers: {
       'Content-Security-Policy': "script-src 'self' 'unsafe-eval' 'unsafe-inline'",
     },
-    proxy: {
-      '/api': { target: 'http://localhost:4000', changeOrigin: true },
-      '/ws':  { target: 'ws://localhost:4000',  ws: true },
-    },
   },
   build: {
     outDir: 'dist',

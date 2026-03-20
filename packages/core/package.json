@@ -16,17 +16,18 @@
     "dev": "npx tsc --watch --project tsconfig.json"
   },
   "dependencies": {
-    "@muster/crypto": "workspace:*",
-    "@muster/protocol": "workspace:*",
-    "@libp2p/websockets": "*",
-    "@libp2p/bootstrap": "*",
-    "@libp2p/kad-dht": "*",
-    "@libp2p/identify": "*",
-    "@libp2p/noise": "*",
-    "@libp2p/ping": "*",
-    "@libp2p/peer-id": "*",
     "@chainsafe/libp2p-gossipsub": "*",
     "@chainsafe/libp2p-yamux": "*",
+    "@libp2p/bootstrap": "*",
+    "@libp2p/identify": "*",
+    "@libp2p/kad-dht": "*",
+    "@libp2p/noise": "*",
+    "@libp2p/peer-id": "*",
+    "@libp2p/ping": "*",
+    "@libp2p/websockets": "*",
+    "@multiformats/multiaddr": "^13.0.1",
+    "@muster/crypto": "workspace:*",
+    "@muster/protocol": "workspace:*",
     "libp2p": "*"
   },
   "devDependencies": {

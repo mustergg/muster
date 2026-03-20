@@ -21,7 +21,8 @@
   "pnpm": {
     "overrides": {
       "@ipshipyard/node-datachannel": "npm:empty-module@*",
-      "node-datachannel": "npm:empty-module@*"
+      "node-datachannel": "npm:empty-module@*",
+	  "@multiformats/multiaddr": "^12.0.0"
     }
   }
 }
