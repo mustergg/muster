@@ -1,13 +1,10 @@
-/**
- * Main application layout — shown when the user is authenticated.
- * Renders the three-column shell: guilds | channels | chat + members.
- */
-
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import GuildsSidebar from '../components/GuildsSidebar.js';
 import ChannelsSidebar from '../components/ChannelsSidebar.js';
 import ChatArea from '../components/ChatArea.js';
 import MembersSidebar from '../components/MembersSidebar.js';
+import { useNetworkStore } from '../stores/networkStore.js';
+import { useCommunityStore } from '../stores/communityStore.js';
 
 export interface ActiveLocation {
   communityId: string;
@@ -16,8 +13,24 @@ export interface ActiveLocation {
 }
 
 export default function MainLayout(): React.JSX.Element {
-  const [active, setActive] = useState<ActiveLocation | null>(null);
+  const [active, setActive]                   = useState<ActiveLocation | null>(null);
   const [activeCommunityId, setActiveCommunityId] = useState<string | null>(null);
+  const { connect, status }   = useNetworkStore();
+  const { loadCommunities }   = useCommunityStore();
+
+  // Connect to P2P network on mount
+  useEffect(() => {
+    if (status === 'disconnected') {
+      connect().catch((err: unknown) => {
+        console.warn('[Network] Auto-connect failed:', err);
+      });
+    }
+  }, []);
+
+  // Load communities from localStorage on mount
+  useEffect(() => {
+    loadCommunities();
+  }, []);
 
   return (
     <div style={styles.shell}>
@@ -41,18 +54,6 @@ export default function MainLayout(): React.JSX.Element {
 }
 
 const styles = {
-  shell: {
-    flex: 1,
-    display: 'flex',
-    overflow: 'hidden',
-    minHeight: 0,
-  } as React.CSSProperties,
-
-  main: {
-    flex: 1,
-    display: 'flex',
-    flexDirection: 'column' as const,
-    minWidth: 0,
-    overflow: 'hidden',
-  } as React.CSSProperties,
+  shell: { flex:1, display:'flex', overflow:'hidden', minHeight:0 } as React.CSSProperties,
+  main:  { flex:1, display:'flex', flexDirection:'column' as const, minWidth:0, overflow:'hidden' } as React.CSSProperties,
 } as const;
