@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@libp2p/circuit-relay-v2": "^4.1.6",
+    "@libp2p/peer-id-factory": "^4.2.4",
     "@muster/core": "workspace:*",
     "@muster/crypto": "workspace:*",
     "@muster/protocol": "workspace:*"
