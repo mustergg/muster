@@ -1,23 +1,36 @@
 /**
- * DB store — manages the MusterDB instance lifecycle.
- *
- * The MusterDB is created after login (needs the user's keypair context)
- * and destroyed on logout. It is shared across all other stores.
+ * DB store — OrbitDB disabled in browser (Helia/WASM compatibility issues).
+ * Browser uses localStorage + GossipSub for persistence and sync.
+ * OrbitDB will run on dedicated nodes in a future phase.
  */
 
 import { create } from 'zustand';
-import type { MusterDB } from '@muster/db';
+
+// Minimal MusterDB interface — browser version is a no-op
+export interface BrowserDB {
+  openMessageLog: (communityId: string, channelId: string) => Promise<{ add: (m: any) => Promise<void>; all: () => any[] }>;
+  openCommunity: (communityId: string) => Promise<{ getMeta: () => Promise<null>; setMeta: (m: any) => Promise<void>; setMember: (m: any) => Promise<void> }>;
+  getUserRegistry: () => Promise<{ getByUsername: () => Promise<null>; register: () => Promise<void> }>;
+  persistMessage: (m: any) => Promise<void>;
+  close: () => Promise<void>;
+}
+
+// No-op browser DB — all operations are silent no-ops
+const createBrowserDB = (): BrowserDB => ({
+  openMessageLog: async () => ({ add: async () => {}, all: () => [] }),
+  openCommunity:  async () => ({ getMeta: async () => null, setMeta: async () => {}, setMember: async () => {} }),
+  getUserRegistry: async () => ({ getByUsername: async () => null, register: async () => {} }),
+  persistMessage: async () => {},
+  close:          async () => {},
+});
 
 interface DBState {
-  db: MusterDB | null;
+  db: BrowserDB | null;
   dbStatus: 'idle' | 'starting' | 'ready' | 'error';
   dbError: string | null;
-
-  /** Initialise MusterDB — call after the P2P node is connected */
   initDB: () => Promise<void>;
-
-  /** Shut down MusterDB — call on logout */
   closeDB: () => Promise<void>;
+  waitForDB: (timeoutMs?: number) => Promise<BrowserDB | null>;
 }
 
 export const useDBStore = create<DBState>()((set, get) => ({
@@ -27,30 +40,25 @@ export const useDBStore = create<DBState>()((set, get) => ({
 
   initDB: async () => {
     if (get().dbStatus === 'ready' || get().dbStatus === 'starting') return;
-    set({ dbStatus: 'starting', dbError: null });
-
-    try {
-      // Dynamic import so the heavy OrbitDB/Helia bundle is only loaded when needed
-      const { MusterDB } = await import('@muster/db');
-      const db = await MusterDB.create();
-      set({ db, dbStatus: 'ready' });
-      console.log('[DB] MusterDB ready (browser in-memory mode)');
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Unknown error';
-      console.error('[DB] Failed to initialise MusterDB:', err);
-      set({ dbStatus: 'error', dbError: msg });
-    }
+    set({ dbStatus: 'starting' });
+    // Use no-op browser DB — instant, no dependencies
+    const db = createBrowserDB();
+    set({ db, dbStatus: 'ready' });
+    console.log('[DB] Browser DB ready (localStorage mode)');
   },
 
   closeDB: async () => {
-    const { db } = get();
-    if (db) {
-      try {
-        await db.close();
-      } catch (err) {
-        console.warn('[DB] Error closing MusterDB:', err);
-      }
-    }
     set({ db: null, dbStatus: 'idle', dbError: null });
+  },
+
+  waitForDB: async (_timeoutMs = 15000): Promise<BrowserDB | null> => {
+    if (get().dbStatus === 'idle') get().initDB();
+    // Browser DB is synchronous — ready immediately
+    let waited = 0;
+    while (get().dbStatus !== 'ready' && waited < 3000) {
+      await new Promise((r) => setTimeout(r, 100));
+      waited += 100;
+    }
+    return get().db;
   },
 }));

@@ -15,7 +15,7 @@ export default function ChannelsSidebar({ communityId, activeChannelId, onSelect
   const { t } = useTranslation();
   const { username, logout }              = useAuthStore();
   const { status, peerCount, peerId, disconnect } = useNetworkStore();
-  const { communities, subscribePresence, onlineMembers } = useCommunityStore();
+  const { communities, subscribePresence, onlineMembers, serveCommunityRequests } = useCommunityStore();
   const [showInvite, setShowInvite] = useState(false);
 
   const community = communityId ? communities[communityId] : null;
@@ -26,8 +26,9 @@ export default function ChannelsSidebar({ communityId, activeChannelId, onSelect
 
   useEffect(() => {
     if (!communityId) return;
-    const unsub = subscribePresence(communityId);
-    return unsub;
+    const unsubPresence  = subscribePresence(communityId);
+    const unsubRequests  = serveCommunityRequests(communityId);
+    return () => { unsubPresence(); unsubRequests(); };
   }, [communityId]);
 
   const handleLogout = async (): Promise<void> => {
