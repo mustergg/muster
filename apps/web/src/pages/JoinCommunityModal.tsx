@@ -14,35 +14,30 @@ export default function JoinCommunityModal({ onClose, onJoined, prefillLink }: P
   const [loading, setLoading] = useState(false);
   const [error, setError]     = useState<string | null>(null);
 
-  const handleJoin = async (): Promise<void> => {
-    setError(null);
-    const trimmed = link.trim();
-    if (!trimmed) return;
+const handleJoin = async (): Promise<void> => {
+  setError(null);
+  const trimmed = link.trim();
+  if (!trimmed) return;
 
-    // Accept either a full invite link or a bare community ID
-    let communityId: string;
-    const parsed = parseInviteLink(trimmed);
-    if (parsed) {
-      communityId = parsed.communityId;
-    } else if (/^[a-f0-9-]{36}$/i.test(trimmed)) {
-      // Bare UUID
-      communityId = trimmed;
-    } else {
-      setError('Invalid invite link or community ID. Paste a full invite link or a community ID.');
-      return;
-    }
+  const communityId = parseInviteLink(trimmed);
+  console.log('[Join] Parsed community ID:', communityId, 'from:', trimmed);
+  
+  if (!communityId) {
+    setError('Invalid invite link. Please paste the full invite link.');
+    return;
+  }
 
-    setLoading(true);
-    try {
-      const community = await joinCommunity(communityId);
-      onJoined(community.id);
-      onClose();
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Failed to join community');
-    } finally {
-      setLoading(false);
-    }
-  };
+  setLoading(true);
+  try {
+    const community = await joinCommunity(communityId);
+    onJoined(community.id);
+    onClose();
+  } catch (err: unknown) {
+    setError(err instanceof Error ? err.message : 'Failed to join community');
+  } finally {
+    setLoading(false);
+  }
+};
 
   return (
     <div style={styles.overlay} onClick={onClose}>

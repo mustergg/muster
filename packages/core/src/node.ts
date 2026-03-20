@@ -12,6 +12,9 @@ import { ping } from '@libp2p/ping';
 import type { MusterNodeConfig } from './config.js';
 import { DEFAULT_BOOTSTRAP_PEERS } from './config.js';
 import { multiaddr } from '@multiformats/multiaddr';
+import { circuitRelayTransport } from '@libp2p/circuit-relay-v2';
+
+
 
 export type MusterNode = Awaited<ReturnType<typeof createLibp2p>>;
 
@@ -30,11 +33,10 @@ console.log('[Core] Creating libp2p node...');
   connectionGater: {
     denyDialMultiaddr: () => false, // permite ligar a qualquer endereço
   },
-  transports: [
-    webSockets({
-      filter: () => true,
-    }),
-  ],
+transports: [
+  webSockets({ filter: () => true }),
+  circuitRelayTransport(),
+],
     connectionEncrypters: [noise()],
     streamMuxers: [yamux()],
     services: {

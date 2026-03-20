@@ -40,8 +40,11 @@ export function buildInviteLink(communityId: string): string {
 export function parseInviteLink(url: string): string | null {
   try {
     const u = new URL(url);
-    return u.searchParams.get('join');
-  } catch {
+    const join = u.searchParams.get('join');
+    console.log('[parseInviteLink] url:', url, '| join param:', join);
+    return join;
+  } catch (e) {
+    console.log('[parseInviteLink] URL parse failed:', e);
     if (/^[a-f0-9-]{36}$/i.test(url.trim())) return url.trim();
     return null;
   }
@@ -199,35 +202,45 @@ export const useCommunityStore = create<CommunityState>()((set, get) => ({
       // Send request every 2 seconds for up to 30 seconds
       let attempts = 0;
       const sendRequest = async (): Promise<void> => {
-        if (resolved) return;
-        if (attempts >= 15) {
-          unsub();
-          reject(new Error(
-            'Community not found after 30 seconds.\n' +
-            'Make sure:\n' +
-            '• The community creator has the app open\n' +
-            '• Both users are connected to the bootstrap node\n' +
-            '• The invite link is correct'
-          ));
-          return;
-        }
-        attempts++;
-		console.log('[Community] Sending request attempt', attempts, 'for:', communityId);
-        try {
-          await publish(node, requestTopic, {
-            v:                  1 as const,
-            id:                 generateId(),
-            ts:                 now(),
-            type:               'community.request' as const,
-            senderPublicKeyHex: publicKeyHex,
-            communityId,
-          } as any, _keypair);
-		  console.log('[Community] Request sent successfully');
-        } catch {
-			console.warn('[Community] Failed to send request:', err);
-		}
-        setTimeout(sendRequest, 2000);
-      };
+  if (resolved) return;
+  if (attempts >= 20) {
+    unsub();
+    reject(new Error(
+      'Community not found after 40 seconds.\n' +
+      'Make sure:\n' +
+      '• The community creator has the app open\n' +
+      '• Both users are connected to the bootstrap node\n' +
+      '• The invite link is correct'
+    ));
+    return;
+  }
+  attempts++;
+
+  // Check if anyone is subscribed to the request topic
+  const subscribers = node.services.pubsub.getSubscribers(requestTopic);
+  console.log('[Community] Subscribers to request topic:', subscribers.length, 'attempt:', attempts);
+
+  if (subscribers.length === 0) {
+    console.log('[Community] No subscribers yet, waiting...');
+    setTimeout(sendRequest, 2000);
+    return;
+  }
+
+  try {
+    await publish(node, requestTopic, {
+      v:                  1 as const,
+      id:                 generateId(),
+      ts:                 now(),
+      type:               'community.request' as const,
+      senderPublicKeyHex: publicKeyHex,
+      communityId,
+    } as any, _keypair);
+    console.log('[Community] Request sent successfully, attempt:', attempts);
+  } catch (err: unknown) {
+    console.warn('[Community] Failed to send request:', err);
+  }
+  setTimeout(sendRequest, 2000);
+};
 
       sendRequest();
     });

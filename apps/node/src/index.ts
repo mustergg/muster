@@ -6,6 +6,8 @@
  */
 
 import { createMusterNode } from '@muster/core';
+import { createMusterNode } from '@muster/core';
+import { circuitRelayServer } from '@libp2p/circuit-relay-v2';
 
 const LISTEN_WS_PORT  = parseInt(process.env['MUSTER_WS_PORT']  ?? '4002', 10);
 const LISTEN_TCP_PORT = parseInt(process.env['MUSTER_TCP_PORT'] ?? '4003', 10);
