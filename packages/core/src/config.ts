@@ -14,7 +14,7 @@
 export const DEFAULT_BOOTSTRAP_PEERS: string[] = [
   // These will be replaced with real bootstrap node addresses before launch.
   // Format: /dns4/<hostname>/tcp/<port>/wss/p2p/<peerID>
-  '/ip4/192.168.1.73/tcp/4002/ws/p2p/12D3KooWDmzFgmPDKvKejPBHkX6ERKhHF83fWrVUHYe9WVDv3EhW',
+  '/ip4/192.168.1.73/tcp/4002/ws/p2p/12D3KooWPkjsb4oW1N51SC5za5XmV5d3MEtktQLfJCMRWntHKgqy',
 ];
 
 /**
