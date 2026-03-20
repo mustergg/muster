@@ -46,6 +46,7 @@ export function communityPresenceTopic(communityId: string): string {
  * Configuration passed to `createMusterNode`.
  */
 export interface MusterNodeConfig {
+	peerId?: any;
   /**
    * Multiaddresses this node will listen on.
    *

@@ -44,6 +44,7 @@ export async function createMusterNode(
   }
 
   const node = await createLibp2p({
+	peerId: config.peerId,
     addresses: { listen: config.listenAddresses ?? [] },
     connectionGater: { denyDialMultiaddr: () => false },
     transports: [
