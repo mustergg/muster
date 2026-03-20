@@ -132,7 +132,11 @@ export const useCommunityStore = create<CommunityState>()((set, get) => ({
   // ── Serve community document to peers who request it ──────────────────────
   serveCommunityRequests: (communityId) => {
     const { node } = useNetworkStore.getState();
-    if (!node) return () => {};
+  if (!node) {
+    console.log('[Community] No node available for serving requests');
+    return () => {};
+  }
+  console.log('[Community] Serving requests for:', communityId);
 
     const requestTopic  = communityRequestTopic(communityId);
     const responseTopic = communityResponseTopic(communityId);
@@ -208,6 +212,7 @@ export const useCommunityStore = create<CommunityState>()((set, get) => ({
           return;
         }
         attempts++;
+		console.log('[Community] Sending request attempt', attempts, 'for:', communityId);
         try {
           await publish(node, requestTopic, {
             v:                  1 as const,
@@ -217,7 +222,10 @@ export const useCommunityStore = create<CommunityState>()((set, get) => ({
             senderPublicKeyHex: publicKeyHex,
             communityId,
           } as any, _keypair);
-        } catch {}
+		  console.log('[Community] Request sent successfully');
+        } catch {
+			console.warn('[Community] Failed to send request:', err);
+		}
         setTimeout(sendRequest, 2000);
       };
 
@@ -235,7 +243,8 @@ export const useCommunityStore = create<CommunityState>()((set, get) => ({
 
     const topic = communityPresenceTopic(communityId);
     const unsub = subscribe(node, topic, (message: MusterMessage, senderPublicKeyHex: string) => {
-      if (message.type !== 'peer.announce') return;
+      console.log('[Community] Received request type:', message.type, 'for:', communityId);
+	  if (message.type !== 'peer.announce') return;
       const entry: OnlineMember = {
         publicKeyHex: senderPublicKeyHex,
         username: (message as any).username ?? senderPublicKeyHex.slice(0, 10),

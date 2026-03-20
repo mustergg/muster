@@ -26,6 +26,7 @@ export default function ChannelsSidebar({ communityId, activeChannelId, onSelect
 
   useEffect(() => {
     if (!communityId) return;
+	console.log('[Sidebar] Setting up presence + requests for:', communityId);
     const unsubPresence  = subscribePresence(communityId);
     const unsubRequests  = serveCommunityRequests(communityId);
     return () => { unsubPresence(); unsubRequests(); };
