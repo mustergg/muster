@@ -82,4 +82,6 @@ export interface MusterNodeConfig {
    * Must be greater than gossipD. Default: 12.
    */
   gossipDHigh?: number;
+  
+  extraServices?: Record<string, unknown>;
 }

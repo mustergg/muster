@@ -6,16 +6,17 @@
   "private": true,
   "scripts": {
     "build": "npx tsc --project tsconfig.json",
-    "dev":   "node --watch dist/index.js",
+    "dev": "node --watch dist/index.js",
     "start": "node dist/index.js"
   },
   "dependencies": {
-    "@muster/core":     "workspace:*",
-    "@muster/crypto":   "workspace:*",
+    "@libp2p/circuit-relay-v2": "^4.1.6",
+    "@muster/core": "workspace:*",
+    "@muster/crypto": "workspace:*",
     "@muster/protocol": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^20.14.0",
-    "typescript":  "^5.4.5"
+    "typescript": "^5.4.5"
   }
 }

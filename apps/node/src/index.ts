@@ -1,11 +1,4 @@
 // @ts-nocheck
-/**
- * Muster bootstrap node — lightweight P2P relay (no OrbitDB)
- * OrbitDB/Helia removed — requires native modules incompatible with ARM.
- * The bootstrap node only needs libp2p WebSocket + TCP + GossipSub.
- */
-
-import { createMusterNode } from '@muster/core';
 import { createMusterNode } from '@muster/core';
 import { circuitRelayServer } from '@libp2p/circuit-relay-v2';
 
@@ -20,7 +13,10 @@ async function main(): Promise<void> {
       `/ip4/0.0.0.0/tcp/${LISTEN_WS_PORT}/ws`,
       `/ip4/0.0.0.0/tcp/${LISTEN_TCP_PORT}`,
     ],
-    gossipD: 8, gossipDLow: 6, gossipDHigh: 16,
+    gossipD: 1, gossipDLow: 0, gossipDHigh: 4,
+    extraServices: {
+      relay: circuitRelayServer(),
+    },
   });
 
   console.log('[muster-node] Node started.');

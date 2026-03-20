@@ -51,7 +51,7 @@ transports: [
       dht: kadDHT({ clientMode: true }),
       ...(bootstrapList.length > 0
         ? { bootstrap: bootstrap({ list: bootstrapList }) }
-        : {}),
+        : ...(config.extraServices ?? {})
     },
   });
 
