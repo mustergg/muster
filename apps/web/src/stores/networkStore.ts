@@ -54,12 +54,7 @@ interface NetworkState {
   error: string | null;
 
   /** Connect to a relay node. */
-  connect: (
-    relayUrl: string,
-    privateKey: string,
-    publicKey: string,
-    username: string
-  ) => Promise<void>;
+  connect: () => Promise<void>;
 
   /** Disconnect from the relay node. */
   disconnect: () => void;
@@ -78,6 +73,7 @@ interface NetworkState {
 // UPDATE THIS to your relay node's address (DuckDNS domain + port).
 // During local development, use ws://localhost:4002
 const DEFAULT_RELAY_URL =
+  //import.meta?.env?.VITE_RELAY_URL || 'ws://musternode.duckdns.org:4002';
   import.meta?.env?.VITE_RELAY_URL || 'ws://localhost:4002';
 
 // =================================================================
@@ -94,8 +90,12 @@ export const useNetworkStore = create<NetworkState>((set, get) => {
     username: '',
     error: null,
 
-    connect: async (relayUrl, privateKey, publicKey, username) => {
-      const url = relayUrl || DEFAULT_RELAY_URL;
+    connect: async () => {
+      const auth = (await import('./authStore.js')).useAuthStore.getState();
+      const publicKey = auth.publicKeyHex || '';
+      const username = auth.username || '';
+      const url = DEFAULT_RELAY_URL;
+      console.log('[network] DEBUG url:', url, 'status:', get().status);
 
       // Don't connect twice
       if (get().status !== 'disconnected') {
@@ -122,7 +122,8 @@ export const useNetworkStore = create<NetworkState>((set, get) => {
         if (msg.type === 'AUTH_CHALLENGE') {
           set({ status: 'authenticating' });
           const challenge = (msg.payload as any).challenge as string;
-          const signature = sign(challenge, privateKey);
+          // TODO: Replace stub with real @muster/crypto signing using auth._keypair.privateKey
+          const signature = sign(challenge, publicKey);
 
           transport.send({
             type: 'AUTH_RESPONSE',

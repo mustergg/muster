@@ -5,6 +5,7 @@ import ChatArea from '../components/ChatArea.js';
 import MembersSidebar from '../components/MembersSidebar.js';
 import { useNetworkStore } from '../stores/networkStore.js';
 import { useCommunityStore } from '../stores/communityStore.js';
+import { useAuthStore } from '../stores/authStore.js';
 
 export interface ActiveLocation {
   communityId: string;
@@ -18,14 +19,15 @@ export default function MainLayout(): React.JSX.Element {
   const { connect, status }   = useNetworkStore();
   const { loadCommunities }   = useCommunityStore();
 
-  // Connect to P2P network on mount
+ // Auto-connect only if user is already authenticated (e.g. returning session)
+  const { isAuthenticated } = useAuthStore();
   useEffect(() => {
-    if (status === 'disconnected') {
+    if (status === 'disconnected' && isAuthenticated) {
       connect().catch((err: unknown) => {
         console.warn('[Network] Auto-connect failed:', err);
       });
     }
-  }, []);
+  }, [isAuthenticated]);
 
   // Load communities from localStorage on mount
   useEffect(() => {
