@@ -50,3 +50,5 @@ export {
   DEFAULT_FIXED_ROLE_PERMISSIONS,
   canActOn,
 } from './permissions.js';
+
+export * from './ws-messages.js';

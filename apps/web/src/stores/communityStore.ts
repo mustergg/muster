@@ -5,11 +5,11 @@
 
 import { create } from 'zustand';
 import { generateId, now } from '@muster/protocol';
-import type { StoredCommunity, StoredCommunityMember, StoredChannel } from '@muster/db';
+//import type { StoredCommunity, StoredCommunityMember, StoredChannel } from '@muster/db';
 import { useDBStore } from './dbStore.js';
 import { useAuthStore } from './authStore.js';
 import { useNetworkStore } from './networkStore.js';
-import { communityPresenceTopic, communityChannelTopic, subscribe, publish } from '@muster/core';
+//import { communityPresenceTopic, communityChannelTopic, subscribe, publish } from '@muster/core';
 import type { MusterMessage } from '@muster/protocol';
 
 // ─── localStorage helpers ─────────────────────────────────────────────────────

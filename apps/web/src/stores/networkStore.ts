@@ -1,58 +1,197 @@
 /**
- * Network store — manages the libp2p node lifecycle.
- * Now also triggers DB initialisation after connecting.
+ * Network Store — manages the WebSocket connection to the relay node.
+ *
+ * REPLACES the old networkStore.ts (which used libp2p/GossipSub).
+ * This version uses @muster/transport (pure WebSocket, zero native deps).
+ *
+ * How it works:
+ * 1. Client connects to relay via WebSocket
+ * 2. Relay sends AUTH_CHALLENGE (random 32-byte hex)
+ * 3. Client signs challenge with Ed25519 private key
+ * 4. Relay verifies → AUTH_RESULT (success/fail)
+ * 5. Client is now authenticated and can subscribe/publish
  */
 
 import { create } from 'zustand';
-import { createMusterNode, type MusterNode } from '@muster/core';
-import { useDBStore } from './dbStore.js';
+import { WebSocketTransport, TransportMessage } from '@muster/transport';
 
-export type NetworkStatus = 'disconnected' | 'connecting' | 'connected';
+// -----------------------------------------------------------------
+// NOTE: Adjust these imports to match your @muster/crypto package.
+// You need a function that signs a string with an Ed25519 private key.
+// -----------------------------------------------------------------
+// import { sign } from '@muster/crypto';
 
-interface NetworkState {
-  status:    NetworkStatus;
-  node:      MusterNode | null;
-  peerCount: number;
-  peerId:    string | null;
-
-  connect:    () => Promise<void>;
-  disconnect: () => Promise<void>;
+// TEMPORARY stub for initial testing — replace with real crypto
+function sign(message: string, _privateKey: string): string {
+  console.warn('[network] WARNING: Using stub signing — replace with @muster/crypto');
+  return 'stub-signature-' + message.slice(0, 8);
 }
 
-export const useNetworkStore = create<NetworkState>()((set, get) => ({
-  status:    'disconnected',
-  node:      null,
-  peerCount: 0,
-  peerId:    null,
+// =================================================================
+// Types
+// =================================================================
 
- connect: async () => {
-  if (get().status !== 'disconnected') return;
-  console.log('[Network] Connecting...');
-  set({ status: 'connecting' });
-  try {
-    console.log('[Network] Creating libp2p node...');
-    const node = await createMusterNode({ gossipD: 6 });
-    console.log('[Network] Node created! Peer ID:', node.peerId.toString());
-    node.addEventListener('peer:connect',    () => {
-      console.log('[Network] Peer connected! Total:', node.getPeers().length);
-      set({ peerCount: node.getPeers().length });
-    });
-    node.addEventListener('peer:disconnect', () => set({ peerCount: node.getPeers().length }));
-    set({ status: 'connected', node, peerId: node.peerId.toString(), peerCount: node.getPeers().length });
-    useDBStore.getState().initDB().catch((err) => {
-      console.warn('[Network] DB init failed (non-fatal):', err);
-    });
-  } catch (err) {
-    console.error('[Network] Failed to start node:', err);
-    set({ status: 'disconnected' });
-    throw err;
-  }
-},
+export type ConnectionStatus =
+  | 'disconnected'
+  | 'connecting'
+  | 'authenticating'
+  | 'connected';
 
-  disconnect: async () => {
-    await useDBStore.getState().closeDB();
-    const { node } = get();
-    if (node) await node.stop();
-    set({ status: 'disconnected', node: null, peerCount: 0, peerId: null });
-  },
-}));
+interface NetworkState {
+  /** Current connection status. */
+  status: ConnectionStatus;
+
+  /** The transport instance (null if not connected). */
+  transport: WebSocketTransport | null;
+
+  /** The authenticated user's public key. */
+  publicKey: string;
+
+  /** The authenticated user's username. */
+  username: string;
+
+  /** Error message if connection failed. */
+  error: string | null;
+
+  /** Connect to a relay node. */
+  connect: (
+    relayUrl: string,
+    privateKey: string,
+    publicKey: string,
+    username: string
+  ) => Promise<void>;
+
+  /** Disconnect from the relay node. */
+  disconnect: () => void;
+
+  /**
+   * Register a handler for incoming relay messages.
+   * Returns an unsubscribe function.
+   */
+  onMessage: (handler: (msg: TransportMessage) => void) => () => void;
+}
+
+// =================================================================
+// Default relay URL
+// =================================================================
+
+// UPDATE THIS to your relay node's address (DuckDNS domain + port).
+// During local development, use ws://localhost:4002
+const DEFAULT_RELAY_URL =
+  import.meta?.env?.VITE_RELAY_URL || 'ws://localhost:4002';
+
+// =================================================================
+// Store
+// =================================================================
+
+export const useNetworkStore = create<NetworkState>((set, get) => {
+  const messageHandlers = new Set<(msg: TransportMessage) => void>();
+
+  return {
+    status: 'disconnected',
+    transport: null,
+    publicKey: '',
+    username: '',
+    error: null,
+
+    connect: async (relayUrl, privateKey, publicKey, username) => {
+      const url = relayUrl || DEFAULT_RELAY_URL;
+
+      // Don't connect twice
+      if (get().status !== 'disconnected') {
+        console.warn('[network] Already connecting or connected');
+        return;
+      }
+
+      const transport = new WebSocketTransport({
+        reconnectBaseDelay: 2000,
+        reconnectMaxDelay: 30000,
+      });
+
+      set({
+        transport,
+        status: 'connecting',
+        error: null,
+        publicKey,
+        username,
+      });
+
+      // Handle incoming messages
+      transport.on('message', (msg) => {
+        // Handle auth flow internally
+        if (msg.type === 'AUTH_CHALLENGE') {
+          set({ status: 'authenticating' });
+          const challenge = (msg.payload as any).challenge as string;
+          const signature = sign(challenge, privateKey);
+
+          transport.send({
+            type: 'AUTH_RESPONSE',
+            payload: { publicKey, signature, username },
+            timestamp: Date.now(),
+          });
+          return;
+        }
+
+        if (msg.type === 'AUTH_RESULT') {
+          const result = msg.payload as any;
+          if (result.success) {
+            console.log('[network] Authenticated successfully');
+            set({ status: 'connected', error: null });
+          } else {
+            console.error('[network] Auth failed:', result.reason);
+            set({
+              status: 'disconnected',
+              error: result.reason || 'Authentication failed',
+            });
+          }
+          return;
+        }
+
+        // Forward all other messages to registered handlers
+        for (const handler of messageHandlers) {
+          handler(msg);
+        }
+      });
+
+      transport.on('connected', () => {
+        console.log('[network] WebSocket connected, waiting for auth...');
+        // Don't set 'connected' here — wait for AUTH_RESULT
+      });
+
+      transport.on('disconnected', (reason) => {
+        console.log('[network] Disconnected:', reason);
+        set({ status: 'disconnected' });
+      });
+
+      transport.on('error', (err) => {
+        console.error('[network] Transport error:', err.message);
+        set({ error: err.message });
+      });
+
+      // Attempt connection
+      try {
+        await transport.connect(url);
+      } catch (err) {
+        set({
+          status: 'disconnected',
+          error: err instanceof Error ? err.message : 'Connection failed',
+          transport: null,
+        });
+      }
+    },
+
+    disconnect: () => {
+      get().transport?.disconnect();
+      set({
+        status: 'disconnected',
+        transport: null,
+        error: null,
+      });
+    },
+
+    onMessage: (handler) => {
+      messageHandlers.add(handler);
+      return () => messageHandlers.delete(handler);
+    },
+  };
+});

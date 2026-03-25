@@ -11,9 +11,7 @@
     "lint": "eslint src --ext .ts,.tsx"
   },
   "dependencies": {
-    "@muster/core": "workspace:*",
     "@muster/crypto": "workspace:*",
-	"@muster/db":       "workspace:*",
     "@muster/i18n": "workspace:*",
     "@muster/protocol": "workspace:*",
     "i18next": "^23.11.5",
@@ -21,7 +19,8 @@
     "react-dom": "^18.3.1",
     "react-i18next": "^14.1.2",
     "vite-plugin-node-polyfills": "^0.25.0",
-    "zustand": "^4.5.2"
+    "zustand": "^4.5.2",
+    "@muster/transport": "workspace:*"
   },
   "devDependencies": {
     "@types/react": "^18.3.3",

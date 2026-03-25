@@ -1,183 +1,227 @@
 /**
- * Chat store — messages with localStorage persistence.
- * OrbitDB sync is best-effort and non-blocking.
+ * Chat Store — manages channel messages via the relay node.
+ *
+ * REPLACES the old chatStore.ts (which used OrbitDB/GossipSub).
+ * This version uses WebSocket pub/sub through the transport layer.
+ *
+ * How it works:
+ * 1. Client subscribes to channels via SUBSCRIBE message
+ * 2. To send: client signs and sends PUBLISH message
+ * 3. Relay verifies signature and fans out MESSAGE to all subscribers
+ * 4. Incoming MESSAGE events are added to the local message list
  */
 
 import { create } from 'zustand';
-import { subscribe, publish, communityChannelTopic } from '@muster/core';
-import { generateId, now, type TextMessage, type MusterMessage } from '@muster/protocol';
-import { useNetworkStore } from './networkStore.js';
-import { useAuthStore } from './authStore.js';
-import { useDBStore } from './dbStore.js';
+import { useNetworkStore } from './networkStore';
+import type { TransportMessage } from '@muster/transport';
 
-export interface StoredMessage {
-  id: string;
-  channelId: string;
-  communityId: string;
-  senderPublicKeyHex: string;
-  senderUsername: string;
+// -----------------------------------------------------------------
+// NOTE: Adjust this import to match your @muster/crypto package.
+// -----------------------------------------------------------------
+// import { sign } from '@muster/crypto';
+
+// TEMPORARY stub — replace with real crypto
+function sign(message: string, _privateKey: string): string {
+  return 'stub-signature-' + message.slice(0, 8);
+}
+
+// Simple UUID v4 generator (no dependency needed)
+function uuid(): string {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
+  });
+}
+
+// =================================================================
+// Types
+// =================================================================
+
+export interface ChatMessage {
+  messageId: string;
+  channel: string;
   content: string;
-  ts: number;
-  deleted?: boolean;
+  senderPublicKey: string;
+  senderUsername: string;
+  timestamp: number;
+  /** Whether this message was sent by the current user. */
+  isOwn: boolean;
 }
 
-// ─── localStorage helpers ─────────────────────────────────────────────────────
-
-const LS_KEY = (communityId: string, channelId: string) =>
-  `muster:messages:${communityId}:${channelId}`;
-
-const MAX_STORED = 200; // max messages kept per channel in localStorage
-
-function lsLoadMessages(communityId: string, channelId: string): StoredMessage[] {
-  try {
-    const raw = localStorage.getItem(LS_KEY(communityId, channelId));
-    return raw ? (JSON.parse(raw) as StoredMessage[]) : [];
-  } catch { return []; }
+export interface PresenceUser {
+  publicKey: string;
+  username: string;
+  status: string;
 }
-
-function lsSaveMessages(communityId: string, channelId: string, messages: StoredMessage[]): void {
-  try {
-    // Keep only the latest MAX_STORED messages
-    const trimmed = messages.slice(-MAX_STORED);
-    localStorage.setItem(LS_KEY(communityId, channelId), JSON.stringify(trimmed));
-  } catch {}
-}
-
-// ─── Store ────────────────────────────────────────────────────────────────────
-
-type ChannelMessages = Record<string, StoredMessage[]>;
-type Unsubscribers   = Record<string, () => void>;
 
 interface ChatState {
-  messages:       ChannelMessages;
-  knownPeers:     Record<string, string>;
-  _unsubscribers: Unsubscribers;
+  /** Messages by channel: channelId → messages (sorted by timestamp). */
+  messages: Record<string, ChatMessage[]>;
 
-  joinChannel:  (communityId: string, channelId: string) => void;
-  leaveChannel: (communityId: string, channelId: string) => void;
-  sendMessage:  (communityId: string, channelId: string, content: string) => Promise<void>;
+  /** Online users by channel: channelId → users. */
+  presence: Record<string, PresenceUser[]>;
+
+  /** Currently selected channel ID. */
+  activeChannel: string | null;
+
+  /** Subscribe to one or more channels. */
+  subscribe: (channels: string[]) => void;
+
+  /** Unsubscribe from channels. */
+  unsubscribe: (channels: string[]) => void;
+
+  /** Send a message to a channel. */
+  sendMessage: (channel: string, content: string) => void;
+
+  /** Set the active channel. */
+  setActiveChannel: (channelId: string | null) => void;
+
+  /** Clear all messages (e.g. on logout). */
+  clear: () => void;
+
+  /** Initialize the store — call once after network connects. */
+  init: () => () => void;
 }
 
-export const useChatStore = create<ChatState>()((set, get) => ({
-  messages:       {},
-  knownPeers:     {},
-  _unsubscribers: {},
+// =================================================================
+// Store
+// =================================================================
 
-  joinChannel: (communityId, channelId) => {
-    const key = `${communityId}:${channelId}`;
-    if (get()._unsubscribers[key]) return;
+export const useChatStore = create<ChatState>((set, get) => ({
+  messages: {},
+  presence: {},
+  activeChannel: null,
 
-    // Load from localStorage immediately — no async, always works
-    const history = lsLoadMessages(communityId, channelId);
-    set((state) => ({
-      messages: { ...state.messages, [channelId]: history },
-    }));
+  subscribe: (channelIds) => {
+    const { transport } = useNetworkStore.getState();
+    if (!transport?.isConnected) {
+      console.warn('[chat] Cannot subscribe — not connected');
+      return;
+    }
+    transport.send({
+      type: 'SUBSCRIBE',
+      payload: { channels: channelIds },
+      timestamp: Date.now(),
+    });
+  },
 
-    // Subscribe to GossipSub for real-time messages
-    const { node } = useNetworkStore.getState();
-    if (!node) {
-      set((state) => ({
-        _unsubscribers: { ...state._unsubscribers, [key]: () => {} },
-      }));
+  unsubscribe: (channelIds) => {
+    const { transport } = useNetworkStore.getState();
+    if (!transport?.isConnected) return;
+    transport.send({
+      type: 'UNSUBSCRIBE',
+      payload: { channels: channelIds },
+      timestamp: Date.now(),
+    });
+  },
+
+  sendMessage: (channel, content) => {
+    const network = useNetworkStore.getState();
+    if (!network.transport?.isConnected) {
+      console.warn('[chat] Cannot send — not connected');
       return;
     }
 
-    const topic = communityChannelTopic(communityId, channelId);
+    const messageId = uuid();
+    const timestamp = Date.now();
 
-    const unsub = subscribe(node, topic, (message: MusterMessage, senderPublicKeyHex: string) => {
-      if (message.type !== 'chat.text') return;
-      const textMsg = message as TextMessage;
+    const payload = { channel, content, messageId, timestamp };
 
-      // Avoid duplicates
-      const existing = get().messages[channelId] ?? [];
-      if (existing.some((m) => m.id === textMsg.id)) return;
+    // Sign the payload
+    // TODO: Get privateKey from auth store — for now using publicKey as stub
+    const signature = sign(JSON.stringify(payload), network.publicKey);
 
-      const stored: StoredMessage = {
-        id:                 textMsg.id,
-        channelId:          textMsg.channelId,
-        communityId:        textMsg.communityId,
-        senderPublicKeyHex,
-        senderUsername:     get().knownPeers[senderPublicKeyHex] ?? senderPublicKeyHex.slice(0, 10),
-        content:            textMsg.content,
-        ts:                 textMsg.ts,
-      };
-
-      set((state) => {
-        const updated = [...(state.messages[channelId] ?? []), stored];
-        lsSaveMessages(communityId, channelId, updated);
-        return { messages: { ...state.messages, [channelId]: updated } };
-      });
-
-      // Also try OrbitDB in background
-      const { db } = useDBStore.getState();
-      if (db) {
-        db.openMessageLog(communityId, channelId)
-          .then((log) => log.add({ ...stored, signature: '' }))
-          .catch(() => {});
-      }
+    // Send to relay
+    network.transport.send({
+      type: 'PUBLISH',
+      payload,
+      timestamp,
+      signature,
+      senderPublicKey: network.publicKey,
     });
 
+    // Add to local messages immediately (optimistic update)
+    const msg: ChatMessage = {
+      messageId,
+      channel,
+      content,
+      senderPublicKey: network.publicKey,
+      senderUsername: network.username,
+      timestamp,
+      isOwn: true,
+    };
+
     set((state) => ({
-      _unsubscribers: { ...state._unsubscribers, [key]: unsub },
+      messages: {
+        ...state.messages,
+        [channel]: [...(state.messages[channel] || []), msg],
+      },
     }));
   },
 
-  leaveChannel: (communityId, channelId) => {
-    const key   = `${communityId}:${channelId}`;
-    const unsub = get()._unsubscribers[key];
-    if (unsub) {
-      unsub();
-      set((state) => {
-        const updated = { ...state._unsubscribers };
-        delete updated[key];
-        return { _unsubscribers: updated };
-      });
-    }
+  setActiveChannel: (channelId) => {
+    set({ activeChannel: channelId });
   },
 
-  sendMessage: async (communityId, channelId, content) => {
-    const { _keypair, publicKeyHex, username } = useAuthStore.getState();
-    if (!_keypair || !publicKeyHex || !username) throw new Error('Not authenticated');
+  clear: () => {
+    set({ messages: {}, presence: {}, activeChannel: null });
+  },
 
-    const stored: StoredMessage = {
-      id:                 generateId(),
-      channelId,
-      communityId,
-      senderPublicKeyHex: publicKeyHex,
-      senderUsername:     username,
-      content,
-      ts:                 now(),
-    };
+  /**
+   * Initialize the chat store by listening for incoming messages.
+   * Call this once after the network connects.
+   * Returns a cleanup function to call on unmount/logout.
+   */
+  init: () => {
+    const network = useNetworkStore.getState();
 
-    // Save to localStorage immediately
-    set((state) => {
-      const updated = [...(state.messages[channelId] ?? []), stored];
-      lsSaveMessages(communityId, channelId, updated);
-      return { messages: { ...state.messages, [channelId]: updated } };
+    const unsubscribe = network.onMessage((msg: TransportMessage) => {
+      switch (msg.type) {
+        case 'MESSAGE': {
+          const p = msg.payload as any;
+          const myKey = useNetworkStore.getState().publicKey;
+
+          const chatMsg: ChatMessage = {
+            messageId: p.messageId,
+            channel: p.channel,
+            content: p.content,
+            senderPublicKey: p.senderPublicKey,
+            senderUsername: p.senderUsername,
+            timestamp: p.timestamp,
+            isOwn: p.senderPublicKey === myKey,
+          };
+
+          // Don't add duplicates (optimistic update already added own messages)
+          set((state) => {
+            const existing = state.messages[p.channel] || [];
+            if (existing.some((m) => m.messageId === chatMsg.messageId)) {
+              return state; // Already have this message
+            }
+            return {
+              messages: {
+                ...state.messages,
+                [p.channel]: [...existing, chatMsg].sort(
+                  (a, b) => a.timestamp - b.timestamp
+                ),
+              },
+            };
+          });
+          break;
+        }
+
+        case 'PRESENCE': {
+          const p = msg.payload as any;
+          set((state) => ({
+            presence: {
+              ...state.presence,
+              [p.channel]: p.users || [],
+            },
+          }));
+          break;
+        }
+      }
     });
 
-    // Publish via GossipSub
-    const { node } = useNetworkStore.getState();
-    if (node && _keypair) {
-      const message: TextMessage = {
-        v:                  1,
-        id:                 stored.id,
-        ts:                 stored.ts,
-        type:               'chat.text',
-        senderPublicKeyHex: publicKeyHex,
-        communityId,
-        channelId,
-        content,
-      };
-      await publish(node, communityChannelTopic(communityId, channelId), message, _keypair);
-    }
-
-    // Also try OrbitDB in background
-    const { db } = useDBStore.getState();
-    if (db) {
-      db.openMessageLog(communityId, channelId)
-        .then((log) => log.add({ ...stored, signature: '' }))
-        .catch(() => {});
-    }
+    return unsubscribe;
   },
 }));
