@@ -6,6 +6,7 @@ import MembersSidebar from '../components/MembersSidebar.js';
 import { useNetworkStore } from '../stores/networkStore.js';
 import { useCommunityStore } from '../stores/communityStore.js';
 import { useAuthStore } from '../stores/authStore.js';
+import { useChatStore } from '../stores/chatStore.js';
 
 export interface ActiveLocation {
   communityId: string;
@@ -19,7 +20,7 @@ export default function MainLayout(): React.JSX.Element {
   const { connect, status }   = useNetworkStore();
   const { loadCommunities }   = useCommunityStore();
 
- // Auto-connect only if user is already authenticated (e.g. returning session)
+  // Auto-connect only if user is already authenticated (e.g. returning session)
   const { isAuthenticated } = useAuthStore();
   useEffect(() => {
     if (status === 'disconnected' && isAuthenticated) {
@@ -28,6 +29,15 @@ export default function MainLayout(): React.JSX.Element {
       });
     }
   }, [isAuthenticated]);
+
+  // Initialize chat message handler when connected
+  const chatInit = useChatStore((s) => s.init);
+  useEffect(() => {
+    if (status === 'connected') {
+      const cleanup = chatInit();
+      return cleanup;
+    }
+  }, [status]);
 
   // Load communities from localStorage on mount
   useEffect(() => {

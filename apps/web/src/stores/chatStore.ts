@@ -225,3 +225,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
     return unsubscribe;
   },
 }));
+
+// TEMPORARY: expose store for R1 testing — remove after R3
+(window as any).__chat = useChatStore;

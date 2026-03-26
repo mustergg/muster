@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useChatStore, type StoredMessage } from '../stores/chatStore.js';
+import { useChatStore, type ChatMessage } from '../stores/chatStore.js';
 import type { ActiveLocation } from '../pages/MainLayout.js';
 
 interface Props {
@@ -11,10 +11,9 @@ function formatTime(ts: number): string {
   return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
-function MessageRow({ msg }: { msg: StoredMessage }): React.JSX.Element {
-  const initials = msg.senderUsername.slice(0, 2).toUpperCase();
-  // Deterministic colour from public key
-  const hue = parseInt(msg.senderPublicKeyHex.slice(0, 4), 16) % 360;
+function MessageRow({ msg }: { msg: ChatMessage }): React.JSX.Element {
+  const initials = (msg.senderUsername || '??').slice(0, 2).toUpperCase();
+  const hue = parseInt((msg.senderPublicKey || '0000').slice(0, 4), 16) % 360;
 
   return (
     <div style={styles.msgGroup}>
@@ -26,7 +25,7 @@ function MessageRow({ msg }: { msg: StoredMessage }): React.JSX.Element {
           <span style={{ ...styles.author, color: `hsl(${hue},75%,72%)` }}>
             {msg.senderUsername}
           </span>
-          <span style={styles.time}>{formatTime(msg.ts)}</span>
+          <span style={styles.time}>{formatTime(msg.timestamp)}</span>
         </div>
         <p style={styles.content}>{msg.content}</p>
       </div>
@@ -36,14 +35,14 @@ function MessageRow({ msg }: { msg: StoredMessage }): React.JSX.Element {
 
 export default function ChatArea({ active }: Props): React.JSX.Element {
   const { t } = useTranslation();
-  const { messages, joinChannel, leaveChannel, sendMessage } = useChatStore();
+  const { messages, subscribe, unsubscribe, sendMessage } = useChatStore();
   const [draft, setDraft] = useState('');
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!active) return;
-    joinChannel(active.communityId, active.channelId);
-    return () => leaveChannel(active.communityId, active.channelId);
+      subscribe([active.channelId]);
+      return () => unsubscribe([active.channelId]);
   }, [active?.communityId, active?.channelId]);
 
   // Auto-scroll to bottom on new messages
@@ -55,7 +54,7 @@ export default function ChatArea({ active }: Props): React.JSX.Element {
     if (!active || !draft.trim()) return;
     const content = draft.trim();
     setDraft('');
-    await sendMessage(active.communityId, active.channelId, content);
+    await sendMessage(active.channelId, content);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent): void => {
@@ -93,7 +92,7 @@ export default function ChatArea({ active }: Props): React.JSX.Element {
           </div>
         )}
         {channelMessages.map((msg) => (
-          <MessageRow key={msg.id} msg={msg} />
+          <MessageRow key={msg.messageId} msg={msg} />
         ))}
         <div ref={bottomRef} />
       </div>
@@ -250,3 +249,4 @@ const styles = {
     transition: 'opacity 0.15s',
   } as React.CSSProperties,
 } as const;
+
