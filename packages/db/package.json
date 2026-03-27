@@ -1,0 +1,17 @@
+{
+  "name": "@muster/db",
+  "version": "0.1.0",
+  "description": "Database layer — Dexie.js (browser IndexedDB) + shared types",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "dexie": "^4.0.4"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0"
+  }
+}

@@ -1,31 +1,23 @@
 /**
- * Chat Store — manages channel messages via the relay node.
+ * Chat Store — R2 update
  *
- * REPLACES the old chatStore.ts (which used OrbitDB/GossipSub).
- * This version uses WebSocket pub/sub through the transport layer.
- *
- * How it works:
- * 1. Client subscribes to channels via SUBSCRIBE message
- * 2. To send: client signs and sends PUBLISH message
- * 3. Relay verifies signature and fans out MESSAGE to all subscribers
- * 4. Incoming MESSAGE events are added to the local message list
+ * Changes from R1:
+ * - Messages are stored in IndexedDB (via BrowserDB/Dexie) on send and receive
+ * - On init, messages are loaded from IndexedDB into state
+ * - On subscribe, a SYNC_REQUEST is sent to get missed messages since last sync
+ * - SYNC_RESPONSE handler stores synced messages in IndexedDB and updates state
  */
 
 import { create } from 'zustand';
 import { useNetworkStore } from './networkStore';
+import { BrowserDB, type DBMessage } from '@muster/db';
 import type { TransportMessage } from '@muster/transport';
 
-// -----------------------------------------------------------------
-// NOTE: Adjust this import to match your @muster/crypto package.
-// -----------------------------------------------------------------
-// import { sign } from '@muster/crypto';
-
-// TEMPORARY stub — replace with real crypto
+// Stub sign — replace with @muster/crypto
 function sign(message: string, _privateKey: string): string {
   return 'stub-signature-' + message.slice(0, 8);
 }
 
-// Simple UUID v4 generator (no dependency needed)
 function uuid(): string {
   return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
     const r = (Math.random() * 16) | 0;
@@ -44,7 +36,6 @@ export interface ChatMessage {
   senderPublicKey: string;
   senderUsername: string;
   timestamp: number;
-  /** Whether this message was sent by the current user. */
   isOwn: boolean;
 }
 
@@ -55,32 +46,37 @@ export interface PresenceUser {
 }
 
 interface ChatState {
-  /** Messages by channel: channelId → messages (sorted by timestamp). */
   messages: Record<string, ChatMessage[]>;
-
-  /** Online users by channel: channelId → users. */
   presence: Record<string, PresenceUser[]>;
-
-  /** Currently selected channel ID. */
   activeChannel: string | null;
-
-  /** Subscribe to one or more channels. */
   subscribe: (channels: string[]) => void;
-
-  /** Unsubscribe from channels. */
   unsubscribe: (channels: string[]) => void;
-
-  /** Send a message to a channel. */
   sendMessage: (channel: string, content: string) => void;
-
-  /** Set the active channel. */
   setActiveChannel: (channelId: string | null) => void;
-
-  /** Clear all messages (e.g. on logout). */
   clear: () => void;
-
-  /** Initialize the store — call once after network connects. */
   init: () => () => void;
+}
+
+// =================================================================
+// Database singleton
+// =================================================================
+
+const browserDB = new BrowserDB();
+
+// =================================================================
+// Helpers
+// =================================================================
+
+function dbMsgToChatMsg(msg: DBMessage, myPublicKey: string): ChatMessage {
+  return {
+    messageId: msg.messageId,
+    channel: msg.channel,
+    content: msg.content,
+    senderPublicKey: msg.senderPublicKey,
+    senderUsername: msg.senderUsername,
+    timestamp: msg.timestamp,
+    isOwn: msg.senderPublicKey === myPublicKey,
+  };
 }
 
 // =================================================================
@@ -98,11 +94,44 @@ export const useChatStore = create<ChatState>((set, get) => ({
       console.warn('[chat] Cannot subscribe — not connected');
       return;
     }
+
+    // Subscribe on the relay
     transport.send({
       type: 'SUBSCRIBE',
       payload: { channels: channelIds },
       timestamp: Date.now(),
     });
+
+    // For each channel, load local messages and request sync
+    const myKey = useNetworkStore.getState().publicKey;
+
+    for (const channelId of channelIds) {
+      // Load existing messages from IndexedDB
+      browserDB.getMessages(channelId).then((dbMsgs) => {
+        if (dbMsgs.length > 0) {
+          const chatMsgs = dbMsgs.map((m) => dbMsgToChatMsg(m, myKey));
+          set((state) => ({
+            messages: {
+              ...state.messages,
+              [channelId]: chatMsgs,
+            },
+          }));
+        }
+      });
+
+      // Request sync from relay — get messages since our last known timestamp
+      browserDB.getLatestTimestamp(channelId).then((since) => {
+        console.log(
+          `[chat] Sync request for #${channelId.slice(0, 8)}...`
+          + ` since ${since ? new Date(since).toISOString() : 'beginning'}`
+        );
+        transport.send({
+          type: 'SYNC_REQUEST',
+          payload: { channel: channelId, since },
+          timestamp: Date.now(),
+        });
+      });
+    }
   },
 
   unsubscribe: (channelIds) => {
@@ -124,11 +153,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     const messageId = uuid();
     const timestamp = Date.now();
-
     const payload = { channel, content, messageId, timestamp };
-
-    // Sign the payload
-    // TODO: Get privateKey from auth store — for now using publicKey as stub
     const signature = sign(JSON.stringify(payload), network.publicKey);
 
     // Send to relay
@@ -140,8 +165,21 @@ export const useChatStore = create<ChatState>((set, get) => ({
       senderPublicKey: network.publicKey,
     });
 
-    // Add to local messages immediately (optimistic update)
-    const msg: ChatMessage = {
+    // Store in IndexedDB
+    const dbMsg: DBMessage = {
+      messageId,
+      channel,
+      content,
+      senderPublicKey: network.publicKey,
+      senderUsername: network.username,
+      timestamp,
+      signature,
+    };
+    browserDB.addMessage(dbMsg);
+    browserDB.setLastSyncTimestamp(channel, timestamp);
+
+    // Add to state (optimistic update)
+    const chatMsg: ChatMessage = {
       messageId,
       channel,
       content,
@@ -154,7 +192,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set((state) => ({
       messages: {
         ...state.messages,
-        [channel]: [...(state.messages[channel] || []), msg],
+        [channel]: [...(state.messages[channel] || []), chatMsg],
       },
     }));
   },
@@ -164,22 +202,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   clear: () => {
+    browserDB.clearAll();
     set({ messages: {}, presence: {}, activeChannel: null });
   },
 
-  /**
-   * Initialize the chat store by listening for incoming messages.
-   * Call this once after the network connects.
-   * Returns a cleanup function to call on unmount/logout.
-   */
   init: () => {
     const network = useNetworkStore.getState();
+    const myKey = network.publicKey;
 
     const unsubscribe = network.onMessage((msg: TransportMessage) => {
       switch (msg.type) {
         case 'MESSAGE': {
           const p = msg.payload as any;
-          const myKey = useNetworkStore.getState().publicKey;
 
           const chatMsg: ChatMessage = {
             messageId: p.messageId,
@@ -191,16 +225,88 @@ export const useChatStore = create<ChatState>((set, get) => ({
             isOwn: p.senderPublicKey === myKey,
           };
 
-          // Don't add duplicates (optimistic update already added own messages)
+          // Store in IndexedDB
+          const dbMsg: DBMessage = {
+            messageId: p.messageId,
+            channel: p.channel,
+            content: p.content,
+            senderPublicKey: p.senderPublicKey,
+            senderUsername: p.senderUsername,
+            timestamp: p.timestamp,
+            signature: (msg as any).signature || '',
+          };
+          browserDB.addMessage(dbMsg);
+          browserDB.setLastSyncTimestamp(p.channel, p.timestamp);
+
+          // Add to state (skip duplicates)
           set((state) => {
             const existing = state.messages[p.channel] || [];
             if (existing.some((m) => m.messageId === chatMsg.messageId)) {
-              return state; // Already have this message
+              return state;
             }
             return {
               messages: {
                 ...state.messages,
                 [p.channel]: [...existing, chatMsg].sort(
+                  (a, b) => a.timestamp - b.timestamp
+                ),
+              },
+            };
+          });
+          break;
+        }
+
+        case 'SYNC_RESPONSE': {
+          const p = msg.payload as any;
+          const syncedMessages: any[] = p.messages || [];
+
+          if (syncedMessages.length === 0) {
+            console.log(`[chat] Sync: no new messages for #${p.channel?.slice(0, 8)}...`);
+            break;
+          }
+
+          console.log(
+            `[chat] Sync: received ${syncedMessages.length} messages`
+            + ` for #${p.channel?.slice(0, 8)}...`
+          );
+
+          // Store all synced messages in IndexedDB
+          const dbMsgs: DBMessage[] = syncedMessages.map((m: any) => ({
+            messageId: m.messageId,
+            channel: m.channel,
+            content: m.content,
+            senderPublicKey: m.senderPublicKey,
+            senderUsername: m.senderUsername,
+            timestamp: m.timestamp,
+            signature: '',
+          }));
+          browserDB.addMessages(dbMsgs);
+
+          // Update last sync timestamp
+          const maxTs = Math.max(...syncedMessages.map((m: any) => m.timestamp));
+          browserDB.setLastSyncTimestamp(p.channel, maxTs);
+
+          // Merge into state
+          const chatMsgs: ChatMessage[] = syncedMessages.map((m: any) => ({
+            messageId: m.messageId,
+            channel: m.channel,
+            content: m.content,
+            senderPublicKey: m.senderPublicKey,
+            senderUsername: m.senderUsername,
+            timestamp: m.timestamp,
+            isOwn: m.senderPublicKey === myKey,
+          }));
+
+          set((state) => {
+            const existing = state.messages[p.channel] || [];
+            const existingIds = new Set(existing.map((m) => m.messageId));
+            const newMsgs = chatMsgs.filter((m) => !existingIds.has(m.messageId));
+            if (newMsgs.length === 0) return state;
+
+            return {
+              messages: {
+                ...state.messages,
+                [p.channel]: [...existing, ...newMsgs].sort(
                   (a, b) => a.timestamp - b.timestamp
                 ),
               },
@@ -226,5 +332,5 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 }));
 
-// TEMPORARY: expose store for R1 testing — remove after R3
+// TEMPORARY: expose store for R1/R2 testing — remove after R3
 (window as any).__chat = useChatStore;

@@ -1,7 +1,7 @@
 {
   "name": "@muster/relay",
-  "version": "0.1.0",
-  "description": "Muster relay node — lightweight WebSocket message relay server",
+  "version": "0.2.0",
+  "description": "Muster relay node — WebSocket relay with SQLite persistence",
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc",
@@ -11,12 +11,14 @@
   },
   "dependencies": {
     "ws": "^8.16.0",
+    "better-sqlite3": "^11.7.0",
     "@muster/crypto": "workspace:*",
     "@muster/protocol": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.4.0",
     "tsx": "^4.7.0",
-    "@types/ws": "^8.5.10"
+    "@types/ws": "^8.5.10",
+    "@types/better-sqlite3": "^7.6.8"
   }
 }

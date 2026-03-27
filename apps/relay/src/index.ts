@@ -1,36 +1,20 @@
 /**
- * Muster Relay Server
+ * Muster Relay Server — R2 update
  *
- * A lightweight WebSocket server that:
- * 1. Authenticates clients via Ed25519 challenge/response
- * 2. Manages channel subscriptions (pub/sub)
- * 3. Relays signed messages between subscribed clients (fan-out)
- * 4. Broadcasts presence (who is online in each channel)
- *
- * The relay NEVER reads message content — it only verifies signatures
- * and forwards. All messages can be E2E encrypted.
+ * Changes from R1:
+ * - Messages are stored in SQLite on every PUBLISH
+ * - New SYNC_REQUEST handler: returns missed messages since a timestamp
+ * - Graceful shutdown closes the database
+ * - Stats now include stored message count
  */
 
 import { WebSocketServer, WebSocket } from 'ws';
 import { randomBytes } from 'crypto';
+import { RelayDB } from './database';
 import type { RelayClient } from './types';
 
 // -----------------------------------------------------------------
-// NOTE: Adjust this import to match your @muster/crypto package API.
-//
-// The crypto package should export a function that verifies an
-// Ed25519 signature. Common names:
-//   verifySignature(message, signature, publicKey) => boolean
-//   verify(message, signature, publicKey) => boolean
-//
-// If your crypto package uses a different name or signature,
-// update the verifyClientSignature() helper below.
-// -----------------------------------------------------------------
-// import { verifySignature } from '@muster/crypto';
-
-// -----------------------------------------------------------------
-// TEMPORARY: Stub verification for initial testing.
-// Replace this with the real @muster/crypto import once confirmed.
+// Signature verification stub — replace with @muster/crypto
 // -----------------------------------------------------------------
 function verifySignature(
   _message: string,
@@ -38,8 +22,6 @@ function verifySignature(
   _publicKey: string
 ): boolean {
   // TODO: Replace with real Ed25519 verification from @muster/crypto
-  // For initial R1 testing, accept all signatures.
-  console.warn('[relay] WARNING: Using stub signature verification — replace with @muster/crypto');
   return true;
 }
 
@@ -48,17 +30,18 @@ function verifySignature(
 // =================================================================
 
 const PORT = parseInt(process.env.MUSTER_WS_PORT || '4002', 10);
-const MAX_MESSAGE_SIZE = 64 * 1024; // 64 KB max message size
+const MAX_MESSAGE_SIZE = 64 * 1024;
+
+// Message retention: 30 days by default (in milliseconds)
+const RETENTION_MS = parseInt(process.env.MUSTER_RETENTION_DAYS || '30', 10) * 24 * 60 * 60 * 1000;
 
 // =================================================================
 // State
 // =================================================================
 
-/** All connected clients, keyed by their WebSocket instance. */
 const clients = new Map<WebSocket, RelayClient>();
-
-/** Channel subscriptions: channel ID → set of subscribed WebSockets. */
 const channels = new Map<string, Set<WebSocket>>();
+const db = new RelayDB();
 
 // =================================================================
 // Server
@@ -70,9 +53,11 @@ const wss = new WebSocketServer({
 });
 
 console.log(`[relay] ====================================`);
-console.log(`[relay]  Muster Relay Node`);
+console.log(`[relay]  Muster Relay Node (R2)`);
 console.log(`[relay]  Listening on port ${PORT}`);
 console.log(`[relay]  Max message size: ${MAX_MESSAGE_SIZE / 1024} KB`);
+console.log(`[relay]  Message retention: ${RETENTION_MS / (24*60*60*1000)} days`);
+console.log(`[relay]  Stored messages: ${db.getMessageCount()}`);
 console.log(`[relay] ====================================`);
 
 wss.on('connection', (ws, req) => {
@@ -92,25 +77,22 @@ wss.on('connection', (ws, req) => {
   clients.set(ws, client);
   console.log(`[relay] Client connected from ${ip} (${clients.size} total)`);
 
-  // Send auth challenge immediately
   sendToClient(client, {
     type: 'AUTH_CHALLENGE',
     payload: { challenge },
     timestamp: Date.now(),
   });
 
-  // Handle incoming messages
   ws.on('message', (raw) => {
     try {
       const data = raw.toString('utf-8');
       const msg = JSON.parse(data);
       handleMessage(client, msg);
-    } catch (err) {
+    } catch {
       console.warn(`[relay] Malformed message from ${client.username || ip}`);
     }
   });
 
-  // Handle disconnect
   ws.on('close', () => {
     handleDisconnect(client);
     console.log(
@@ -119,7 +101,6 @@ wss.on('connection', (ws, req) => {
     );
   });
 
-  // Handle errors
   ws.on('error', (err) => {
     console.error(`[relay] WebSocket error for ${client.username || ip}:`, err.message);
   });
@@ -134,22 +115,22 @@ function handleMessage(client: RelayClient, msg: any): void {
     case 'AUTH_RESPONSE':
       handleAuth(client, msg);
       break;
-
     case 'SUBSCRIBE':
       if (!requireAuth(client)) return;
       handleSubscribe(client, msg);
       break;
-
     case 'UNSUBSCRIBE':
       if (!requireAuth(client)) return;
       handleUnsubscribe(client, msg);
       break;
-
     case 'PUBLISH':
       if (!requireAuth(client)) return;
       handlePublish(client, msg);
       break;
-
+    case 'SYNC_REQUEST':
+      if (!requireAuth(client)) return;
+      handleSyncRequest(client, msg);
+      break;
     default:
       sendToClient(client, {
         type: 'ERROR',
@@ -176,7 +157,6 @@ function handleAuth(client: RelayClient, msg: any): void {
     return;
   }
 
-  // Verify: the client signed our challenge with their private key
   const valid = verifySignature(client.challenge, signature, publicKey);
 
   if (!valid) {
@@ -190,7 +170,6 @@ function handleAuth(client: RelayClient, msg: any): void {
     return;
   }
 
-  // Authentication successful
   client.authenticated = true;
   client.publicKey = publicKey;
   client.username = username;
@@ -212,7 +191,6 @@ function handleSubscribe(client: RelayClient, msg: any): void {
   const channelIds: string[] = msg.payload?.channels || [];
 
   for (const channelId of channelIds) {
-    // Add client to channel
     client.channels.add(channelId);
     if (!channels.has(channelId)) {
       channels.set(channelId, new Set());
@@ -224,7 +202,6 @@ function handleSubscribe(client: RelayClient, msg: any): void {
       + ` (${channels.get(channelId)!.size} in channel)`
     );
 
-    // Broadcast updated presence for this channel
     broadcastPresence(channelId);
   }
 }
@@ -236,7 +213,6 @@ function handleUnsubscribe(client: RelayClient, msg: any): void {
     client.channels.delete(channelId);
     channels.get(channelId)?.delete(client.ws);
 
-    // Clean up empty channels
     if (channels.get(channelId)?.size === 0) {
       channels.delete(channelId);
     } else {
@@ -257,7 +233,6 @@ function handlePublish(client: RelayClient, msg: any): void {
     return;
   }
 
-  // Verify the message signature
   const sigValid = verifySignature(
     JSON.stringify(msg.payload),
     msg.signature || '',
@@ -265,7 +240,6 @@ function handlePublish(client: RelayClient, msg: any): void {
   );
 
   if (!sigValid) {
-    console.warn(`[relay] Invalid message signature from ${client.username}`);
     sendToClient(client, {
       type: 'ERROR',
       payload: { code: 'INVALID_SIGNATURE', message: 'Message signature verification failed' },
@@ -274,7 +248,6 @@ function handlePublish(client: RelayClient, msg: any): void {
     return;
   }
 
-  // Check the sender is subscribed to this channel
   if (!client.channels.has(channel)) {
     sendToClient(client, {
       type: 'ERROR',
@@ -284,7 +257,18 @@ function handlePublish(client: RelayClient, msg: any): void {
     return;
   }
 
-  // Fan-out: send MESSAGE to all other subscribers
+  // ---- R2: Store message in SQLite ----
+  db.storeMessage({
+    messageId,
+    channel,
+    content,
+    senderPublicKey: client.publicKey,
+    senderUsername: client.username,
+    timestamp,
+    signature: msg.signature || '',
+  });
+
+  // Fan-out to all other subscribers
   const subscribers = channels.get(channel);
   if (!subscribers) return;
 
@@ -311,8 +295,50 @@ function handlePublish(client: RelayClient, msg: any): void {
 
   console.log(
     `[relay] ${client.username} → #${channel.slice(0, 8)}...`
-    + ` (delivered to ${delivered} clients)`
+    + ` (delivered to ${delivered}, stored in DB)`
   );
+}
+
+// =================================================================
+// Sync — R2
+// =================================================================
+
+function handleSyncRequest(client: RelayClient, msg: any): void {
+  const { channel, since } = msg.payload || {};
+
+  if (!channel || since === undefined) {
+    sendToClient(client, {
+      type: 'ERROR',
+      payload: { code: 'INVALID_SYNC', message: 'Missing channel or since timestamp' },
+      timestamp: Date.now(),
+    });
+    return;
+  }
+
+  // Fetch messages from SQLite
+  const messages = db.getMessagesSince(channel, since);
+
+  console.log(
+    `[relay] Sync: ${client.username} requested #${channel.slice(0, 8)}...`
+    + ` since ${new Date(since).toISOString()}`
+    + ` → ${messages.length} messages`
+  );
+
+  sendToClient(client, {
+    type: 'SYNC_RESPONSE',
+    payload: {
+      channel,
+      messages: messages.map((m) => ({
+        channel: m.channel,
+        content: m.content,
+        messageId: m.messageId,
+        timestamp: m.timestamp,
+        senderPublicKey: m.senderPublicKey,
+        senderUsername: m.senderUsername,
+      })),
+    },
+    timestamp: Date.now(),
+  });
 }
 
 // =================================================================
@@ -323,7 +349,6 @@ function broadcastPresence(channelId: string): void {
   const subscribers = channels.get(channelId);
   if (!subscribers) return;
 
-  // Build list of online users in this channel
   const users: Array<{ publicKey: string; username: string; status: string }> = [];
   for (const ws of subscribers) {
     const client = clients.get(ws);
@@ -336,7 +361,6 @@ function broadcastPresence(channelId: string): void {
     }
   }
 
-  // Send presence update to all subscribers
   const presenceMsg = JSON.stringify({
     type: 'PRESENCE',
     payload: { channel: channelId, users },
@@ -351,23 +375,18 @@ function broadcastPresence(channelId: string): void {
 }
 
 // =================================================================
-// Disconnect cleanup
+// Disconnect
 // =================================================================
 
 function handleDisconnect(client: RelayClient): void {
-  // Remove from all channels and broadcast updated presence
   for (const channelId of client.channels) {
     channels.get(channelId)?.delete(client.ws);
-
-    // Broadcast presence update
     if (channels.get(channelId)?.size) {
       broadcastPresence(channelId);
     } else {
       channels.delete(channelId);
     }
   }
-
-  // Remove from clients map
   clients.delete(client.ws);
 }
 
@@ -394,23 +413,34 @@ function requireAuth(client: RelayClient): boolean {
 }
 
 // =================================================================
+// Maintenance — daily cleanup of old messages
+// =================================================================
+
+function cleanupOldMessages(): void {
+  const cutoff = Date.now() - RETENTION_MS;
+  const deleted = db.deleteOlderThan(cutoff);
+  if (deleted > 0) {
+    console.log(`[relay] Cleanup: deleted ${deleted} messages older than ${RETENTION_MS / (24*60*60*1000)} days`);
+  }
+}
+
+// Run cleanup every 6 hours
+setInterval(cleanupOldMessages, 6 * 60 * 60 * 1000);
+
+// =================================================================
 // Graceful shutdown
 // =================================================================
 
 function shutdown(): void {
   console.log('[relay] Shutting down...');
-
-  // Close all client connections
   for (const [ws] of clients) {
     ws.close(1001, 'server shutting down');
   }
-
   wss.close(() => {
+    db.close();
     console.log('[relay] Server closed.');
     process.exit(0);
   });
-
-  // Force exit after 5 seconds
   setTimeout(() => process.exit(0), 5000);
 }
 
@@ -418,7 +448,7 @@ process.on('SIGTERM', shutdown);
 process.on('SIGINT', shutdown);
 
 // =================================================================
-// Stats logging (every 60 seconds)
+// Stats (every 60 seconds)
 // =================================================================
 
 setInterval(() => {
@@ -426,6 +456,7 @@ setInterval(() => {
   console.log(
     `[relay] Stats: ${clients.size} connections,`
     + ` ${authClients} authenticated,`
-    + ` ${channels.size} active channels`
+    + ` ${channels.size} active channels,`
+    + ` ${db.getMessageCount()} stored messages`
   );
 }, 60_000);

@@ -73,7 +73,8 @@ interface NetworkState {
 // UPDATE THIS to your relay node's address (DuckDNS domain + port).
 // During local development, use ws://localhost:4002
 const DEFAULT_RELAY_URL =
-  import.meta?.env?.VITE_RELAY_URL || 'ws://musternode.duckdns.org:4002';
+  import.meta?.env?.VITE_RELAY_URL || 'ws://192.168.1.73:4002';
+  //import.meta?.env?.VITE_RELAY_URL || 'ws://musternode.duckdns.org:4002';
   //import.meta?.env?.VITE_RELAY_URL || 'ws://localhost:4002';
 
 // =================================================================

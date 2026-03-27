@@ -20,7 +20,8 @@
     "react-i18next": "^14.1.2",
     "vite-plugin-node-polyfills": "^0.25.0",
     "zustand": "^4.5.2",
-    "@muster/transport": "workspace:*"
+    "@muster/transport": "workspace:*",
+    "@muster/db": "workspace:*"
   },
   "devDependencies": {
     "@types/react": "^18.3.3",
