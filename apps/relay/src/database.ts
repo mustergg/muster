@@ -1,12 +1,9 @@
 /**
- * Relay Database — SQLite message storage using better-sqlite3.
+ * Relay Database — R3 update
  *
- * Stores all messages that pass through the relay so they can be
- * delivered to clients that reconnect after being offline (sync).
- *
- * Data is stored in ~/.muster-relay/relay.db by default.
- *
- * This file is Node.js only — it is NOT used in the browser.
+ * Changes from R2:
+ * - Exposes the internal SQLite database instance via getDB()
+ *   so CommunityDB can share the same database file.
  */
 
 import Database from 'better-sqlite3';
@@ -28,7 +25,6 @@ export class RelayDB {
   private db: Database.Database;
 
   constructor(dbPath?: string) {
-    // Default path: ~/.muster-relay/relay.db
     const dir = dbPath
       ? dbPath.substring(0, dbPath.lastIndexOf('/'))
       : join(homedir(), '.muster-relay');
@@ -39,17 +35,15 @@ export class RelayDB {
 
     const fullPath = dbPath || join(dir, 'relay.db');
     this.db = new Database(fullPath);
-
-    // Enable WAL mode for better concurrent read/write performance
     this.db.pragma('journal_mode = WAL');
-
     this.createTables();
     console.log(`[relay-db] Database opened at ${fullPath}`);
   }
 
-  // =================================================================
-  // Schema
-  // =================================================================
+  /** Expose the internal database instance for shared use (e.g. CommunityDB). */
+  getDB(): Database.Database {
+    return this.db;
+  }
 
   private createTables(): void {
     this.db.exec(`
@@ -71,11 +65,6 @@ export class RelayDB {
     `);
   }
 
-  // =================================================================
-  // Operations
-  // =================================================================
-
-  /** Store a message. Ignores duplicates (same messageId). */
   storeMessage(msg: RelayDBMessage): void {
     const stmt = this.db.prepare(`
       INSERT OR IGNORE INTO messages
@@ -86,11 +75,6 @@ export class RelayDB {
     stmt.run(msg);
   }
 
-  /**
-   * Get messages for a channel since a given timestamp.
-   * Used for sync responses — returns messages newer than `since`.
-   * Limited to 500 messages per request to prevent memory issues.
-   */
   getMessagesSince(channel: string, since: number, limit = 500): RelayDBMessage[] {
     const stmt = this.db.prepare(`
       SELECT messageId, channel, content, senderPublicKey, senderUsername, timestamp, signature
@@ -102,33 +86,24 @@ export class RelayDB {
     return stmt.all(channel, since, limit) as RelayDBMessage[];
   }
 
-  /** Get the total message count (for stats). */
   getMessageCount(): number {
     const stmt = this.db.prepare('SELECT COUNT(*) as count FROM messages');
     return (stmt.get() as any).count;
   }
 
-  /** Get message count per channel (for stats). */
   getChannelStats(): Array<{ channel: string; count: number; latest: number }> {
     const stmt = this.db.prepare(`
       SELECT channel, COUNT(*) as count, MAX(timestamp) as latest
-      FROM messages
-      GROUP BY channel
-      ORDER BY latest DESC
+      FROM messages GROUP BY channel ORDER BY latest DESC
     `);
     return stmt.all() as any[];
   }
 
-  /**
-   * Delete messages older than a given timestamp.
-   * Used for storage management / retention policy.
-   */
   deleteOlderThan(timestamp: number): number {
     const stmt = this.db.prepare('DELETE FROM messages WHERE timestamp < ?');
     return stmt.run(timestamp).changes;
   }
 
-  /** Close the database connection. Call on shutdown. */
   close(): void {
     this.db.close();
     console.log('[relay-db] Database closed.');

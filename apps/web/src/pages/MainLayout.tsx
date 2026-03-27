@@ -30,19 +30,23 @@ export default function MainLayout(): React.JSX.Element {
     }
   }, [isAuthenticated]);
 
-  // Initialize chat message handler when connected
+  // Initialize chat and community message handlers when connected
   const chatInit = useChatStore((s) => s.init);
+  const communityInit = useCommunityStore((s) => s.initRelay);
   useEffect(() => {
     if (status === 'connected') {
-      const cleanup = chatInit();
-      return cleanup;
+      const chatCleanup = chatInit();
+      const communityCleanup = communityInit();
+
+      // Load communities from relay (and localStorage cache)
+      loadCommunities();
+
+      return () => {
+        chatCleanup();
+        communityCleanup();
+      };
     }
   }, [status]);
-
-  // Load communities from localStorage on mount
-  useEffect(() => {
-    loadCommunities();
-  }, []);
 
   return (
     <div style={styles.shell}>

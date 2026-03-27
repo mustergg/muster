@@ -52,3 +52,4 @@ export {
 } from './permissions.js';
 
 export * from './ws-messages.js';
+export * from './community-messages.js';
