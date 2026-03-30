@@ -53,3 +53,4 @@ export {
 
 export * from './ws-messages.js';
 export * from './community-messages.js';
+export * from './dm-messages.js';

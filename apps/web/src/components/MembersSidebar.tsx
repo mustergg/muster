@@ -2,34 +2,77 @@ import React from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNetworkStore } from '../stores/networkStore.js';
 import { useCommunityStore } from '../stores/communityStore.js';
+import { useDMStore } from '../stores/dmStore.js';
 
 interface Props { communityId: string | null; }
+
+const ROLE_BADGE: Record<string, { label: string; color: string }> = {
+  owner:     { label: '\u{1F451}', color: '#FFD700' },
+  admin:     { label: '\u{1F6E1}\uFE0F', color: '#3B82F6' },
+  moderator: { label: '\u{1F528}', color: '#8B5CF6' },
+  member:    { label: '',         color: '' },
+};
 
 export default function MembersSidebar({ communityId }: Props): React.JSX.Element {
   const { t } = useTranslation();
   const { peerCount, status } = useNetworkStore();
-  const { onlineMembers }     = useCommunityStore();
+  const { onlineMembers, members: communityMembers } = useCommunityStore();
+  const { openConversation } = useDMStore();
 
-  const members = communityId ? (onlineMembers[communityId] ?? []) : [];
+  const online = communityId ? (onlineMembers[communityId] ?? []) : [];
+  const roster = communityId ? (communityMembers[communityId] ?? []) : [];
+
+  // Build a role lookup from the roster
+  const roleMap = new Map<string, string>();
+  for (const m of roster) {
+    roleMap.set(m.publicKey, m.role);
+  }
+
+  const handleDMClick = (publicKey: string) => {
+    openConversation(publicKey);
+  };
 
   return (
     <div style={styles.sidebar}>
       <div style={styles.header}>
-        {t('community.members')} — {members.length || peerCount} online
+        {t('community.members')} — {online.length || peerCount} online
       </div>
       <div style={styles.list}>
-        {members.length > 0 ? (
+        {online.length > 0 ? (
           <>
-            <div style={styles.sectionTitle}>Online — {members.length}</div>
-            {members.map((m) => {
-              const hue = parseInt(m.publicKeyHex.slice(0, 4), 16) % 360;
+            <div style={styles.sectionTitle}>Online — {online.length}</div>
+            {online.map((m) => {
+              const key = m.publicKey;
+              const hue = parseInt((key || '0000').slice(0, 4), 16) % 360;
+              const role = roleMap.get(key) || 'member';
+              const badge = ROLE_BADGE[role] || ROLE_BADGE.member;
+
               return (
-                <div key={m.publicKeyHex} style={styles.memberItem}>
+                <div key={key} style={styles.memberItem}>
                   <div style={{ ...styles.avatar, background: `hsl(${hue},40%,20%)`, color: `hsl(${hue},70%,65%)`, position: 'relative' as const }}>
-                    {m.username.slice(0, 2).toUpperCase()}
+                    {(m.username || '??').slice(0, 2).toUpperCase()}
                     <div style={styles.onlineDot} />
                   </div>
-                  <span style={styles.memberName}>{m.username}</span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                      <span style={styles.memberName}>{m.username}</span>
+                      {badge.label && (
+                        <span style={{ fontSize: '10px' }} title={role}>{badge.label}</span>
+                      )}
+                    </div>
+                    {role !== 'member' && (
+                      <span style={{ fontSize: '9px', color: badge.color, fontFamily: 'var(--font-mono)' }}>
+                        {role}
+                      </span>
+                    )}
+                  </div>
+                  <button
+                    onClick={() => handleDMClick(key)}
+                    style={styles.dmBtn}
+                    title={`DM ${m.username}`}
+                  >
+                    DM
+                  </button>
                 </div>
               );
             })}
@@ -50,7 +93,7 @@ export default function MembersSidebar({ communityId }: Props): React.JSX.Elemen
         <div style={styles.statsTitle}>NODE STATUS</div>
         <StatRow label="peers"      value={String(peerCount)}   color="var(--color-green)" />
         <StatRow label="transport"  value="WebSocket"           color="var(--color-accent)" />
-        <StatRow label="encryption" value="noise ✓"            color="var(--color-green)" />
+        <StatRow label="encryption" value="E2E ready"           color="var(--color-green)" />
         <StatRow label="status"     value={status}              color={status === 'connected' ? 'var(--color-green)' : 'var(--color-amber)'} />
       </div>
     </div>
@@ -76,6 +119,7 @@ const styles = {
   onlineDot:   { position:'absolute' as const, bottom:'-1px', right:'-1px', width:'9px', height:'9px', borderRadius:'50%', background:'var(--color-green)', border:'2px solid var(--color-bg-secondary)' } as React.CSSProperties,
   memberName:  { fontSize:'12px', color:'var(--color-text-secondary)' } as React.CSSProperties,
   emptyNote:   { fontSize:'11px', color:'var(--color-text-muted)', padding:'4px 12px', lineHeight:1.5 } as React.CSSProperties,
+  dmBtn:       { fontSize:'9px', padding:'2px 6px', borderRadius:'4px', border:'1px solid var(--color-border)', background:'transparent', color:'var(--color-text-muted)', cursor:'pointer', flexShrink:0, fontFamily:'var(--font-mono)' } as React.CSSProperties,
   stats:       { padding:'8px 12px', borderTop:'1px solid var(--color-border)', background:'var(--color-bg-tertiary)' } as React.CSSProperties,
   statsTitle:  { fontSize:'9px', fontFamily:'var(--font-mono)', color:'var(--color-text-muted)', marginBottom:'5px', letterSpacing:'0.05em' } as React.CSSProperties,
 } as const;

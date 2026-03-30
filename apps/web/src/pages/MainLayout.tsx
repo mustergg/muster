@@ -7,6 +7,7 @@ import { useNetworkStore } from '../stores/networkStore.js';
 import { useCommunityStore } from '../stores/communityStore.js';
 import { useAuthStore } from '../stores/authStore.js';
 import { useChatStore } from '../stores/chatStore.js';
+import { useDMStore } from '../stores/dmStore.js';
 
 export interface ActiveLocation {
   communityId: string;
@@ -15,12 +16,11 @@ export interface ActiveLocation {
 }
 
 export default function MainLayout(): React.JSX.Element {
-  const [active, setActive]                   = useState<ActiveLocation | null>(null);
+  const [active, setActive]                       = useState<ActiveLocation | null>(null);
   const [activeCommunityId, setActiveCommunityId] = useState<string | null>(null);
   const { connect, status }   = useNetworkStore();
   const { loadCommunities }   = useCommunityStore();
 
-  // Auto-connect only if user is already authenticated (e.g. returning session)
   const { isAuthenticated } = useAuthStore();
   useEffect(() => {
     if (status === 'disconnected' && isAuthenticated) {
@@ -30,23 +30,29 @@ export default function MainLayout(): React.JSX.Element {
     }
   }, [isAuthenticated]);
 
-  // Initialize chat and community message handlers when connected
-  const chatInit = useChatStore((s) => s.init);
-  const communityInit = useCommunityStore((s) => s.initRelay);
+  // Initialize all message handlers when connected
+  const chatInit      = useChatStore((s) => s.init);
+  const communityInit = useCommunityStore((s) => s.init);
+  const dmInit        = useDMStore((s) => s.init);
   useEffect(() => {
     if (status === 'connected') {
-      const chatCleanup = chatInit();
-      const communityCleanup = communityInit();
+      const cleanupChat      = chatInit();
+      const cleanupCommunity = communityInit();
+      const cleanupDM        = dmInit();
 
-      // Load communities from relay (and localStorage cache)
       loadCommunities();
 
       return () => {
-        chatCleanup();
-        communityCleanup();
+        cleanupChat();
+        cleanupCommunity();
+        cleanupDM();
       };
     }
   }, [status]);
+
+  useEffect(() => {
+    loadCommunities();
+  }, []);
 
   return (
     <div style={styles.shell}>
