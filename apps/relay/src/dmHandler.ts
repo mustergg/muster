@@ -1,7 +1,9 @@
 /**
- * DM handler — processes direct message requests on the relay.
+ * DM handler — R5b fix
  *
- * Handles: SEND_DM, DM_HISTORY_REQUEST, DM_CONVERSATIONS_REQUEST
+ * Fixes:
+ * - Stores recipientUsername when sending DMs (for conversation list display)
+ * - Resolves usernames from connected clients for conversation list
  */
 
 import { WebSocket } from 'ws';
@@ -23,7 +25,7 @@ export function handleDMMessage(
       handleDMHistory(client, msg, dmDB, sendToClient);
       break;
     case 'DM_CONVERSATIONS_REQUEST':
-      handleDMConversations(client, dmDB, sendToClient);
+      handleDMConversations(client, dmDB, sendToClient, clients);
       break;
   }
 }
@@ -46,22 +48,31 @@ function handleSendDM(
     return;
   }
 
-  // Store the DM
+  // Resolve recipient username from connected clients
+  let recipientUsername = '';
+  for (const [, c] of clients) {
+    if (c.authenticated && c.publicKey === recipientPublicKey) {
+      recipientUsername = c.username;
+      break;
+    }
+  }
+
+  // Store the DM with both sender and recipient usernames
   dmDB.storeMessage({
     messageId,
     senderPublicKey: client.publicKey,
     senderUsername: client.username,
     recipientPublicKey,
+    recipientUsername,
     content,
     timestamp,
     signature: msg.signature || '',
   });
 
   console.log(
-    `[relay] DM: ${client.username} → ${recipientPublicKey.slice(0, 8)}...`
+    `[relay] DM: ${client.username} → ${recipientUsername || recipientPublicKey.slice(0, 8)}...`
   );
 
-  // Build the outgoing message
   const dmMsg = {
     type: 'DM_MESSAGE',
     payload: {
@@ -70,6 +81,7 @@ function handleSendDM(
       senderPublicKey: client.publicKey,
       senderUsername: client.username,
       recipientPublicKey,
+      recipientUsername,
       timestamp,
     },
     signature: msg.signature || '',
@@ -84,11 +96,11 @@ function handleSendDM(
     }
   }
 
-  // Also send back to sender (so their UI updates across tabs/devices)
+  // Also send back to sender
   sendToClient(client, dmMsg);
 
   if (!delivered) {
-    console.log(`[relay] DM stored for offline delivery: ${recipientPublicKey.slice(0, 8)}...`);
+    console.log(`[relay] DM queued for offline: ${recipientPublicKey.slice(0, 8)}...`);
   }
 }
 
@@ -102,11 +114,6 @@ function handleDMHistory(
   if (!otherPublicKey) return;
 
   const messages = dmDB.getHistory(client.publicKey, otherPublicKey, since || 0);
-
-  console.log(
-    `[relay] DM history: ${client.username} ↔ ${otherPublicKey.slice(0, 8)}...`
-    + ` → ${messages.length} messages`
-  );
 
   sendToClient(client, {
     type: 'DM_HISTORY_RESPONSE',
@@ -129,16 +136,28 @@ function handleDMConversations(
   client: RelayClient,
   dmDB: DMDB,
   sendToClient: (client: RelayClient, msg: Record<string, unknown>) => void,
+  clients: Map<WebSocket, RelayClient>,
 ): void {
   const conversations = dmDB.getConversations(client.publicKey);
 
-  // Resolve usernames from connected clients
+  // Resolve any missing usernames from currently connected clients
+  for (const conv of conversations) {
+    if (!conv.username || conv.username.endsWith('...')) {
+      for (const [, c] of clients) {
+        if (c.authenticated && c.publicKey === conv.publicKey) {
+          conv.username = c.username;
+          break;
+        }
+      }
+    }
+  }
+
   sendToClient(client, {
     type: 'DM_CONVERSATIONS_RESPONSE',
     payload: {
       conversations: conversations.map((c) => ({
         ...c,
-        unreadCount: 0, // TODO: implement unread tracking
+        unreadCount: 0,
       })),
     },
     timestamp: Date.now(),

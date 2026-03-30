@@ -1,5 +1,9 @@
 /**
- * DM Database — SQLite tables for direct messages.
+ * DM Database — R5b fix
+ *
+ * Fixes:
+ * - getConversations() now properly resolves partner username
+ * - Uses two separate queries to get the correct other-user info
  */
 
 import type Database from 'better-sqlite3';
@@ -25,13 +29,18 @@ export function initDMTables(db: Database.Database): void {
       timestamp          INTEGER NOT NULL,
       signature          TEXT NOT NULL
     );
-
     CREATE INDEX IF NOT EXISTS idx_dm_participants
       ON direct_messages (senderPublicKey, recipientPublicKey, timestamp);
-
     CREATE INDEX IF NOT EXISTS idx_dm_recipient
       ON direct_messages (recipientPublicKey, timestamp);
   `);
+
+  // Add recipientUsername column if not exists (migration for existing DBs)
+  try {
+    db.exec(`ALTER TABLE direct_messages ADD COLUMN recipientUsername TEXT NOT NULL DEFAULT ''`);
+  } catch {
+    // Column already exists — ignore
+  }
 }
 
 export class DMDB {
@@ -43,20 +52,18 @@ export class DMDB {
     console.log('[relay-db] DM tables initialized.');
   }
 
-  /** Store a DM. */
-  storeMessage(msg: DBDirectMessage): void {
+  storeMessage(msg: DBDirectMessage & { recipientUsername?: string }): void {
     this.db.prepare(`
       INSERT OR IGNORE INTO direct_messages
-        (messageId, senderPublicKey, senderUsername, recipientPublicKey, content, timestamp, signature)
+        (messageId, senderPublicKey, senderUsername, recipientPublicKey, recipientUsername, content, timestamp, signature)
       VALUES
-        (@messageId, @senderPublicKey, @senderUsername, @recipientPublicKey, @content, @timestamp, @signature)
-    `).run(msg);
+        (@messageId, @senderPublicKey, @senderUsername, @recipientPublicKey, @recipientUsername, @content, @timestamp, @signature)
+    `).run({
+      ...msg,
+      recipientUsername: msg.recipientUsername || '',
+    });
   }
 
-  /**
-   * Get DM history between two users since a timestamp.
-   * Returns messages in both directions, sorted by time.
-   */
   getHistory(userA: string, userB: string, since: number, limit = 200): DBDirectMessage[] {
     return this.db.prepare(`
       SELECT * FROM direct_messages
@@ -71,8 +78,7 @@ export class DMDB {
   }
 
   /**
-   * Get list of DM conversations for a user.
-   * Returns the latest message per conversation partner.
+   * Get DM conversations for a user — properly resolves partner username.
    */
   getConversations(publicKey: string): Array<{
     publicKey: string;
@@ -80,35 +86,50 @@ export class DMDB {
     lastMessage: string;
     lastTimestamp: number;
   }> {
-    // Get the latest message for each conversation partner
-    const rows = this.db.prepare(`
-      SELECT
-        CASE
-          WHEN senderPublicKey = ? THEN recipientPublicKey
-          ELSE senderPublicKey
-        END as otherKey,
-        CASE
-          WHEN senderPublicKey = ? THEN ''
-          ELSE senderUsername
-        END as otherUsername,
-        content as lastMessage,
-        MAX(timestamp) as lastTimestamp
-      FROM direct_messages
-      WHERE senderPublicKey = ? OR recipientPublicKey = ?
-      GROUP BY otherKey
-      ORDER BY lastTimestamp DESC
-    `).all(publicKey, publicKey, publicKey, publicKey) as any[];
+    // Step 1: Get all unique conversation partners
+    const sent = this.db.prepare(`
+      SELECT DISTINCT recipientPublicKey as partnerKey, recipientUsername as partnerName
+      FROM direct_messages WHERE senderPublicKey = ? AND recipientUsername != ''
+    `).all(publicKey) as any[];
 
-    // Resolve usernames for cases where we sent the last message
-    return rows.map((r) => ({
-      publicKey: r.otherKey,
-      username: r.otherUsername || r.otherKey.slice(0, 8) + '...',
-      lastMessage: r.lastMessage.slice(0, 100),
-      lastTimestamp: r.lastTimestamp,
-    }));
+    const received = this.db.prepare(`
+      SELECT DISTINCT senderPublicKey as partnerKey, senderUsername as partnerName
+      FROM direct_messages WHERE recipientPublicKey = ?
+    `).all(publicKey) as any[];
+
+    // Build a map of partner publicKey → username
+    const partnerMap = new Map<string, string>();
+    for (const r of received) partnerMap.set(r.partnerKey, r.partnerName);
+    for (const s of sent) {
+      if (s.partnerName) partnerMap.set(s.partnerKey, s.partnerName);
+    }
+
+    // Step 2: For each partner, get the latest message
+    const conversations: Array<{ publicKey: string; username: string; lastMessage: string; lastTimestamp: number }> = [];
+
+    for (const [partnerKey, partnerUsername] of partnerMap) {
+      const latest = this.db.prepare(`
+        SELECT content, timestamp FROM direct_messages
+        WHERE (senderPublicKey = ? AND recipientPublicKey = ?)
+           OR (senderPublicKey = ? AND recipientPublicKey = ?)
+        ORDER BY timestamp DESC LIMIT 1
+      `).get(publicKey, partnerKey, partnerKey, publicKey) as any;
+
+      if (latest) {
+        conversations.push({
+          publicKey: partnerKey,
+          username: partnerUsername || partnerKey.slice(0, 8) + '...',
+          lastMessage: (latest.content || '').slice(0, 100),
+          lastTimestamp: latest.timestamp,
+        });
+      }
+    }
+
+    // Sort by most recent
+    conversations.sort((a, b) => b.lastTimestamp - a.lastTimestamp);
+    return conversations;
   }
 
-  /** Get total DM count. */
   getCount(): number {
     return (this.db.prepare('SELECT COUNT(*) as c FROM direct_messages').get() as any).c;
   }

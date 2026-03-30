@@ -98,6 +98,7 @@ interface CommunityState {
   subscribePresence: (communityId: string) => () => void;
   announcePresence: (communityId: string) => Promise<void>;
   serveCommunityRequests: (communityId: string) => () => void;
+  leaveCommunity: (communityId: string) => void;
 
   /** Internal: initialize relay message listener. Called by MainLayout. */
   initRelay: () => () => void;
@@ -175,17 +176,34 @@ export const useCommunityStore = create<CommunityState>()((set, get) => {
         break;
       }
 
-      case 'PRESENCE': {
+case 'PRESENCE': {
         const p = msg.payload as any;
-        // Map channel presence to community presence
-        // For now, use channel ID as the key (will be refined when we know
-        // which channels belong to which community)
-        set((state) => ({
-          onlineMembers: {
-            ...state.onlineMembers,
-            [p.channel]: p.users || [],
-          },
-        }));
+        const channelId = p.channel;
+        const users = p.users || [];
+
+        // Find which community this channel belongs to
+        const communities = get().communities;
+        let communityId = channelId; // fallback to channel ID
+        for (const [cid, community] of Object.entries(communities)) {
+          if (community.channels?.some((ch: any) => ch.id === channelId)) {
+            communityId = cid;
+            break;
+          }
+        }
+
+        // Aggregate: merge users from all channels of the same community
+        set((state) => {
+          const existing = state.onlineMembers[communityId] || [];
+          const merged = new Map<string, any>();
+          for (const u of existing) merged.set(u.publicKey, u);
+          for (const u of users) merged.set(u.publicKey, u);
+          return {
+            onlineMembers: {
+              ...state.onlineMembers,
+              [communityId]: [...merged.values()],
+            },
+          };
+        });
         break;
       }
 
@@ -278,6 +296,17 @@ export const useCommunityStore = create<CommunityState>()((set, get) => {
       });
     },
 
+leaveCommunity: (communityId: string) => {
+    const { transport } = useNetworkStore.getState();
+    if (transport?.isConnected) {
+      transport.send({ type: 'LEAVE_COMMUNITY', payload: { communityId }, timestamp: Date.now() });
+    }
+    // Remove locally
+    const updated = { ...get().communities };
+    delete updated[communityId];
+    set({ communities: updated });
+    saveToLocalStorage(updated);
+  },
     generateInvite: (communityId) => {
       return buildInviteLink(communityId);
     },
@@ -334,3 +363,4 @@ export const useCommunityStore = create<CommunityState>()((set, get) => {
     },
   };
 });
+(window as any).__community = useCommunityStore;

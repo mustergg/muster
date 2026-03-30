@@ -2,51 +2,39 @@ import React from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNetworkStore } from '../stores/networkStore.js';
 import { useCommunityStore } from '../stores/communityStore.js';
-import { useDMStore } from '../stores/dmStore.js';
 
-interface Props { communityId: string | null; }
+interface Props {
+  communityId: string | null;
+  onOpenDM?: (publicKey: string) => void;
+}
 
 const ROLE_BADGE: Record<string, { label: string; color: string }> = {
   owner:     { label: '\u{1F451}', color: '#FFD700' },
   admin:     { label: '\u{1F6E1}\uFE0F', color: '#3B82F6' },
   moderator: { label: '\u{1F528}', color: '#8B5CF6' },
-  member:    { label: '',         color: '' },
+  member:    { label: '',          color: '' },
 };
 
-export default function MembersSidebar({ communityId }: Props): React.JSX.Element {
+export default function MembersSidebar({ communityId, onOpenDM }: Props): React.JSX.Element {
   const { t } = useTranslation();
-  const { peerCount, status } = useNetworkStore();
+  const { peerCount, status, publicKey: myKey } = useNetworkStore();
   const { onlineMembers } = useCommunityStore();
-  const communityMembers: Record<string, any[]> = {};
-  const { openConversation } = useDMStore();
 
-  const online = communityId ? (onlineMembers[communityId] ?? []) : [];
-  const roster = communityId ? (communityMembers[communityId] ?? []) : [];
-
-  // Build a role lookup from the roster
-  const roleMap = new Map<string, string>();
-  for (const m of roster) {
-    roleMap.set(m.publicKey, m.role);
-  }
-
-  const handleDMClick = (publicKey: string) => {
-    openConversation(publicKey);
-  };
+  const members = communityId ? (onlineMembers[communityId] ?? []) : [];
 
   return (
     <div style={styles.sidebar}>
       <div style={styles.header}>
-        {t('community.members')} — {online.length || peerCount} online
+        {t('community.members')} — {members.length || peerCount} online
       </div>
       <div style={styles.list}>
-        {online.length > 0 ? (
+        {members.length > 0 ? (
           <>
-            <div style={styles.sectionTitle}>Online — {online.length}</div>
-            {online.map((m) => {
+            <div style={styles.sectionTitle}>Online — {members.length}</div>
+            {members.map((m) => {
               const key = m.publicKey;
               const hue = parseInt((key || '0000').slice(0, 4), 16) % 360;
-              const role = roleMap.get(key) || 'member';
-              const badge = ROLE_BADGE[role] || ROLE_BADGE.member;
+              const isMe = key === myKey;
 
               return (
                 <div key={key} style={styles.memberItem}>
@@ -55,25 +43,19 @@ export default function MembersSidebar({ communityId }: Props): React.JSX.Elemen
                     <div style={styles.onlineDot} />
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                      <span style={styles.memberName}>{m.username}</span>
-                      {badge.label && (
-                        <span style={{ fontSize: '10px' }} title={role}>{badge.label}</span>
-                      )}
-                    </div>
-                    {role !== 'member' && (
-                      <span style={{ fontSize: '9px', color: badge.color, fontFamily: 'var(--font-mono)' }}>
-                        {role}
-                      </span>
-                    )}
+                    <span style={styles.memberName}>
+                      {m.username}{isMe ? ' (you)' : ''}
+                    </span>
                   </div>
-                  <button
-                    onClick={() => handleDMClick(key)}
-                    style={styles.dmBtn}
-                    title={`DM ${m.username}`}
-                  >
-                    DM
-                  </button>
+                  {!isMe && onOpenDM && (
+                    <button
+                      onClick={() => onOpenDM(key)}
+                      style={styles.dmBtn}
+                      title={`DM ${m.username}`}
+                    >
+                      DM
+                    </button>
+                  )}
                 </div>
               );
             })}
@@ -89,7 +71,6 @@ export default function MembersSidebar({ communityId }: Props): React.JSX.Elemen
         )}
       </div>
 
-      {/* P2P stats */}
       <div style={styles.stats}>
         <div style={styles.statsTitle}>NODE STATUS</div>
         <StatRow label="peers"      value={String(peerCount)}   color="var(--color-green)" />
