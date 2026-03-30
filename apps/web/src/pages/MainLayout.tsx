@@ -32,7 +32,7 @@ export default function MainLayout(): React.JSX.Element {
 
   // Initialize all message handlers when connected
   const chatInit      = useChatStore((s) => s.init);
-  const communityInit = useCommunityStore((s) => s.init);
+  const communityInit = useCommunityStore((s) => s.initRelay);
   const dmInit        = useDMStore((s) => s.init);
   useEffect(() => {
     if (status === 'connected') {

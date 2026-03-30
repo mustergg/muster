@@ -16,7 +16,8 @@ const ROLE_BADGE: Record<string, { label: string; color: string }> = {
 export default function MembersSidebar({ communityId }: Props): React.JSX.Element {
   const { t } = useTranslation();
   const { peerCount, status } = useNetworkStore();
-  const { onlineMembers, members: communityMembers } = useCommunityStore();
+  const { onlineMembers } = useCommunityStore();
+  const communityMembers: Record<string, any[]> = {};
   const { openConversation } = useDMStore();
 
   const online = communityId ? (onlineMembers[communityId] ?? []) : [];
