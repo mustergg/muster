@@ -23,6 +23,7 @@ async function initMailer(): Promise<void> {
   }
 
   try {
+    // @ts-ignore — nodemailer is optional, only needed if SMTP is configured
     const nodemailer = await import('nodemailer');
     transporter = nodemailer.createTransport({
       host,
