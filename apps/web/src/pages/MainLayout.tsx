@@ -5,6 +5,7 @@ import ChatArea from '../components/ChatArea.js';
 import MembersSidebar from '../components/MembersSidebar.js';
 import DMConversationList from '../components/DMConversationList.js';
 import DMChatArea from '../components/DMChatArea.js';
+import VerificationBanner from '../components/VerificationBanner.js';
 import { useNetworkStore } from '../stores/networkStore.js';
 import { useCommunityStore } from '../stores/communityStore.js';
 import { useAuthStore } from '../stores/authStore.js';
@@ -30,90 +31,74 @@ export default function MainLayout(): React.JSX.Element {
   const { isAuthenticated } = useAuthStore();
   useEffect(() => {
     if (status === 'disconnected' && isAuthenticated) {
-      connect().catch((err: unknown) => {
-        console.warn('[Network] Auto-connect failed:', err);
-      });
+      connect().catch((err: unknown) => { console.warn('[Network] Auto-connect failed:', err); });
     }
   }, [isAuthenticated]);
 
-  // Initialize all message handlers when connected
   const chatInit      = useChatStore((s) => s.init);
   const communityInit = useCommunityStore((s) => s.initRelay);
   const dmInit        = useDMStore((s) => s.init);
   useEffect(() => {
     if (status === 'connected') {
-      const cleanupChat      = chatInit();
-      const cleanupCommunity = communityInit();
-      const cleanupDM        = dmInit();
+      const c1 = chatInit();
+      const c2 = communityInit();
+      const c3 = dmInit();
       loadCommunities();
-      return () => { cleanupChat(); cleanupCommunity(); cleanupDM(); };
+      return () => { c1(); c2(); c3(); };
     }
   }, [status]);
 
   useEffect(() => { loadCommunities(); }, []);
 
-  // Handle DM click from MembersSidebar
-  const handleOpenDM = (publicKey: string) => {
-    setViewMode('dm');
-    setActiveDMPartner(publicKey);
-  };
-
-  // Handle switching to DM mode
-  const handleSelectDM = () => {
-    setViewMode('dm');
-    setActiveCommunityId(null);
-    setActive(null);
-  };
-
-  // Handle switching to community mode
-  const handleSelectCommunity = (id: string) => {
-    setViewMode('community');
-    setActiveCommunityId(id);
-    setActiveDMPartner(null);
-  };
+  const handleOpenDM = (publicKey: string) => { setViewMode('dm'); setActiveDMPartner(publicKey); };
+  const handleSelectDM = () => { setViewMode('dm'); setActiveCommunityId(null); setActive(null); };
+  const handleSelectCommunity = (id: string) => { setViewMode('community'); setActiveCommunityId(id); setActiveDMPartner(null); };
 
   return (
-    <div style={styles.shell}>
-      <GuildsSidebar
-        activeCommunityId={activeCommunityId}
-        onSelectCommunity={handleSelectCommunity}
-        dmActive={viewMode === 'dm'}
-        onSelectDM={handleSelectDM}
-      />
+    <div style={styles.outerShell}>
+      {/* Verification banner for basic users — above everything */}
+      <VerificationBanner />
 
-      {viewMode === 'dm' ? (
-        <>
-          <DMConversationList
-            activeConversation={activeDMPartner}
-            onSelectConversation={(pk) => setActiveDMPartner(pk)}
-          />
-          <div style={styles.main}>
-            <DMChatArea partnerPublicKey={activeDMPartner} />
-          </div>
-        </>
-      ) : (
-        <>
-          <ChannelsSidebar
-            communityId={activeCommunityId}
-            activeChannelId={active?.channelId ?? null}
-            onSelectChannel={(communityId, channelId, channelName) =>
-              setActive({ communityId, channelId, channelName })
-            }
-          />
-          <div style={styles.main}>
-            <ChatArea active={active} />
-          </div>
-          <MembersSidebar
-            communityId={activeCommunityId}
-            onOpenDM={handleOpenDM}
-          />
-        </>
-      )}
+      <div style={styles.shell}>
+        <GuildsSidebar
+          activeCommunityId={activeCommunityId}
+          onSelectCommunity={handleSelectCommunity}
+          dmActive={viewMode === 'dm'}
+          onSelectDM={handleSelectDM}
+        />
+
+        {viewMode === 'dm' ? (
+          <>
+            <DMConversationList
+              activeConversation={activeDMPartner}
+              onSelectConversation={(pk) => setActiveDMPartner(pk)}
+            />
+            <div style={styles.main}>
+              <DMChatArea partnerPublicKey={activeDMPartner} />
+            </div>
+          </>
+        ) : (
+          <>
+            <ChannelsSidebar
+              communityId={activeCommunityId}
+              activeChannelId={active?.channelId ?? null}
+              onSelectChannel={(communityId, channelId, channelName) =>
+                setActive({ communityId, channelId, channelName })
+              }
+            />
+            <div style={styles.main}>
+              <ChatArea active={active} />
+            </div>
+            <MembersSidebar communityId={activeCommunityId} onOpenDM={handleOpenDM} />
+          </>
+        )}
+      </div>
     </div>
   );
 }
 
 const styles = {
-  shell: { flex:1, display:'flex', overflow:'hidden', minHeight:0 } as React.CSSProperties,
-  main:  { flex:1, display:'flex', flexDirection:'column' as const, minWidth:0, overflow:'hidden' } as React.CSSProperties,
+  outerShell: { flex: 1, display: 'flex', flexDirection: 'column' as const, overflow: 'hidden', minHeight: 0 } as React.CSSProperties,
+  shell: { flex: 1, display: 'flex', overflow: 'hidden', minHeight: 0 } as React.CSSProperties,
+  main: { flex: 1, display: 'flex', flexDirection: 'column' as const, minWidth: 0, overflow: 'hidden' } as React.CSSProperties,
 } as const;
