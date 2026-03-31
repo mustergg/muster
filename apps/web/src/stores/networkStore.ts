@@ -1,12 +1,25 @@
 /**
- * Network Store — R6 update
- * Changes: Added accountInfo tracking from ACCOUNT_INFO relay messages.
+ * Network Store — Real Crypto Integration
+ *
+ * Changes: Replaced stub sign() with real Ed25519 signing from @muster/crypto.
+ * The auth challenge is now signed with the user's actual private key.
  */
 
 import { create } from 'zustand';
 import { WebSocketTransport, TransportMessage } from '@muster/transport';
+import { sign as ed25519Sign, toHex, fromHex } from '@muster/crypto';
 
-function sign(message: string, _key: string): string { return 'stub-sig-' + message.slice(0, 8); }
+const encoder = new TextEncoder();
+
+/**
+ * Sign a string message with the user's Ed25519 private key.
+ * Returns a hex-encoded signature string.
+ */
+async function signMessage(message: string, privateKey: Uint8Array): Promise<string> {
+  const msgBytes = encoder.encode(message);
+  const sigBytes = await ed25519Sign(msgBytes, privateKey);
+  return toHex(sigBytes);
+}
 
 export type ConnectionStatus = 'disconnected' | 'connecting' | 'authenticating' | 'connected';
 
@@ -27,7 +40,6 @@ interface NetworkState {
   error: string | null;
   peerCount: number;
   peerId: string;
-  /** Account info received from relay after auth. */
   accountInfo: AccountInfo | null;
 
   connect: () => Promise<void>;
@@ -55,9 +67,15 @@ export const useNetworkStore = create<NetworkState>((set, get) => {
       const auth = (await import('./authStore.js')).useAuthStore.getState();
       const publicKey = auth.publicKeyHex || '';
       const username = auth.username || '';
+      const keypair = auth._keypair; // Real Ed25519 keypair
       const url = DEFAULT_RELAY_URL;
 
       if (get().status !== 'disconnected') return;
+
+      if (!keypair) {
+        set({ error: 'No keypair available — please log in again' });
+        return;
+      }
 
       const transport = new WebSocketTransport({ reconnectBaseDelay: 2000, reconnectMaxDelay: 30000 });
       set({ transport, status: 'connecting', error: null, publicKey, username, peerId: publicKey });
@@ -66,23 +84,34 @@ export const useNetworkStore = create<NetworkState>((set, get) => {
         if (msg.type === 'AUTH_CHALLENGE') {
           set({ status: 'authenticating' });
           const challenge = (msg.payload as any).challenge as string;
-          const signature = sign(challenge, publicKey);
-          transport.send({ type: 'AUTH_RESPONSE', payload: { publicKey, signature, username }, timestamp: Date.now() });
+
+          // Real Ed25519 signature of the challenge
+          signMessage(challenge, keypair.privateKey).then((signature) => {
+            transport.send({
+              type: 'AUTH_RESPONSE',
+              payload: { publicKey, signature, username },
+              timestamp: Date.now(),
+            });
+            console.log('[network] Auth challenge signed with Ed25519');
+          }).catch((err) => {
+            console.error('[network] Failed to sign challenge:', err);
+            set({ status: 'disconnected', error: 'Signing failed' });
+          });
           return;
         }
 
         if (msg.type === 'AUTH_RESULT') {
           const result = msg.payload as any;
           if (result.success) {
-            console.log('[network] Authenticated successfully');
+            console.log('[network] Authenticated successfully (Ed25519 verified)');
             set({ status: 'connected', error: null, peerCount: 1 });
           } else {
+            console.error('[network] Auth failed:', result.reason);
             set({ status: 'disconnected', error: result.reason || 'Authentication failed' });
           }
           return;
         }
 
-        // Capture account info from relay
         if (msg.type === 'ACCOUNT_INFO') {
           const info = msg.payload as any;
           set({ accountInfo: info as AccountInfo });
@@ -93,7 +122,6 @@ export const useNetworkStore = create<NetworkState>((set, get) => {
         if (msg.type === 'EMAIL_VERIFIED') {
           const p = msg.payload as any;
           if (p.success) {
-            // Update account info immediately
             set((state) => ({
               accountInfo: state.accountInfo
                 ? { ...state.accountInfo, tier: 'verified', emailVerified: true, daysRemaining: 0 }

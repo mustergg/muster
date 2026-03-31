@@ -1,19 +1,36 @@
 /**
- * DM Store — R5b update
- * Changes: Added clearConversation() for deleting local DM conversations.
+ * DM Store — Real Crypto Integration
+ *
+ * Changes: Replaced stub sign() with real Ed25519 signing from @muster/crypto.
+ * DM messages are now signed with the user's actual private key.
  */
 
 import { create } from 'zustand';
 import { useNetworkStore } from './networkStore';
 import { BrowserDB } from '@muster/db';
+import { sign as ed25519Sign, toHex } from '@muster/crypto';
 import type { TransportMessage } from '@muster/transport';
+
+const encoder = new TextEncoder();
+
+async function signPayload(payload: string, privateKey: Uint8Array): Promise<string> {
+  const sigBytes = await ed25519Sign(encoder.encode(payload), privateKey);
+  return toHex(sigBytes);
+}
+
+function getPrivateKey(): Uint8Array | null {
+  try {
+    const authStore = (window as any).__authStore;
+    if (authStore) return authStore.getState()._keypair?.privateKey ?? null;
+    return null;
+  } catch { return null; }
+}
 
 function uuid(): string {
   return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
     const r = (Math.random() * 16) | 0; return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
   });
 }
-function sign(message: string, _key: string): string { return 'stub-sig-' + message.slice(0, 8); }
 
 export interface DMMessage {
   messageId: string; content: string; senderPublicKey: string; senderUsername: string;
@@ -32,7 +49,6 @@ interface DMState {
   openConversation: (publicKey: string) => void;
   loadConversations: () => void;
   setActiveConversation: (publicKey: string | null) => void;
-  /** Clear a conversation locally (remove from list and messages). */
   clearConversation: (publicKey: string) => void;
   init: () => () => void;
 }
@@ -47,16 +63,33 @@ export const useDMStore = create<DMState>((set, get) => ({
   sendDM: (recipientPublicKey, content) => {
     const network = useNetworkStore.getState();
     if (!network.transport?.isConnected) return;
+
     const messageId = uuid();
     const timestamp = Date.now();
     const payload = { recipientPublicKey, content, messageId, timestamp };
-    const signature = sign(JSON.stringify(payload), network.publicKey);
-    network.transport.send({ type: 'SEND_DM', payload, signature, senderPublicKey: network.publicKey, timestamp });
+    const payloadStr = JSON.stringify(payload);
+
+    // Optimistic update
     const msg: DMMessage = { messageId, content, senderPublicKey: network.publicKey, senderUsername: network.username, recipientPublicKey, timestamp, isOwn: true };
     set((state) => ({
       messages: { ...state.messages, [recipientPublicKey]: [...(state.messages[recipientPublicKey] || []), msg] },
     }));
-    dmDB.addMessage({ messageId, channel: `dm:${[network.publicKey, recipientPublicKey].sort().join(':')}`, content, senderPublicKey: network.publicKey, senderUsername: network.username, timestamp, signature });
+
+    dmDB.addMessage({ messageId, channel: `dm:${[network.publicKey, recipientPublicKey].sort().join(':')}`, content, senderPublicKey: network.publicKey, senderUsername: network.username, timestamp, signature: '' });
+
+    // Sign and send asynchronously
+    const privateKey = getPrivateKey();
+    if (privateKey) {
+      signPayload(payloadStr, privateKey).then((signature) => {
+        network.transport!.send({ type: 'SEND_DM', payload, signature, senderPublicKey: network.publicKey, timestamp });
+      }).catch((err) => {
+        console.error('[dm] Failed to sign DM:', err);
+        network.transport!.send({ type: 'SEND_DM', payload, signature: '', senderPublicKey: network.publicKey, timestamp });
+      });
+    } else {
+      console.warn('[dm] No private key — sending unsigned DM');
+      network.transport!.send({ type: 'SEND_DM', payload, signature: '', senderPublicKey: network.publicKey, timestamp });
+    }
   },
 
   openConversation: (publicKey) => {
@@ -75,13 +108,11 @@ export const useDMStore = create<DMState>((set, get) => ({
   setActiveConversation: (publicKey) => set({ activeConversation: publicKey }),
 
   clearConversation: (publicKey) => {
-    // Remove from local state
     set((state) => ({
       messages: (() => { const m = { ...state.messages }; delete m[publicKey]; return m; })(),
       conversations: state.conversations.filter((c) => c.publicKey !== publicKey),
       activeConversation: state.activeConversation === publicKey ? null : state.activeConversation,
     }));
-    // Clear from IndexedDB
     const myKey = useNetworkStore.getState().publicKey;
     const channelKey = `dm:${[myKey, publicKey].sort().join(':')}`;
     dmDB.clearChannel(channelKey);
@@ -104,13 +135,10 @@ export const useDMStore = create<DMState>((set, get) => ({
           });
           dmDB.addMessage({ messageId: p.messageId, channel: `dm:${[myKey, otherKey].sort().join(':')}`, content: p.content, senderPublicKey: p.senderPublicKey, senderUsername: p.senderUsername, timestamp: p.timestamp, signature: (msg as any).signature || '' });
 
-          // Update conversation list with the new message
           set((state) => {
             const convs = [...state.conversations];
             const idx = convs.findIndex((c) => c.publicKey === otherKey);
-            const otherName = p.senderPublicKey === myKey
-              ? (p.recipientUsername || otherKey.slice(0, 8) + '...')
-              : p.senderUsername;
+            const otherName = p.senderPublicKey === myKey ? (p.recipientUsername || otherKey.slice(0, 8) + '...') : p.senderUsername;
             if (idx >= 0) {
               convs[idx] = { ...convs[idx], lastMessage: p.content, lastTimestamp: p.timestamp, username: otherName || convs[idx].username };
             } else {

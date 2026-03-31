@@ -1,12 +1,10 @@
 /**
- * Muster Relay Server — R6
+ * Muster Relay Server — Crypto Integration
  *
- * Changes from R4:
- * - User accounts with basic/verified tiers
- * - Email verification flow (REGISTER_EMAIL, VERIFY_EMAIL)
- * - Tier enforcement on restricted actions
- * - Auto-deletion of expired basic accounts (30 days)
- * - Account info sent after auth
+ * Changes from R6:
+ * - Replaced stub verifySignature with real Ed25519 verification via @muster/crypto
+ * - handleAuth and handlePublish now use async verify()
+ * - Auth challenge verification is now cryptographically enforced
  */
 
 import { WebSocketServer, WebSocket } from 'ws';
@@ -20,9 +18,8 @@ import { handleDMMessage } from './dmHandler';
 import { handleRoleMessage } from './roleHandler';
 import { handleEmailMessage } from './emailHandler';
 import { enforceTier } from './tierEnforcement';
+import { initCrypto, verifySig as verifySignature } from './relayCrypto';
 import type { RelayClient } from './types';
-
-function verifySignature(_m: string, _s: string, _p: string): boolean { return true; }
 
 const PORT = parseInt(process.env.MUSTER_WS_PORT || '4002', 10);
 const MAX_MESSAGE_SIZE = 64 * 1024;
@@ -37,10 +34,14 @@ const userDB = new UserDB(messageDB.getDatabase());
 
 const wss = new WebSocketServer({ port: PORT, maxPayload: MAX_MESSAGE_SIZE });
 
+// Load Ed25519 crypto (async import for ESM/CJS compat)
+initCrypto().catch((err) => console.error('[relay] Crypto init failed:', err));
+
 const userCounts = userDB.getUserCount();
 console.log(`[relay] ====================================`);
-console.log(`[relay]  Muster Relay Node (R6)`);
+console.log(`[relay]  Muster Relay Node (R6 + Real Crypto)`);
 console.log(`[relay]  Listening on port ${PORT}`);
+console.log(`[relay]  Ed25519 signature verification: ENABLED`);
 console.log(`[relay]  Messages: ${messageDB.getMessageCount()}`);
 console.log(`[relay]  DMs: ${dmDB.getCount()}`);
 console.log(`[relay]  Communities: ${communityDB.getCommunityCount()}`);
@@ -68,34 +69,25 @@ const ROLE_TYPES = new Set(['ASSIGN_ROLE', 'KICK_MEMBER', 'DELETE_MESSAGE']);
 const EMAIL_TYPES = new Set(['REGISTER_EMAIL', 'VERIFY_EMAIL', 'RESEND_VERIFICATION', 'ACCOUNT_INFO_REQUEST']);
 
 function handleMessage(client: RelayClient, msg: any): void {
+  // Auth is async due to crypto verification
   if (msg.type === 'AUTH_RESPONSE') { handleAuth(client, msg); return; }
   if (!requireAuth(client)) return;
 
-  // Email/account messages — no tier restriction
   if (EMAIL_TYPES.has(msg.type)) {
     handleEmailMessage(client, msg, userDB, sendToClient);
     return;
   }
 
-  // Community messages — with tier enforcement
   if (COMMUNITY_TYPES.has(msg.type)) {
-    // Enforce tier for CREATE and JOIN (not LIST/GET/LEAVE)
     if (msg.type === 'CREATE_COMMUNITY') {
       if (enforceTier(client, 'CREATE_COMMUNITY', userDB, sendToClient)) return;
-    }
-    if (msg.type === 'JOIN_COMMUNITY') {
-      // Check if joining by invite (has a valid invite context)
-      // For now, allow all joins — invite-only restriction can be refined
-      // when we track invite tokens properly
     }
     handleCommunityMessage(client, msg, communityDB, sendToClient, clients, channels, broadcastPresence);
     return;
   }
 
-  // DM messages — with tier enforcement
   if (DM_TYPES.has(msg.type)) {
     if (msg.type === 'SEND_DM') {
-      // Check if basic user is initiating a new conversation
       const recipientKey = msg.payload?.recipientPublicKey;
       if (recipientKey) {
         const history = dmDB.getHistory(client.publicKey, recipientKey, 0, 1);
@@ -107,7 +99,6 @@ function handleMessage(client: RelayClient, msg: any): void {
     return;
   }
 
-  // Role messages — with tier enforcement
   if (ROLE_TYPES.has(msg.type)) {
     handleRoleMessage(client, msg, communityDB, messageDB, sendToClient, clients, channels);
     return;
@@ -123,23 +114,32 @@ function handleMessage(client: RelayClient, msg: any): void {
   }
 }
 
-function handleAuth(client: RelayClient, msg: any): void {
+async function handleAuth(client: RelayClient, msg: any): Promise<void> {
   const { publicKey, signature, username } = msg.payload || {};
-  if (!publicKey || !signature || !username) { client.ws.close(4001); return; }
-  if (!verifySignature(client.challenge, signature, publicKey)) { client.ws.close(4001); return; }
+  if (!publicKey || !signature || !username) {
+    sendToClient(client, { type: 'AUTH_RESULT', payload: { success: false, reason: 'Missing fields' }, timestamp: Date.now() });
+    client.ws.close(4001);
+    return;
+  }
+
+  // Real Ed25519 signature verification
+  const valid = await verifySignature(client.challenge, signature, publicKey);
+  if (!valid) {
+    console.warn(`[relay] Auth FAILED for ${username} — invalid signature`);
+    sendToClient(client, { type: 'AUTH_RESULT', payload: { success: false, reason: 'Invalid signature' }, timestamp: Date.now() });
+    client.ws.close(4001, 'auth failed');
+    return;
+  }
 
   client.authenticated = true;
   client.publicKey = publicKey;
   client.username = username;
 
-  // Ensure user record exists (creates basic account if new)
   const user = userDB.ensureUser(publicKey, username);
-
-  console.log(`[relay] Auth: ${username} (${publicKey.slice(0, 12)}...) tier=${user.tier}`);
+  console.log(`[relay] Auth OK: ${username} (${publicKey.slice(0, 12)}...) tier=${user.tier} [Ed25519 verified]`);
 
   sendToClient(client, { type: 'AUTH_RESULT', payload: { success: true }, timestamp: Date.now() });
 
-  // Send account info immediately after auth
   const info = userDB.getAccountInfo(publicKey);
   sendToClient(client, { type: 'ACCOUNT_INFO', payload: info, timestamp: Date.now() });
 }
@@ -162,14 +162,25 @@ function handleUnsubscribe(client: RelayClient, msg: any): void {
   }
 }
 
-function handlePublish(client: RelayClient, msg: any): void {
+async function handlePublish(client: RelayClient, msg: any): Promise<void> {
   const { channel, content, messageId, timestamp } = msg.payload || {};
   if (!channel || !content || !messageId || !client.channels.has(channel)) return;
 
-  messageDB.storeMessage({ messageId, channel, content, senderPublicKey: client.publicKey, senderUsername: client.username, timestamp, signature: msg.signature || '' });
+  // Verify message signature if provided
+  const signature = msg.signature || '';
+  if (signature && msg.senderPublicKey) {
+    const valid = await verifySignature(JSON.stringify(msg.payload), signature, msg.senderPublicKey);
+    if (!valid) {
+      console.warn(`[relay] Message signature invalid from ${client.username}`);
+      sendToClient(client, { type: 'ERROR', payload: { code: 'INVALID_SIGNATURE', message: 'Message signature verification failed' }, timestamp: Date.now() });
+      return;
+    }
+  }
+
+  messageDB.storeMessage({ messageId, channel, content, senderPublicKey: client.publicKey, senderUsername: client.username, timestamp, signature });
 
   const outgoing = JSON.stringify({
-    type: 'MESSAGE', payload: { channel, content, messageId, timestamp, senderPublicKey: client.publicKey, senderUsername: client.username }, signature: msg.signature || '',
+    type: 'MESSAGE', payload: { channel, content, messageId, timestamp, senderPublicKey: client.publicKey, senderUsername: client.username }, signature,
   });
 
   const subs = channels.get(channel);
@@ -211,7 +222,6 @@ function requireAuth(client: RelayClient): boolean {
   return true;
 }
 
-// Cleanup: expired messages + expired basic accounts
 setInterval(() => {
   const msgDeleted = messageDB.deleteOlderThan(Date.now() - RETENTION_MS);
   if (msgDeleted > 0) console.log(`[relay] Cleanup: ${msgDeleted} old msgs`);

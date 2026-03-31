@@ -185,3 +185,4 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
 export function getCurrentKeypair(): KeyPair | null {
   return useAuthStore.getState()._keypair;
 }
+(window as any).__authStore = useAuthStore;
