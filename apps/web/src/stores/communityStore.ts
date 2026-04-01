@@ -1,15 +1,10 @@
 /**
- * Community Store — R3
+ * Community Store — R7
  *
- * REPLACES the old communityStore.ts (which used GossipSub + OrbitDB).
- * This version uses the WebSocket relay for all community operations.
- *
- * API is designed to match what existing UI components expect:
- * - GuildsSidebar:        communities, loadCommunities()
- * - CreateCommunityModal: createCommunity(name, desc?)
- * - JoinCommunityModal:   joinCommunity(communityId)
- * - InviteLinkModal:      generateInvite(communityId)
- * - ChannelsSidebar:      subscribePresence(), onlineMembers, serveCommunityRequests()
+ * Changes from R3:
+ * - Added channel management: createChannel, editChannel, deleteChannel
+ * - Added myRoles tracking (current user's role per community)
+ * - Handles CHANNEL_CREATED, CHANNEL_UPDATED, CHANNEL_DELETED_EVENT, CHANNELS_REORDERED
  */
 
 import { create } from 'zustand';
@@ -56,10 +51,8 @@ export function buildInviteLink(communityId: string): string {
 }
 
 export function parseInviteLink(url: string): string | null {
-  // Accept full URL: http://localhost:3000/invite/abc-123
   const urlMatch = url.match(/\/invite\/([a-f0-9-]+)/i);
   if (urlMatch) return urlMatch[1];
-  // Accept bare community ID: abc-123-def-456
   if (/^[a-f0-9-]{20,}$/i.test(url.trim())) return url.trim();
   return null;
 }
@@ -90,6 +83,8 @@ function loadFromLocalStorage(): Record<string, StoredCommunity> {
 interface CommunityState {
   communities: Record<string, StoredCommunity>;
   onlineMembers: Record<string, OnlineMember[]>;
+  /** Current user's role in each community (populated from COMMUNITY_DATA). */
+  myRoles: Record<string, string>;
 
   loadCommunities: () => void;
   createCommunity: (name: string, description?: string) => Promise<StoredCommunity>;
@@ -100,6 +95,11 @@ interface CommunityState {
   serveCommunityRequests: (communityId: string) => () => void;
   leaveCommunity: (communityId: string) => void;
 
+  // Channel management — R7
+  createChannel: (communityId: string, name: string, type?: string, visibility?: string) => Promise<void>;
+  editChannel: (communityId: string, channelId: string, name?: string, visibility?: string) => Promise<void>;
+  deleteChannel: (communityId: string, channelId: string) => Promise<void>;
+
   /** Internal: initialize relay message listener. Called by MainLayout. */
   initRelay: () => () => void;
 }
@@ -109,7 +109,6 @@ interface CommunityState {
 // =================================================================
 
 export const useCommunityStore = create<CommunityState>()((set, get) => {
-  // Pending promise resolvers for request/response patterns
   const pendingCreates = new Map<string, { resolve: (c: StoredCommunity) => void; reject: (e: Error) => void }>();
   const pendingJoins = new Map<string, { resolve: (c: StoredCommunity) => void; reject: (e: Error) => void }>();
   let messageHandlerRegistered = false;
@@ -123,8 +122,6 @@ export const useCommunityStore = create<CommunityState>()((set, get) => {
           saveToLocalStorage(updated);
           return { communities: updated };
         });
-        // Resolve any pending create promise
-        // We match by checking if there's a pending create (only one at a time typically)
         for (const [key, pending] of pendingCreates) {
           pending.resolve(community);
           pendingCreates.delete(key);
@@ -159,8 +156,17 @@ export const useCommunityStore = create<CommunityState>()((set, get) => {
 
       case 'COMMUNITY_DATA': {
         const community = (msg.payload as any).community as StoredCommunity;
+        const members = (msg.payload as any).members as Array<{ publicKey: string; username: string; role: string }>;
+
+        // Track current user's role
+        const myKey = useNetworkStore.getState().publicKey;
+        const myMember = members?.find((m) => m.publicKey === myKey);
+
         set((state) => ({
           communities: { ...state.communities, [community.id]: community },
+          myRoles: myMember
+            ? { ...state.myRoles, [community.id]: myMember.role }
+            : state.myRoles,
         }));
         break;
       }
@@ -171,19 +177,107 @@ export const useCommunityStore = create<CommunityState>()((set, get) => {
           const updated = { ...state.communities };
           delete updated[communityId];
           saveToLocalStorage(updated);
+          const roles = { ...state.myRoles };
+          delete roles[communityId];
+          return { communities: updated, myRoles: roles };
+        });
+        break;
+      }
+
+      case 'COMMUNITY_MEMBER_UPDATE': {
+        const p = msg.payload as any;
+        const communityId = p.communityId;
+        const members = p.members as Array<{ publicKey: string; username: string; role: string }>;
+
+        // Update role if our role changed
+        const myKey = useNetworkStore.getState().publicKey;
+        const myMember = members?.find((m) => m.publicKey === myKey);
+        if (myMember) {
+          set((state) => ({
+            myRoles: { ...state.myRoles, [communityId]: myMember.role },
+          }));
+        }
+        break;
+      }
+
+      case 'ROLE_UPDATED': {
+        const p = msg.payload as any;
+        const myKey = useNetworkStore.getState().publicKey;
+        if (p.targetPublicKey === myKey) {
+          set((state) => ({
+            myRoles: { ...state.myRoles, [p.communityId]: p.newRole },
+          }));
+        }
+        break;
+      }
+
+      // ─── Channel management events (R7) ──────────────────────────
+
+      case 'CHANNEL_CREATED': {
+        const p = msg.payload as any;
+        const { communityId, channel } = p;
+        set((state) => {
+          const community = state.communities[communityId];
+          if (!community) return state;
+          const updatedChannels = [...(community.channels || []), channel];
+          updatedChannels.sort((a: any, b: any) => a.position - b.position);
+          const updated = { ...state.communities, [communityId]: { ...community, channels: updatedChannels } };
+          saveToLocalStorage(updated);
           return { communities: updated };
         });
         break;
       }
 
-case 'PRESENCE': {
+      case 'CHANNEL_UPDATED': {
+        const p = msg.payload as any;
+        const { communityId, channel } = p;
+        set((state) => {
+          const community = state.communities[communityId];
+          if (!community) return state;
+          const updatedChannels = (community.channels || []).map((ch: any) =>
+            ch.id === channel.id ? { ...ch, name: channel.name, visibility: channel.visibility } : ch
+          );
+          const updated = { ...state.communities, [communityId]: { ...community, channels: updatedChannels } };
+          saveToLocalStorage(updated);
+          return { communities: updated };
+        });
+        break;
+      }
+
+      case 'CHANNEL_DELETED_EVENT': {
+        const p = msg.payload as any;
+        const { communityId, channelId } = p;
+        set((state) => {
+          const community = state.communities[communityId];
+          if (!community) return state;
+          const updatedChannels = (community.channels || []).filter((ch: any) => ch.id !== channelId);
+          const updated = { ...state.communities, [communityId]: { ...community, channels: updatedChannels } };
+          saveToLocalStorage(updated);
+          return { communities: updated };
+        });
+        break;
+      }
+
+      case 'CHANNELS_REORDERED': {
+        const p = msg.payload as any;
+        const { communityId, channels: reorderedChannels } = p;
+        set((state) => {
+          const community = state.communities[communityId];
+          if (!community) return state;
+          const updated = { ...state.communities, [communityId]: { ...community, channels: reorderedChannels } };
+          saveToLocalStorage(updated);
+          return { communities: updated };
+        });
+        break;
+      }
+
+      case 'PRESENCE': {
         const p = msg.payload as any;
         const channelId = p.channel;
         const users = p.users || [];
 
-        // Find which community this channel belongs to
         const communities = get().communities;
-        let communityId = channelId; // fallback to channel ID
+        let communityId = channelId;
         for (const [cid, community] of Object.entries(communities)) {
           if (community.channels?.some((ch: any) => ch.id === channelId)) {
             communityId = cid;
@@ -191,7 +285,6 @@ case 'PRESENCE': {
           }
         }
 
-        // Aggregate: merge users from all channels of the same community
         set((state) => {
           const existing = state.onlineMembers[communityId] || [];
           const merged = new Map<string, any>();
@@ -210,7 +303,6 @@ case 'PRESENCE': {
       case 'ERROR': {
         const error = (msg.payload as any);
         console.warn('[community] Relay error:', error.message);
-        // Reject any pending promises
         for (const [key, pending] of pendingCreates) {
           pending.reject(new Error(error.message));
           pendingCreates.delete(key);
@@ -227,139 +319,111 @@ case 'PRESENCE': {
   return {
     communities: {},
     onlineMembers: {},
+    myRoles: {},
 
     loadCommunities: () => {
-      // Load from localStorage first (instant, cached)
       const cached = loadFromLocalStorage();
       set({ communities: cached });
 
-      // Then request fresh list from relay
       const { transport } = useNetworkStore.getState();
       if (transport?.isConnected) {
-        transport.send({
-          type: 'LIST_COMMUNITIES',
-          payload: {},
-          timestamp: Date.now(),
-        });
+        transport.send({ type: 'LIST_COMMUNITIES', payload: {}, timestamp: Date.now() });
       }
     },
 
     createCommunity: (name, description) => {
       return new Promise<StoredCommunity>((resolve, reject) => {
         const { transport } = useNetworkStore.getState();
-        if (!transport?.isConnected) {
-          reject(new Error('Not connected to relay'));
-          return;
-        }
+        if (!transport?.isConnected) { reject(new Error('Not connected to relay')); return; }
 
         const requestId = Math.random().toString(36).slice(2);
         pendingCreates.set(requestId, { resolve, reject });
-
-        transport.send({
-          type: 'CREATE_COMMUNITY',
-          payload: { name, description },
-          timestamp: Date.now(),
-        });
-
-        // Timeout after 10 seconds
-        setTimeout(() => {
-          if (pendingCreates.has(requestId)) {
-            pendingCreates.delete(requestId);
-            reject(new Error('Create community timed out'));
-          }
-        }, 10000);
+        transport.send({ type: 'CREATE_COMMUNITY', payload: { name, description }, timestamp: Date.now() });
+        setTimeout(() => { if (pendingCreates.has(requestId)) { pendingCreates.delete(requestId); reject(new Error('Create community timed out')); } }, 10000);
       });
     },
 
     joinCommunity: (communityId) => {
       return new Promise<StoredCommunity>((resolve, reject) => {
         const { transport } = useNetworkStore.getState();
-        if (!transport?.isConnected) {
-          reject(new Error('Not connected to relay'));
-          return;
-        }
+        if (!transport?.isConnected) { reject(new Error('Not connected to relay')); return; }
 
         pendingJoins.set(communityId, { resolve, reject });
-
-        transport.send({
-          type: 'JOIN_COMMUNITY',
-          payload: { communityId },
-          timestamp: Date.now(),
-        });
-
-        setTimeout(() => {
-          if (pendingJoins.has(communityId)) {
-            pendingJoins.delete(communityId);
-            reject(new Error('Join community timed out'));
-          }
-        }, 10000);
+        transport.send({ type: 'JOIN_COMMUNITY', payload: { communityId }, timestamp: Date.now() });
+        setTimeout(() => { if (pendingJoins.has(communityId)) { pendingJoins.delete(communityId); reject(new Error('Join community timed out')); } }, 10000);
       });
     },
 
-leaveCommunity: (communityId: string) => {
-    const { transport } = useNetworkStore.getState();
-    if (transport?.isConnected) {
-      transport.send({ type: 'LEAVE_COMMUNITY', payload: { communityId }, timestamp: Date.now() });
-    }
-    // Remove locally
-    const updated = { ...get().communities };
-    delete updated[communityId];
-    set({ communities: updated });
-    saveToLocalStorage(updated);
-  },
-    generateInvite: (communityId) => {
-      return buildInviteLink(communityId);
+    leaveCommunity: (communityId: string) => {
+      const { transport } = useNetworkStore.getState();
+      if (transport?.isConnected) {
+        transport.send({ type: 'LEAVE_COMMUNITY', payload: { communityId }, timestamp: Date.now() });
+      }
+      const updated = { ...get().communities };
+      delete updated[communityId];
+      set({ communities: updated });
+      saveToLocalStorage(updated);
+    },
+
+    generateInvite: (communityId) => buildInviteLink(communityId),
+
+    // ─── Channel management — R7 ───────────────────────────────────
+
+    createChannel: async (communityId, name, type, visibility) => {
+      const { transport } = useNetworkStore.getState();
+      if (!transport?.isConnected) throw new Error('Not connected to relay');
+      transport.send({
+        type: 'CREATE_CHANNEL',
+        payload: { communityId, name, type: type || 'text', visibility: visibility || 'public' },
+        timestamp: Date.now(),
+      });
+    },
+
+    editChannel: async (communityId, channelId, name, visibility) => {
+      const { transport } = useNetworkStore.getState();
+      if (!transport?.isConnected) throw new Error('Not connected to relay');
+      transport.send({
+        type: 'EDIT_CHANNEL',
+        payload: { communityId, channelId, name, visibility },
+        timestamp: Date.now(),
+      });
+    },
+
+    deleteChannel: async (communityId, channelId) => {
+      const { transport } = useNetworkStore.getState();
+      if (!transport?.isConnected) throw new Error('Not connected to relay');
+      transport.send({
+        type: 'DELETE_CHANNEL_CMD',
+        payload: { communityId, channelId },
+        timestamp: Date.now(),
+      });
     },
 
     subscribePresence: (communityId) => {
-      // Subscribe to all channels of this community for presence updates
       const community = get().communities[communityId];
       if (!community) return () => {};
-
       const { transport } = useNetworkStore.getState();
       if (!transport?.isConnected) return () => {};
 
       const channelIds = community.channels.map((c) => c.id);
-      transport.send({
-        type: 'SUBSCRIBE',
-        payload: { channels: channelIds },
-        timestamp: Date.now(),
-      });
+      transport.send({ type: 'SUBSCRIBE', payload: { channels: channelIds }, timestamp: Date.now() });
 
       return () => {
-        // Cleanup: unsubscribe from presence channels
         if (transport?.isConnected) {
-          transport.send({
-            type: 'UNSUBSCRIBE',
-            payload: { channels: channelIds },
-            timestamp: Date.now(),
-          });
+          transport.send({ type: 'UNSUBSCRIBE', payload: { channels: channelIds }, timestamp: Date.now() });
         }
       };
     },
 
-    announcePresence: async (_communityId) => {
-      // In the relay model, presence is automatic — the relay knows
-      // who is connected. This is a no-op but kept for API compatibility.
-    },
-
-    serveCommunityRequests: (_communityId) => {
-      // In the relay model, community data is served by the relay, not
-      // by peers. This is a no-op but kept for API compatibility.
-      return () => {};
-    },
+    announcePresence: async (_communityId) => {},
+    serveCommunityRequests: (_communityId) => () => {},
 
     initRelay: () => {
       if (messageHandlerRegistered) return () => {};
       messageHandlerRegistered = true;
-
       const network = useNetworkStore.getState();
       const unsubscribe = network.onMessage(handleRelayMessage);
-
-      return () => {
-        messageHandlerRegistered = false;
-        unsubscribe();
-      };
+      return () => { messageHandlerRegistered = false; unsubscribe(); };
     },
   };
 });

@@ -1,8 +1,11 @@
 /**
- * Community Database — R4 update
+ * Community Database — R7 update
  *
- * Changes from R3:
- * - Added updateMemberRole() method for role assignments
+ * Changes from R4:
+ * - Added addChannel() method for creating new channels
+ * - Added updateChannel() method for editing channel name/visibility
+ * - Added deleteChannel() method for removing channels
+ * - Added reorderChannels() method for changing channel positions
  */
 
 import type Database from 'better-sqlite3';
@@ -81,6 +84,10 @@ export class CommunityDB {
     console.log('[relay-db] Community tables initialized.');
   }
 
+  // =================================================================
+  // Communities
+  // =================================================================
+
   createCommunity(community: DBCommunity, defaultChannels: DBChannel[], owner: DBMember): void {
     const transaction = this.db.transaction(() => {
       this.db.prepare(`INSERT INTO communities (id, name, description, type, ownerPublicKey, createdAt) VALUES (@id, @name, @description, @type, @ownerPublicKey, @createdAt)`).run(community);
@@ -95,9 +102,50 @@ export class CommunityDB {
     return this.db.prepare('SELECT * FROM communities WHERE id = ?').get(id) as DBCommunity | undefined;
   }
 
+  // =================================================================
+  // Channels — R7 additions
+  // =================================================================
+
   getChannels(communityId: string): DBChannel[] {
     return this.db.prepare('SELECT * FROM channels WHERE communityId = ? ORDER BY position').all(communityId) as DBChannel[];
   }
+
+  /** Add a new channel to a community. */
+  addChannel(channel: DBChannel): void {
+    this.db.prepare(
+      `INSERT INTO channels (id, communityId, name, type, visibility, position)
+       VALUES (@id, @communityId, @name, @type, @visibility, @position)`
+    ).run(channel);
+  }
+
+  /** Update a channel's name and/or visibility. */
+  updateChannel(channelId: string, name: string, visibility: string): void {
+    this.db.prepare(
+      'UPDATE channels SET name = ?, visibility = ? WHERE id = ?'
+    ).run(name, visibility, channelId);
+  }
+
+  /** Delete a channel by ID. */
+  deleteChannel(channelId: string): void {
+    this.db.prepare('DELETE FROM channels WHERE id = ?').run(channelId);
+  }
+
+  /** Reorder channels: set position based on index in the array. */
+  reorderChannels(communityId: string, channelIds: string[]): void {
+    const stmt = this.db.prepare(
+      'UPDATE channels SET position = ? WHERE id = ? AND communityId = ?'
+    );
+    const transaction = this.db.transaction(() => {
+      for (let i = 0; i < channelIds.length; i++) {
+        stmt.run(i, channelIds[i], communityId);
+      }
+    });
+    transaction();
+  }
+
+  // =================================================================
+  // Members
+  // =================================================================
 
   getMembers(communityId: string): DBMember[] {
     return this.db.prepare('SELECT * FROM members WHERE communityId = ? ORDER BY joinedAt').all(communityId) as DBMember[];

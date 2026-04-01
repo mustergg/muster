@@ -1,10 +1,9 @@
 /**
- * Muster Relay Server — Crypto Integration
+ * Muster Relay Server — R7
  *
- * Changes from R6:
- * - Replaced stub verifySignature with real Ed25519 verification via @muster/crypto
- * - handleAuth and handlePublish now use async verify()
- * - Auth challenge verification is now cryptographically enforced
+ * Changes from Crypto Integration:
+ * - Added channel management routing (CREATE_CHANNEL, EDIT_CHANNEL, DELETE_CHANNEL_CMD, REORDER_CHANNELS)
+ * - Imported channelHandler
  */
 
 import { WebSocketServer, WebSocket } from 'ws';
@@ -17,6 +16,7 @@ import { handleCommunityMessage } from './communityHandler';
 import { handleDMMessage } from './dmHandler';
 import { handleRoleMessage } from './roleHandler';
 import { handleEmailMessage } from './emailHandler';
+import { handleChannelMessage } from './channelHandler';
 import { enforceTier } from './tierEnforcement';
 import { initCrypto, verifySig as verifySignature } from './relayCrypto';
 import type { RelayClient } from './types';
@@ -39,7 +39,7 @@ initCrypto().catch((err) => console.error('[relay] Crypto init failed:', err));
 
 const userCounts = userDB.getUserCount();
 console.log(`[relay] ====================================`);
-console.log(`[relay]  Muster Relay Node (R6 + Real Crypto)`);
+console.log(`[relay]  Muster Relay Node (R7)`);
 console.log(`[relay]  Listening on port ${PORT}`);
 console.log(`[relay]  Ed25519 signature verification: ENABLED`);
 console.log(`[relay]  Messages: ${messageDB.getMessageCount()}`);
@@ -67,6 +67,7 @@ const COMMUNITY_TYPES = new Set(['CREATE_COMMUNITY', 'JOIN_COMMUNITY', 'LEAVE_CO
 const DM_TYPES = new Set(['SEND_DM', 'DM_HISTORY_REQUEST', 'DM_CONVERSATIONS_REQUEST']);
 const ROLE_TYPES = new Set(['ASSIGN_ROLE', 'KICK_MEMBER', 'DELETE_MESSAGE']);
 const EMAIL_TYPES = new Set(['REGISTER_EMAIL', 'VERIFY_EMAIL', 'RESEND_VERIFICATION', 'ACCOUNT_INFO_REQUEST']);
+const CHANNEL_TYPES = new Set(['CREATE_CHANNEL', 'EDIT_CHANNEL', 'DELETE_CHANNEL_CMD', 'REORDER_CHANNELS']);
 
 function handleMessage(client: RelayClient, msg: any): void {
   // Auth is async due to crypto verification
@@ -83,6 +84,11 @@ function handleMessage(client: RelayClient, msg: any): void {
       if (enforceTier(client, 'CREATE_COMMUNITY', userDB, sendToClient)) return;
     }
     handleCommunityMessage(client, msg, communityDB, sendToClient, clients, channels, broadcastPresence);
+    return;
+  }
+
+  if (CHANNEL_TYPES.has(msg.type)) {
+    handleChannelMessage(client, msg, communityDB, sendToClient, clients, channels, broadcastPresence);
     return;
   }
 
