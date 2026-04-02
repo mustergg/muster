@@ -162,12 +162,31 @@ export const useCommunityStore = create<CommunityState>()((set, get) => {
         const myKey = useNetworkStore.getState().publicKey;
         const myMember = members?.find((m) => m.publicKey === myKey);
 
-        set((state) => ({
-          communities: { ...state.communities, [community.id]: community },
-          myRoles: myMember
-            ? { ...state.myRoles, [community.id]: myMember.role }
-            : state.myRoles,
-        }));
+        set((state) => {
+          const updated = { ...state.communities, [community.id]: community };
+          saveToLocalStorage(updated);
+          return {
+            communities: updated,
+            myRoles: myMember
+              ? { ...state.myRoles, [community.id]: myMember.role }
+              : state.myRoles,
+          };
+        });
+
+        // Resolve pending create promises (relay responds with COMMUNITY_DATA, not COMMUNITY_CREATED)
+        for (const [key, pending] of pendingCreates) {
+          pending.resolve(community);
+          pendingCreates.delete(key);
+          break; // Only one create at a time
+        }
+
+        // Resolve pending join promises
+        const pendingJoin = pendingJoins.get(community.id);
+        if (pendingJoin) {
+          pendingJoin.resolve(community);
+          pendingJoins.delete(community.id);
+        }
+
         break;
       }
 

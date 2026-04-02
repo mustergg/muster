@@ -56,3 +56,4 @@ export * from './community-messages.js';
 export * from './dm-messages.js';
 export * from './email-messages.js';
 export * from './channel-management-messages.js';
+export * from './file-messages.js';

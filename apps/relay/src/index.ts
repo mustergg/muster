@@ -1,9 +1,11 @@
 /**
- * Muster Relay Server — R8
+ * Muster Relay Server — R9
  *
- * Changes from R7:
- * - Added ownership message routing (TRANSFER_OWNERSHIP, DELETE_COMMUNITY_CMD, CHECK_TRANSFER_ELIGIBILITY)
- * - communityHandler now receives userDB for owner-leave checks
+ * Changes from R8:
+ * - Added file upload/download routing (UPLOAD_FILE, REQUEST_FILE)
+ * - Increased MAX_MESSAGE_SIZE to 2MB (for base64-encoded 1MB files)
+ * - FileDB initialized alongside other databases
+ * - File cleanup in retention interval
  */
 
 import { WebSocketServer, WebSocket } from 'ws';
@@ -12,18 +14,20 @@ import { RelayDB } from './database';
 import { CommunityDB } from './communityDB';
 import { DMDB } from './dmDB';
 import { UserDB } from './userDB';
+import { FileDB } from './fileDB';
 import { handleCommunityMessage } from './communityHandler';
 import { handleDMMessage } from './dmHandler';
 import { handleRoleMessage } from './roleHandler';
 import { handleEmailMessage } from './emailHandler';
 import { handleChannelMessage } from './channelHandler';
 import { handleOwnershipMessage } from './ownershipHandler';
+import { handleFileMessage } from './fileHandler';
 import { enforceTier } from './tierEnforcement';
 import { initCrypto, verifySig as verifySignature } from './relayCrypto';
 import type { RelayClient } from './types';
 
 const PORT = parseInt(process.env.MUSTER_WS_PORT || '4002', 10);
-const MAX_MESSAGE_SIZE = 64 * 1024;
+const MAX_MESSAGE_SIZE = 2 * 1024 * 1024; // 2MB — allows base64-encoded 1MB files
 const RETENTION_MS = parseInt(process.env.MUSTER_RETENTION_DAYS || '30', 10) * 24 * 60 * 60 * 1000;
 
 const clients = new Map<WebSocket, RelayClient>();
@@ -32,18 +36,22 @@ const messageDB = new RelayDB();
 const communityDB = new CommunityDB(messageDB.getDatabase());
 const dmDB = new DMDB(messageDB.getDatabase());
 const userDB = new UserDB(messageDB.getDatabase());
+const fileDB = new FileDB(messageDB.getDatabase());
 
 const wss = new WebSocketServer({ port: PORT, maxPayload: MAX_MESSAGE_SIZE });
 
 initCrypto().catch((err) => console.error('[relay] Crypto init failed:', err));
 
 const userCounts = userDB.getUserCount();
+const fileTotalKB = Math.round(fileDB.getTotalSize() / 1024);
 console.log(`[relay] ====================================`);
-console.log(`[relay]  Muster Relay Node (R8)`);
+console.log(`[relay]  Muster Relay Node (R9)`);
 console.log(`[relay]  Listening on port ${PORT}`);
 console.log(`[relay]  Ed25519 signature verification: ENABLED`);
+console.log(`[relay]  Max file upload: ${Math.round(MAX_MESSAGE_SIZE / 2 / 1024)}KB`);
 console.log(`[relay]  Messages: ${messageDB.getMessageCount()}`);
 console.log(`[relay]  DMs: ${dmDB.getCount()}`);
+console.log(`[relay]  Files: ${fileDB.getCount()} (${fileTotalKB}KB)`);
 console.log(`[relay]  Communities: ${communityDB.getCommunityCount()}`);
 console.log(`[relay]  Users: ${userCounts.total} (${userCounts.verified} verified, ${userCounts.basic} basic)`);
 console.log(`[relay] ====================================`);
@@ -69,6 +77,7 @@ const ROLE_TYPES = new Set(['ASSIGN_ROLE', 'KICK_MEMBER', 'DELETE_MESSAGE']);
 const EMAIL_TYPES = new Set(['REGISTER_EMAIL', 'VERIFY_EMAIL', 'RESEND_VERIFICATION', 'ACCOUNT_INFO_REQUEST']);
 const CHANNEL_TYPES = new Set(['CREATE_CHANNEL', 'EDIT_CHANNEL', 'DELETE_CHANNEL_CMD', 'REORDER_CHANNELS']);
 const OWNERSHIP_TYPES = new Set(['CHECK_TRANSFER_ELIGIBILITY', 'TRANSFER_OWNERSHIP', 'DELETE_COMMUNITY_CMD']);
+const FILE_TYPES = new Set(['UPLOAD_FILE', 'REQUEST_FILE']);
 
 function handleMessage(client: RelayClient, msg: any): void {
   if (msg.type === 'AUTH_RESPONSE') { handleAuth(client, msg); return; }
@@ -94,6 +103,11 @@ function handleMessage(client: RelayClient, msg: any): void {
 
   if (CHANNEL_TYPES.has(msg.type)) {
     handleChannelMessage(client, msg, communityDB, sendToClient, clients, channels, broadcastPresence);
+    return;
+  }
+
+  if (FILE_TYPES.has(msg.type)) {
+    handleFileMessage(client, msg, fileDB, sendToClient, clients, channels);
     return;
   }
 
@@ -233,6 +247,8 @@ function requireAuth(client: RelayClient): boolean {
 setInterval(() => {
   const msgDeleted = messageDB.deleteOlderThan(Date.now() - RETENTION_MS);
   if (msgDeleted > 0) console.log(`[relay] Cleanup: ${msgDeleted} old msgs`);
+  const filesDeleted = fileDB.deleteOlderThan(Date.now() - RETENTION_MS);
+  if (filesDeleted > 0) console.log(`[relay] Cleanup: ${filesDeleted} old files`);
   const accDeleted = userDB.deleteExpiredAccounts();
   if (accDeleted > 0) console.log(`[relay] Cleanup: ${accDeleted} expired basic accounts`);
 }, 6 * 60 * 60 * 1000);
@@ -251,6 +267,7 @@ setInterval(() => {
   console.log(
     `[relay] Stats: ${clients.size} conn, ${auth} auth, ${channels.size} ch,`
     + ` ${messageDB.getMessageCount()} msgs, ${dmDB.getCount()} dms,`
+    + ` ${fileDB.getCount()} files (${Math.round(fileDB.getTotalSize() / 1024)}KB),`
     + ` ${communityDB.getCommunityCount()} comm,`
     + ` ${uc.total} users (${uc.verified}v/${uc.basic}b)`
   );

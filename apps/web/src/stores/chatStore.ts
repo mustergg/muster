@@ -1,8 +1,9 @@
 /**
- * Chat Store — Real Crypto Integration
+ * Chat Store — R9 update
  *
- * Changes: Replaced stub sign() with real Ed25519 signing from @muster/crypto.
- * Messages are now signed with the user's actual private key before publishing.
+ * Changes from Crypto Integration:
+ * - Added FILE_MESSAGE handler — file messages appear in the message list
+ * - ChatMessage extended with optional file fields (fileId, fileName, mimeType, fileSize)
  */
 
 import { create } from 'zustand';
@@ -13,22 +14,17 @@ import type { TransportMessage } from '@muster/transport';
 
 const encoder = new TextEncoder();
 
-/** Sign a string payload with Ed25519 and return hex signature. */
 async function signPayload(payload: string, privateKey: Uint8Array): Promise<string> {
   const sigBytes = await ed25519Sign(encoder.encode(payload), privateKey);
   return toHex(sigBytes);
 }
 
-/** Get the current user's private key from authStore. */
 function getPrivateKey(): Uint8Array | null {
   try {
-    // Access via window global set by authStore (avoids circular import issues with Vite)
     const authStore = (window as any).__authStore;
     if (authStore) return authStore.getState()._keypair?.privateKey ?? null;
     return null;
-  } catch {
-    return null;
-  }
+  } catch { return null; }
 }
 
 function uuid(): string {
@@ -40,6 +36,11 @@ function uuid(): string {
 export interface ChatMessage {
   messageId: string; channel: string; content: string;
   senderPublicKey: string; senderUsername: string; timestamp: number; isOwn: boolean;
+  // File fields (R9) — only present on FILE_MESSAGE
+  fileId?: string;
+  fileName?: string;
+  mimeType?: string;
+  fileSize?: number;
 }
 
 export interface PresenceUser { publicKey: string; username: string; status: string; }
@@ -101,7 +102,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const payload = { channel, content, messageId, timestamp };
     const payloadStr = JSON.stringify(payload);
 
-    // Optimistic update — add message to UI immediately
     const dbMsg: DBMessage = { messageId, channel, content, senderPublicKey: network.publicKey, senderUsername: network.username, timestamp, signature: '' };
     browserDB.addMessage(dbMsg);
     browserDB.setLastSyncTimestamp(channel, timestamp);
@@ -110,18 +110,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
       messages: { ...state.messages, [channel]: [...(state.messages[channel] || []), { messageId, channel, content, senderPublicKey: network.publicKey, senderUsername: network.username, timestamp, isOwn: true }] },
     }));
 
-    // Sign and send asynchronously
     const privateKey = getPrivateKey();
     if (privateKey) {
       signPayload(payloadStr, privateKey).then((signature) => {
         network.transport!.send({ type: 'PUBLISH', payload, timestamp, signature, senderPublicKey: network.publicKey });
       }).catch((err) => {
         console.error('[chat] Failed to sign message:', err);
-        // Send unsigned as fallback (relay will accept if signature verification is optional)
         network.transport!.send({ type: 'PUBLISH', payload, timestamp, signature: '', senderPublicKey: network.publicKey });
       });
     } else {
-      // No private key — send unsigned
       console.warn('[chat] No private key available — sending unsigned message');
       network.transport!.send({ type: 'PUBLISH', payload, timestamp, signature: '', senderPublicKey: network.publicKey });
     }
@@ -147,6 +144,30 @@ export const useChatStore = create<ChatState>((set, get) => ({
           const chatMsg: ChatMessage = { messageId: p.messageId, channel: p.channel, content: p.content, senderPublicKey: p.senderPublicKey, senderUsername: p.senderUsername, timestamp: p.timestamp, isOwn: p.senderPublicKey === myKey };
           browserDB.addMessage({ messageId: p.messageId, channel: p.channel, content: p.content, senderPublicKey: p.senderPublicKey, senderUsername: p.senderUsername, timestamp: p.timestamp, signature: (msg as any).signature || '' });
           browserDB.setLastSyncTimestamp(p.channel, p.timestamp);
+          set((state) => {
+            const existing = state.messages[p.channel] || [];
+            if (existing.some((m) => m.messageId === chatMsg.messageId)) return state;
+            return { messages: { ...state.messages, [p.channel]: [...existing, chatMsg].sort((a, b) => a.timestamp - b.timestamp) } };
+          });
+          break;
+        }
+
+        // R9: Handle file messages as chat messages with file metadata
+        case 'FILE_MESSAGE': {
+          const p = msg.payload as any;
+          const chatMsg: ChatMessage = {
+            messageId: p.messageId,
+            channel: p.channel,
+            content: p.messageText || '',
+            senderPublicKey: p.senderPublicKey,
+            senderUsername: p.senderUsername,
+            timestamp: p.timestamp,
+            isOwn: p.senderPublicKey === myKey,
+            fileId: p.fileId,
+            fileName: p.fileName,
+            mimeType: p.mimeType,
+            fileSize: p.size,
+          };
           set((state) => {
             const existing = state.messages[p.channel] || [];
             if (existing.some((m) => m.messageId === chatMsg.messageId)) return state;
