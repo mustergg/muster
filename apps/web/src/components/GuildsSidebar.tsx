@@ -1,9 +1,21 @@
+/**
+ * GuildsSidebar — R8 update
+ *
+ * Changes:
+ * - Leave community now checks if user is owner
+ * - Owner gets TransferOwnershipModal instead of simple confirm
+ * - Handles COMMUNITY_DELETED event (removes from sidebar)
+ * - Handles OWNER_CANNOT_LEAVE event (shows transfer modal)
+ */
+
 import React, { useState, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useCommunityStore } from '../stores/communityStore.js';
 import { useDMStore } from '../stores/dmStore.js';
+import { useNetworkStore } from '../stores/networkStore.js';
 import CreateCommunityModal from '../pages/CreateCommunityModal.js';
 import JoinCommunityModal from '../pages/JoinCommunityModal.js';
+import TransferOwnershipModal from '../pages/TransferOwnershipModal.js';
 import ContextMenu from './ContextMenu.js';
 
 interface Props {
@@ -24,11 +36,13 @@ function communityColor(id: string): { color: string; bg: string } {
 
 export default function GuildsSidebar({ activeCommunityId, onSelectCommunity, dmActive, onSelectDM }: Props): React.JSX.Element {
   const { t } = useTranslation();
-  const { communities, loadCommunities, leaveCommunity } = useCommunityStore();
+  const { communities, loadCommunities, leaveCommunity, myRoles } = useCommunityStore();
   const { conversations } = useDMStore();
+  const { publicKey: myKey } = useNetworkStore();
   const [showCreate, setShowCreate] = useState(false);
   const [showJoin,   setShowJoin]   = useState(false);
   const [showMenu,   setShowMenu]   = useState(false);
+  const [transferCommunity, setTransferCommunity] = useState<{ id: string; name: string } | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => { loadCommunities(); }, []);
@@ -45,12 +59,37 @@ export default function GuildsSidebar({ activeCommunityId, onSelectCommunity, dm
     return () => document.removeEventListener('mousedown', handler);
   }, [showMenu]);
 
+  // Listen for OWNER_CANNOT_LEAVE from relay
+  useEffect(() => {
+    const network = useNetworkStore.getState();
+    const unsub = network.onMessage((msg) => {
+      if (msg.type === 'OWNER_CANNOT_LEAVE') {
+        const p = msg.payload as any;
+        const community = communities[p.communityId];
+        if (community) {
+          setTransferCommunity({ id: p.communityId, name: community.name });
+        }
+      }
+    });
+    return unsub;
+  }, [communities]);
+
   const communityList = Object.values(communities);
   const unreadDMs = conversations.reduce((sum, c) => sum + (c.unreadCount || 0), 0);
 
   const handleLeaveCommunity = (id: string, name: string) => {
+    // Check if the user is the owner
+    const community = communities[id];
+    const isOwner = community?.ownerPublicKey === myKey;
+
+    if (isOwner) {
+      // Show transfer modal instead of simple leave
+      setTransferCommunity({ id, name });
+      return;
+    }
+
     if (confirm(`Leave "${name}"? You will need an invite to rejoin.`)) {
-      leaveCommunity?.(id);
+      leaveCommunity(id);
     }
   };
 
@@ -80,6 +119,7 @@ export default function GuildsSidebar({ activeCommunityId, onSelectCommunity, dm
         {communityList.map((c) => {
           const { color, bg } = communityColor(c.id);
           const isActive = !dmActive && activeCommunityId === c.id;
+          const isOwner = c.ownerPublicKey === myKey;
           return (
             <ContextMenu
               key={c.id}
@@ -92,8 +132,13 @@ export default function GuildsSidebar({ activeCommunityId, onSelectCommunity, dm
                     navigator.clipboard.writeText(link);
                   },
                 },
+                ...(isOwner ? [{
+                  label: 'Transfer ownership',
+                  icon: '\u{1F451}',
+                  onClick: () => setTransferCommunity({ id: c.id, name: c.name }),
+                }] : []),
                 {
-                  label: 'Leave community',
+                  label: isOwner ? 'Leave / Delete community' : 'Leave community',
                   icon: '\u{1F6AA}',
                   danger: true,
                   onClick: () => handleLeaveCommunity(c.id, c.name),
@@ -154,6 +199,21 @@ export default function GuildsSidebar({ activeCommunityId, onSelectCommunity, dm
 
       {showCreate && <CreateCommunityModal onClose={() => setShowCreate(false)} onCreated={(id) => { onSelectCommunity(id); }} />}
       {showJoin && <JoinCommunityModal onClose={() => setShowJoin(false)} onJoined={(id) => { onSelectCommunity(id); }} prefillLink={new URLSearchParams(window.location.search).get('join') ? window.location.href : undefined} />}
+      {transferCommunity && (
+        <TransferOwnershipModal
+          communityId={transferCommunity.id}
+          communityName={transferCommunity.name}
+          onClose={() => setTransferCommunity(null)}
+          onDeleted={() => {
+            setTransferCommunity(null);
+            // If the deleted community was active, clear selection
+            if (activeCommunityId === transferCommunity.id) {
+              const remaining = Object.keys(communities).filter((id) => id !== transferCommunity.id);
+              if (remaining.length > 0) onSelectCommunity(remaining[0]!);
+            }
+          }}
+        />
+      )}
     </>
   );
 }

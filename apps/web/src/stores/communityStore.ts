@@ -184,6 +184,48 @@ export const useCommunityStore = create<CommunityState>()((set, get) => {
         break;
       }
 
+      // ─── Ownership events (R8) ──────────────────────────────────
+
+      case 'OWNERSHIP_TRANSFERRED': {
+        const p = msg.payload as any;
+        const { communityId, newOwnerPublicKey, previousOwnerPublicKey } = p;
+        const myKey = useNetworkStore.getState().publicKey;
+
+        set((state) => {
+          const community = state.communities[communityId];
+          if (!community) return state;
+
+          // Update community owner
+          const updated = {
+            ...state.communities,
+            [communityId]: { ...community, ownerPublicKey: newOwnerPublicKey },
+          };
+          saveToLocalStorage(updated);
+
+          // Update roles
+          const roles = { ...state.myRoles };
+          if (myKey === newOwnerPublicKey) roles[communityId] = 'owner';
+          if (myKey === previousOwnerPublicKey) roles[communityId] = 'admin';
+
+          return { communities: updated, myRoles: roles };
+        });
+        break;
+      }
+
+      case 'COMMUNITY_DELETED': {
+        const p = msg.payload as any;
+        const communityId = p.communityId as string;
+        set((state) => {
+          const updated = { ...state.communities };
+          delete updated[communityId];
+          saveToLocalStorage(updated);
+          const roles = { ...state.myRoles };
+          delete roles[communityId];
+          return { communities: updated, myRoles: roles };
+        });
+        break;
+      }
+
       case 'COMMUNITY_MEMBER_UPDATE': {
         const p = msg.payload as any;
         const communityId = p.communityId;

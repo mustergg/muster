@@ -1,9 +1,9 @@
 /**
- * Muster Relay Server — R7
+ * Muster Relay Server — R8
  *
- * Changes from Crypto Integration:
- * - Added channel management routing (CREATE_CHANNEL, EDIT_CHANNEL, DELETE_CHANNEL_CMD, REORDER_CHANNELS)
- * - Imported channelHandler
+ * Changes from R7:
+ * - Added ownership message routing (TRANSFER_OWNERSHIP, DELETE_COMMUNITY_CMD, CHECK_TRANSFER_ELIGIBILITY)
+ * - communityHandler now receives userDB for owner-leave checks
  */
 
 import { WebSocketServer, WebSocket } from 'ws';
@@ -17,6 +17,7 @@ import { handleDMMessage } from './dmHandler';
 import { handleRoleMessage } from './roleHandler';
 import { handleEmailMessage } from './emailHandler';
 import { handleChannelMessage } from './channelHandler';
+import { handleOwnershipMessage } from './ownershipHandler';
 import { enforceTier } from './tierEnforcement';
 import { initCrypto, verifySig as verifySignature } from './relayCrypto';
 import type { RelayClient } from './types';
@@ -34,12 +35,11 @@ const userDB = new UserDB(messageDB.getDatabase());
 
 const wss = new WebSocketServer({ port: PORT, maxPayload: MAX_MESSAGE_SIZE });
 
-// Load Ed25519 crypto (async import for ESM/CJS compat)
 initCrypto().catch((err) => console.error('[relay] Crypto init failed:', err));
 
 const userCounts = userDB.getUserCount();
 console.log(`[relay] ====================================`);
-console.log(`[relay]  Muster Relay Node (R7)`);
+console.log(`[relay]  Muster Relay Node (R8)`);
 console.log(`[relay]  Listening on port ${PORT}`);
 console.log(`[relay]  Ed25519 signature verification: ENABLED`);
 console.log(`[relay]  Messages: ${messageDB.getMessageCount()}`);
@@ -68,9 +68,9 @@ const DM_TYPES = new Set(['SEND_DM', 'DM_HISTORY_REQUEST', 'DM_CONVERSATIONS_REQ
 const ROLE_TYPES = new Set(['ASSIGN_ROLE', 'KICK_MEMBER', 'DELETE_MESSAGE']);
 const EMAIL_TYPES = new Set(['REGISTER_EMAIL', 'VERIFY_EMAIL', 'RESEND_VERIFICATION', 'ACCOUNT_INFO_REQUEST']);
 const CHANNEL_TYPES = new Set(['CREATE_CHANNEL', 'EDIT_CHANNEL', 'DELETE_CHANNEL_CMD', 'REORDER_CHANNELS']);
+const OWNERSHIP_TYPES = new Set(['CHECK_TRANSFER_ELIGIBILITY', 'TRANSFER_OWNERSHIP', 'DELETE_COMMUNITY_CMD']);
 
 function handleMessage(client: RelayClient, msg: any): void {
-  // Auth is async due to crypto verification
   if (msg.type === 'AUTH_RESPONSE') { handleAuth(client, msg); return; }
   if (!requireAuth(client)) return;
 
@@ -79,11 +79,16 @@ function handleMessage(client: RelayClient, msg: any): void {
     return;
   }
 
+  if (OWNERSHIP_TYPES.has(msg.type)) {
+    handleOwnershipMessage(client, msg, communityDB, messageDB, userDB, sendToClient, clients, channels);
+    return;
+  }
+
   if (COMMUNITY_TYPES.has(msg.type)) {
     if (msg.type === 'CREATE_COMMUNITY') {
       if (enforceTier(client, 'CREATE_COMMUNITY', userDB, sendToClient)) return;
     }
-    handleCommunityMessage(client, msg, communityDB, sendToClient, clients, channels, broadcastPresence);
+    handleCommunityMessage(client, msg, communityDB, sendToClient, clients, channels, broadcastPresence, userDB);
     return;
   }
 
@@ -128,7 +133,6 @@ async function handleAuth(client: RelayClient, msg: any): Promise<void> {
     return;
   }
 
-  // Real Ed25519 signature verification
   const valid = await verifySignature(client.challenge, signature, publicKey);
   if (!valid) {
     console.warn(`[relay] Auth FAILED for ${username} — invalid signature`);
@@ -145,7 +149,6 @@ async function handleAuth(client: RelayClient, msg: any): Promise<void> {
   console.log(`[relay] Auth OK: ${username} (${publicKey.slice(0, 12)}...) tier=${user.tier} [Ed25519 verified]`);
 
   sendToClient(client, { type: 'AUTH_RESULT', payload: { success: true }, timestamp: Date.now() });
-
   const info = userDB.getAccountInfo(publicKey);
   sendToClient(client, { type: 'ACCOUNT_INFO', payload: info, timestamp: Date.now() });
 }
@@ -172,7 +175,6 @@ async function handlePublish(client: RelayClient, msg: any): Promise<void> {
   const { channel, content, messageId, timestamp } = msg.payload || {};
   if (!channel || !content || !messageId || !client.channels.has(channel)) return;
 
-  // Verify message signature if provided
   const signature = msg.signature || '';
   if (signature && msg.senderPublicKey) {
     const valid = await verifySignature(JSON.stringify(msg.payload), signature, msg.senderPublicKey);

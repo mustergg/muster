@@ -1,11 +1,9 @@
 /**
- * Community Database — R7 update
+ * Community Database — R8 update
  *
- * Changes from R4:
- * - Added addChannel() method for creating new channels
- * - Added updateChannel() method for editing channel name/visibility
- * - Added deleteChannel() method for removing channels
- * - Added reorderChannels() method for changing channel positions
+ * Changes from R7:
+ * - Added transferOwnership() — changes owner in communities table + swaps roles in members
+ * - Added deleteCommunityFull() — deletes community + channels + members (CASCADE)
  */
 
 import type Database from 'better-sqlite3';
@@ -103,38 +101,29 @@ export class CommunityDB {
   }
 
   // =================================================================
-  // Channels — R7 additions
+  // Channels
   // =================================================================
 
   getChannels(communityId: string): DBChannel[] {
     return this.db.prepare('SELECT * FROM channels WHERE communityId = ? ORDER BY position').all(communityId) as DBChannel[];
   }
 
-  /** Add a new channel to a community. */
   addChannel(channel: DBChannel): void {
     this.db.prepare(
-      `INSERT INTO channels (id, communityId, name, type, visibility, position)
-       VALUES (@id, @communityId, @name, @type, @visibility, @position)`
+      `INSERT INTO channels (id, communityId, name, type, visibility, position) VALUES (@id, @communityId, @name, @type, @visibility, @position)`
     ).run(channel);
   }
 
-  /** Update a channel's name and/or visibility. */
   updateChannel(channelId: string, name: string, visibility: string): void {
-    this.db.prepare(
-      'UPDATE channels SET name = ?, visibility = ? WHERE id = ?'
-    ).run(name, visibility, channelId);
+    this.db.prepare('UPDATE channels SET name = ?, visibility = ? WHERE id = ?').run(name, visibility, channelId);
   }
 
-  /** Delete a channel by ID. */
   deleteChannel(channelId: string): void {
     this.db.prepare('DELETE FROM channels WHERE id = ?').run(channelId);
   }
 
-  /** Reorder channels: set position based on index in the array. */
   reorderChannels(communityId: string, channelIds: string[]): void {
-    const stmt = this.db.prepare(
-      'UPDATE channels SET position = ? WHERE id = ? AND communityId = ?'
-    );
+    const stmt = this.db.prepare('UPDATE channels SET position = ? WHERE id = ? AND communityId = ?');
     const transaction = this.db.transaction(() => {
       for (let i = 0; i < channelIds.length; i++) {
         stmt.run(i, channelIds[i], communityId);
@@ -167,12 +156,10 @@ export class CommunityDB {
     this.db.prepare('DELETE FROM members WHERE communityId = ? AND publicKey = ?').run(communityId, publicKey);
   }
 
-  /** Update a member's role. */
   updateMemberRole(communityId: string, publicKey: string, newRole: string): void {
     this.db.prepare('UPDATE members SET role = ? WHERE communityId = ? AND publicKey = ?').run(newRole, communityId, publicKey);
   }
 
-  /** Get a specific member's role. */
   getMemberRole(communityId: string, publicKey: string): string | null {
     const row = this.db.prepare('SELECT role FROM members WHERE communityId = ? AND publicKey = ?').get(communityId, publicKey) as any;
     return row?.role ?? null;
@@ -188,5 +175,55 @@ export class CommunityDB {
 
   getCommunityCount(): number {
     return (this.db.prepare('SELECT COUNT(*) as count FROM communities').get() as any)?.count ?? 0;
+  }
+
+  // =================================================================
+  // Ownership Transfer — R8
+  // =================================================================
+
+  /**
+   * Transfer ownership of a community to a new member.
+   * - Updates ownerPublicKey in communities table
+   * - Sets new owner's role to 'owner'
+   * - Demotes previous owner to 'admin'
+   */
+  transferOwnership(communityId: string, oldOwnerPublicKey: string, newOwnerPublicKey: string): void {
+    const transaction = this.db.transaction(() => {
+      // Update the community's owner
+      this.db.prepare(
+        'UPDATE communities SET ownerPublicKey = ? WHERE id = ?'
+      ).run(newOwnerPublicKey, communityId);
+
+      // Set new owner's role to 'owner'
+      this.db.prepare(
+        'UPDATE members SET role = ? WHERE communityId = ? AND publicKey = ?'
+      ).run('owner', communityId, newOwnerPublicKey);
+
+      // Demote old owner to 'admin'
+      this.db.prepare(
+        'UPDATE members SET role = ? WHERE communityId = ? AND publicKey = ?'
+      ).run('admin', communityId, oldOwnerPublicKey);
+    });
+    transaction();
+  }
+
+  // =================================================================
+  // Delete Community — R8
+  // =================================================================
+
+  /**
+   * Fully delete a community and all related data.
+   * Channels and members are deleted via CASCADE.
+   */
+  deleteCommunityFull(communityId: string): void {
+    const transaction = this.db.transaction(() => {
+      // Delete members explicitly (in case CASCADE isn't enabled)
+      this.db.prepare('DELETE FROM members WHERE communityId = ?').run(communityId);
+      // Delete channels
+      this.db.prepare('DELETE FROM channels WHERE communityId = ?').run(communityId);
+      // Delete the community
+      this.db.prepare('DELETE FROM communities WHERE id = ?').run(communityId);
+    });
+    transaction();
   }
 }

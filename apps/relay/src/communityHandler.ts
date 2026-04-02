@@ -1,13 +1,15 @@
 /**
- * Community handler — processes community-related messages on the relay.
+ * Community handler — R8 update
  *
- * Handles: CREATE_COMMUNITY, JOIN_COMMUNITY, LEAVE_COMMUNITY,
- *          LIST_COMMUNITIES, GET_COMMUNITY
+ * Changes from R7:
+ * - LEAVE_COMMUNITY now blocks the owner from leaving
+ *   (must transfer ownership first or delete the community)
  */
 
 import { WebSocket } from 'ws';
 import { randomUUID } from 'crypto';
 import { CommunityDB } from './communityDB';
+import { UserDB } from './userDB';
 import type { RelayClient } from './types';
 
 function generateId(): string {
@@ -22,6 +24,7 @@ export function handleCommunityMessage(
   clients: Map<WebSocket, RelayClient>,
   channels: Map<string, Set<WebSocket>>,
   broadcastPresence: (channelId: string) => void,
+  userDB?: UserDB,
 ): void {
   switch (msg.type) {
     case 'CREATE_COMMUNITY':
@@ -31,7 +34,7 @@ export function handleCommunityMessage(
       handleJoin(client, msg, communityDB, sendToClient, clients, channels, broadcastPresence);
       break;
     case 'LEAVE_COMMUNITY':
-      handleLeave(client, msg, communityDB, sendToClient, clients);
+      handleLeave(client, msg, communityDB, sendToClient, clients, userDB);
       break;
     case 'LIST_COMMUNITIES':
       handleList(client, communityDB, sendToClient);
@@ -129,9 +132,43 @@ function handleLeave(
   client: RelayClient, msg: any, communityDB: CommunityDB,
   sendToClient: (client: RelayClient, msg: Record<string, unknown>) => void,
   clients: Map<WebSocket, RelayClient>,
+  userDB?: UserDB,
 ): void {
   const { communityId } = msg.payload || {};
   if (!communityId) return;
+
+  // R8: Block owner from leaving — must transfer ownership or delete
+  const community = communityDB.getCommunity(communityId);
+  if (community && community.ownerPublicKey === client.publicKey) {
+    const members = communityDB.getMembers(communityId);
+    const isOnlyMember = members.length <= 1;
+
+    if (isOnlyMember) {
+      // Only member — can only delete
+      sendToClient(client, {
+        type: 'OWNER_CANNOT_LEAVE',
+        payload: {
+          communityId,
+          reason: 'You are the only member. You can delete the community.',
+          action: 'delete_only',
+        },
+        timestamp: Date.now(),
+      });
+    } else {
+      // Has other members — must transfer first
+      sendToClient(client, {
+        type: 'OWNER_CANNOT_LEAVE',
+        payload: {
+          communityId,
+          reason: 'Transfer ownership to another verified member before leaving, or delete the community.',
+          action: 'transfer',
+        },
+        timestamp: Date.now(),
+      });
+    }
+    return;
+  }
+
   communityDB.removeMember(communityId, client.publicKey);
   const members = communityDB.getMembers(communityId);
   console.log(`[relay] ${client.username} left community ${communityId.slice(0, 8)}...`);
@@ -141,6 +178,13 @@ function handleLeave(
       ws.send(memberUpdate);
     }
   }
+
+  // Confirm to the leaving user
+  sendToClient(client, {
+    type: 'COMMUNITY_LEFT',
+    payload: { communityId },
+    timestamp: Date.now(),
+  });
 }
 
 function handleList(

@@ -1,6 +1,6 @@
 /**
- * Relay Database — R4 update
- * Changes: Added deleteMessage() for moderation.
+ * Relay Database — R8 update
+ * Changes: Added deleteMessagesByChannel() for community deletion cleanup.
  */
 
 import Database from 'better-sqlite3';
@@ -60,6 +60,14 @@ export class RelayDB {
   /** Delete a specific message by ID (moderation). */
   deleteMessage(messageId: string): void {
     this.db.prepare('DELETE FROM messages WHERE messageId = ?').run(messageId);
+  }
+
+  /** Delete all messages in a channel (used when deleting a community). */
+  deleteMessagesByChannel(channel: string): void {
+    const result = this.db.prepare('DELETE FROM messages WHERE channel = ?').run(channel);
+    if (result.changes > 0) {
+      console.log(`[relay-db] Deleted ${result.changes} messages from channel ${channel.slice(0, 8)}...`);
+    }
   }
 
   deleteOlderThan(timestamp: number): number {
