@@ -84,13 +84,32 @@ function FileAttachment({ fileId, fileName, mimeType, size }: {
     if (loading) return <div style={fileStyles.imagePlaceholder}>Loading image...</div>;
     if (error) return <div style={fileStyles.imagePlaceholder}>Failed to load image</div>;
     if (dataUrl) {
+      const handleImageClick = () => {
+        try {
+          const parts = dataUrl.split(',');
+          const mime = parts[0]?.match(/:(.*?);/)?.[1] || mimeType;
+          const raw = atob(parts[1] || '');
+          const arr = new Uint8Array(raw.length);
+          for (let i = 0; i < raw.length; i++) arr[i] = raw.charCodeAt(i);
+          const blob = new Blob([arr], { type: mime });
+          const blobUrl = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = blobUrl;
+          a.download = fileName;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+        } catch { /* fallback */ }
+      };
       return (
         <div style={fileStyles.imageWrap}>
           <img
             src={dataUrl}
             alt={fileName}
             style={fileStyles.image}
-            onClick={() => window.open(dataUrl, '_blank')}
+            onClick={handleImageClick}
+            title="Click to download"
           />
           <span style={fileStyles.imageLabel}>{fileName} ({formatSize(size)})</span>
         </div>

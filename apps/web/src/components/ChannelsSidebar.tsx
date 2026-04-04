@@ -15,6 +15,7 @@ import { useCommunityStore } from '../stores/communityStore.js';
 import InviteLinkModal from '../pages/InviteLinkModal.js';
 import CreateChannelModal from '../pages/CreateChannelModal.js';
 import EditChannelModal from '../pages/EditChannelModal.js';
+import EditProfileModal from '../pages/EditProfileModal.js';
 import ContextMenu from './ContextMenu.js';
 
 interface Props {
@@ -33,6 +34,7 @@ export default function ChannelsSidebar({ communityId, activeChannelId, onSelect
   const [showInvite, setShowInvite] = useState(false);
   const [showCreateChannel, setShowCreateChannel] = useState(false);
   const [editingChannel, setEditingChannel] = useState<{ id: string; name: string; visibility: string } | null>(null);
+  const [showProfile, setShowProfile] = useState(false);
 
   const community = communityId ? communities[communityId] : null;
   const channels  = community?.channels ?? [];
@@ -211,6 +213,7 @@ export default function ChannelsSidebar({ communityId, activeChannelId, onSelect
               {peerId ? peerId.slice(0, 16) + '\u2026' : 'not connected'}
             </div>
           </div>
+          <button onClick={() => setShowProfile(true)} title="Edit profile" style={styles.actionBtn}>&#x2699;</button>
           <button onClick={handleLogout} title={t('auth.logout')} style={styles.actionBtn}>&#x23FB;</button>
         </div>
       </div>
@@ -238,6 +241,10 @@ export default function ChannelsSidebar({ communityId, activeChannelId, onSelect
           currentVisibility={editingChannel.visibility}
           onClose={() => setEditingChannel(null)}
         />
+      )}
+
+      {showProfile && (
+        <EditProfileModal onClose={() => setShowProfile(false)} />
       )}
     </>
   );

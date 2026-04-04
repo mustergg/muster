@@ -1,9 +1,13 @@
 /**
- * Chat Store — R9 update
+ * Chat Store — R10 update
  *
- * Changes from Crypto Integration:
- * - Added FILE_MESSAGE handler — file messages appear in the message list
- * - ChatMessage extended with optional file fields (fileId, fileName, mimeType, fileSize)
+ * Fixes from R9:
+ * - BUG FIX: FILE_MESSAGE now persisted in IndexedDB (browserDB)
+ *   File metadata stored as __FILE__JSON in the content field
+ *   Reconstructed when loading from DB
+ *
+ * New:
+ * - File messages survive channel switching and browser refresh
  */
 
 import { create } from 'zustand';
@@ -13,6 +17,7 @@ import { sign as ed25519Sign, toHex } from '@muster/crypto';
 import type { TransportMessage } from '@muster/transport';
 
 const encoder = new TextEncoder();
+const FILE_PREFIX = '__FILE__';
 
 async function signPayload(payload: string, privateKey: Uint8Array): Promise<string> {
   const sigBytes = await ed25519Sign(encoder.encode(payload), privateKey);
@@ -33,10 +38,24 @@ function uuid(): string {
   });
 }
 
+/** Encode file metadata into content string for DB storage. */
+function encodeFileContent(fileId: string, fileName: string, mimeType: string, fileSize: number, messageText: string): string {
+  return FILE_PREFIX + JSON.stringify({ fileId, fileName, mimeType, fileSize, text: messageText });
+}
+
+/** Decode a DB content string — returns file fields if it's a file message, null otherwise. */
+function decodeFileContent(content: string): { fileId: string; fileName: string; mimeType: string; fileSize: number; text: string } | null {
+  if (!content.startsWith(FILE_PREFIX)) return null;
+  try {
+    return JSON.parse(content.slice(FILE_PREFIX.length));
+  } catch {
+    return null;
+  }
+}
+
 export interface ChatMessage {
   messageId: string; channel: string; content: string;
   senderPublicKey: string; senderUsername: string; timestamp: number; isOwn: boolean;
-  // File fields (R9) — only present on FILE_MESSAGE
   fileId?: string;
   fileName?: string;
   mimeType?: string;
@@ -60,8 +79,24 @@ interface ChatState {
 
 const browserDB = new BrowserDB();
 
+/** Convert a DB message to a ChatMessage, detecting file messages. */
 function dbMsgToChatMsg(msg: DBMessage, myKey: string): ChatMessage {
-  return { messageId: msg.messageId, channel: msg.channel, content: msg.content, senderPublicKey: msg.senderPublicKey, senderUsername: msg.senderUsername, timestamp: msg.timestamp, isOwn: msg.senderPublicKey === myKey };
+  const fileData = decodeFileContent(msg.content);
+  if (fileData) {
+    return {
+      messageId: msg.messageId, channel: msg.channel,
+      content: fileData.text || '',
+      senderPublicKey: msg.senderPublicKey, senderUsername: msg.senderUsername,
+      timestamp: msg.timestamp, isOwn: msg.senderPublicKey === myKey,
+      fileId: fileData.fileId, fileName: fileData.fileName,
+      mimeType: fileData.mimeType, fileSize: fileData.fileSize,
+    };
+  }
+  return {
+    messageId: msg.messageId, channel: msg.channel, content: msg.content,
+    senderPublicKey: msg.senderPublicKey, senderUsername: msg.senderUsername,
+    timestamp: msg.timestamp, isOwn: msg.senderPublicKey === myKey,
+  };
 }
 
 export const useChatStore = create<ChatState>((set, get) => ({
@@ -114,12 +149,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
     if (privateKey) {
       signPayload(payloadStr, privateKey).then((signature) => {
         network.transport!.send({ type: 'PUBLISH', payload, timestamp, signature, senderPublicKey: network.publicKey });
-      }).catch((err) => {
-        console.error('[chat] Failed to sign message:', err);
+      }).catch(() => {
         network.transport!.send({ type: 'PUBLISH', payload, timestamp, signature: '', senderPublicKey: network.publicKey });
       });
     } else {
-      console.warn('[chat] No private key available — sending unsigned message');
       network.transport!.send({ type: 'PUBLISH', payload, timestamp, signature: '', senderPublicKey: network.publicKey });
     }
   },
@@ -152,22 +185,27 @@ export const useChatStore = create<ChatState>((set, get) => ({
           break;
         }
 
-        // R9: Handle file messages as chat messages with file metadata
+        // R9+R10: Handle file messages — now persisted in IndexedDB
         case 'FILE_MESSAGE': {
           const p = msg.payload as any;
           const chatMsg: ChatMessage = {
-            messageId: p.messageId,
-            channel: p.channel,
+            messageId: p.messageId, channel: p.channel,
             content: p.messageText || '',
-            senderPublicKey: p.senderPublicKey,
-            senderUsername: p.senderUsername,
-            timestamp: p.timestamp,
-            isOwn: p.senderPublicKey === myKey,
-            fileId: p.fileId,
-            fileName: p.fileName,
-            mimeType: p.mimeType,
-            fileSize: p.size,
+            senderPublicKey: p.senderPublicKey, senderUsername: p.senderUsername,
+            timestamp: p.timestamp, isOwn: p.senderPublicKey === myKey,
+            fileId: p.fileId, fileName: p.fileName, mimeType: p.mimeType, fileSize: p.size,
           };
+
+          // BUG FIX: Persist file message in IndexedDB with encoded metadata
+          const encodedContent = encodeFileContent(p.fileId, p.fileName, p.mimeType, p.size, p.messageText || '');
+          browserDB.addMessage({
+            messageId: p.messageId, channel: p.channel,
+            content: encodedContent,
+            senderPublicKey: p.senderPublicKey, senderUsername: p.senderUsername,
+            timestamp: p.timestamp, signature: '',
+          });
+          browserDB.setLastSyncTimestamp(p.channel, p.timestamp);
+
           set((state) => {
             const existing = state.messages[p.channel] || [];
             if (existing.some((m) => m.messageId === chatMsg.messageId)) return state;
@@ -184,7 +222,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           browserDB.addMessages(dbMsgs);
           const maxTs = Math.max(...synced.map((m: any) => m.timestamp));
           browserDB.setLastSyncTimestamp(p.channel, maxTs);
-          const chatMsgs: ChatMessage[] = synced.map((m: any) => ({ messageId: m.messageId, channel: m.channel, content: m.content, senderPublicKey: m.senderPublicKey, senderUsername: m.senderUsername, timestamp: m.timestamp, isOwn: m.senderPublicKey === myKey }));
+          const chatMsgs: ChatMessage[] = synced.map((m: any) => dbMsgToChatMsg(m as DBMessage, myKey));
           set((state) => {
             const existing = state.messages[p.channel] || [];
             const ids = new Set(existing.map((m) => m.messageId));
@@ -197,7 +235,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
         case 'MESSAGE_DELETED': {
           const p = msg.payload as any;
-          console.log(`[chat] Message ${p.messageId?.slice(0, 8)}... deleted by ${p.deletedBy}`);
           set((state) => {
             const existing = state.messages[p.channel] || [];
             return { messages: { ...state.messages, [p.channel]: existing.filter((m) => m.messageId !== p.messageId) } };
