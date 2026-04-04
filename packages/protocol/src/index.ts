@@ -58,4 +58,4 @@ export * from './email-messages.js';
 export * from './channel-management-messages.js';
 export * from './file-messages.js';
 export * from './profile-messages.js';
-export * from './profile-messages.js';
+export * from './friend-messages.js';

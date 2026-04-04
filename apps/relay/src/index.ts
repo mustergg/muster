@@ -1,8 +1,8 @@
 /**
- * Muster Relay Server — R10
+ * Muster Relay Server — R11
  *
- * Changes from R9:
- * - Added profile message routing (UPDATE_PROFILE, GET_PROFILE)
+ * Changes from R10:
+ * - Added friend system routing (requests, accept/decline/block, friend list)
  */
 
 import { WebSocketServer, WebSocket } from 'ws';
@@ -20,6 +20,8 @@ import { handleChannelMessage } from './channelHandler';
 import { handleOwnershipMessage } from './ownershipHandler';
 import { handleFileMessage } from './fileHandler';
 import { handleProfileMessage } from './profileHandler';
+import { FriendDB } from './friendDB';
+import { handleFriendMessage } from './friendHandler';
 import { enforceTier } from './tierEnforcement';
 import { initCrypto, verifySig as verifySignature } from './relayCrypto';
 import type { RelayClient } from './types';
@@ -35,6 +37,7 @@ const communityDB = new CommunityDB(messageDB.getDatabase());
 const dmDB = new DMDB(messageDB.getDatabase());
 const userDB = new UserDB(messageDB.getDatabase());
 const fileDB = new FileDB(messageDB.getDatabase());
+const friendDB = new FriendDB(messageDB.getDatabase());
 
 const wss = new WebSocketServer({ port: PORT, maxPayload: MAX_MESSAGE_SIZE });
 
@@ -43,7 +46,7 @@ initCrypto().catch((err) => console.error('[relay] Crypto init failed:', err));
 const userCounts = userDB.getUserCount();
 const fileTotalKB = Math.round(fileDB.getTotalSize() / 1024);
 console.log(`[relay] ====================================`);
-console.log(`[relay]  Muster Relay Node (R10)`);
+console.log(`[relay]  Muster Relay Node (R11)`);
 console.log(`[relay]  Listening on port ${PORT}`);
 console.log(`[relay]  Ed25519 signature verification: ENABLED`);
 console.log(`[relay]  Messages: ${messageDB.getMessageCount()}`);
@@ -71,6 +74,7 @@ const CHANNEL_TYPES = new Set(['CREATE_CHANNEL', 'EDIT_CHANNEL', 'DELETE_CHANNEL
 const OWNERSHIP_TYPES = new Set(['CHECK_TRANSFER_ELIGIBILITY', 'TRANSFER_OWNERSHIP', 'DELETE_COMMUNITY_CMD']);
 const FILE_TYPES = new Set(['UPLOAD_FILE', 'REQUEST_FILE']);
 const PROFILE_TYPES = new Set(['UPDATE_PROFILE', 'GET_PROFILE']);
+const FRIEND_TYPES = new Set(['SEND_FRIEND_REQUEST', 'RESPOND_FRIEND_REQUEST', 'REMOVE_FRIEND', 'BLOCK_USER', 'UNBLOCK_USER', 'GET_FRIENDS', 'GET_FRIEND_REQUESTS', 'GET_BLOCKED_USERS']);
 
 function handleMessage(client: RelayClient, msg: any): void {
   if (msg.type === 'AUTH_RESPONSE') { handleAuth(client, msg); return; }
@@ -78,6 +82,7 @@ function handleMessage(client: RelayClient, msg: any): void {
 
   if (EMAIL_TYPES.has(msg.type)) { handleEmailMessage(client, msg, userDB, sendToClient); return; }
   if (PROFILE_TYPES.has(msg.type)) { handleProfileMessage(client, msg, userDB, sendToClient); return; }
+  if (FRIEND_TYPES.has(msg.type)) { handleFriendMessage(client, msg, friendDB, userDB, sendToClient, clients); return; }
   if (OWNERSHIP_TYPES.has(msg.type)) { handleOwnershipMessage(client, msg, communityDB, messageDB, userDB, sendToClient, clients, channels); return; }
 
   if (COMMUNITY_TYPES.has(msg.type)) {
@@ -161,6 +166,7 @@ setInterval(() => {
   const msgDel = messageDB.deleteOlderThan(Date.now() - RETENTION_MS); if (msgDel > 0) console.log(`[relay] Cleanup: ${msgDel} old msgs`);
   const fileDel = fileDB.deleteOlderThan(Date.now() - RETENTION_MS); if (fileDel > 0) console.log(`[relay] Cleanup: ${fileDel} old files`);
   const accDel = userDB.deleteExpiredAccounts(); if (accDel > 0) console.log(`[relay] Cleanup: ${accDel} expired accounts`);
+  const frDel = friendDB.cleanupExpiredRequests(); if (frDel > 0) console.log(`[relay] Cleanup: ${frDel} expired friend requests`);
 }, 6 * 60 * 60 * 1000);
 
 function shutdown(): void { for (const [ws] of clients) ws.close(1001); wss.close(() => { messageDB.close(); process.exit(0); }); setTimeout(() => process.exit(0), 5000); }

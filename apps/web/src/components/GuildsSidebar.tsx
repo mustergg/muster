@@ -1,11 +1,9 @@
 /**
- * GuildsSidebar — R8 update
+ * GuildsSidebar — R11 update
  *
  * Changes:
- * - Leave community now checks if user is owner
- * - Owner gets TransferOwnershipModal instead of simple confirm
- * - Handles COMMUNITY_DELETED event (removes from sidebar)
- * - Handles OWNER_CANNOT_LEAVE event (shows transfer modal)
+ * - Added Friends button between DM and communities
+ * - New props: friendsActive, onSelectFriends
  */
 
 import React, { useState, useEffect, useRef } from 'react';
@@ -23,6 +21,8 @@ interface Props {
   onSelectCommunity: (id: string) => void;
   dmActive?: boolean;
   onSelectDM?: () => void;
+  friendsActive?: boolean;
+  onSelectFriends?: () => void;
 }
 
 function communityInitials(name: string): string {
@@ -34,7 +34,7 @@ function communityColor(id: string): { color: string; bg: string } {
   return { color: `hsl(${hue},60%,65%)`, bg: `hsl(${hue},40%,18%)` };
 }
 
-export default function GuildsSidebar({ activeCommunityId, onSelectCommunity, dmActive, onSelectDM }: Props): React.JSX.Element {
+export default function GuildsSidebar({ activeCommunityId, onSelectCommunity, dmActive, onSelectDM, friendsActive, onSelectFriends }: Props): React.JSX.Element {
   const { t } = useTranslation();
   const { communities, loadCommunities, leaveCommunity, myRoles } = useCommunityStore();
   const { conversations } = useDMStore();
@@ -113,12 +113,28 @@ export default function GuildsSidebar({ activeCommunityId, onSelectCommunity, dm
           {unreadDMs > 0 && <span style={styles.badge}>{unreadDMs > 9 ? '9+' : unreadDMs}</span>}
         </button>
 
+        {/* Friends button */}
+        <button
+          title="Friends"
+          onClick={() => onSelectFriends?.()}
+          style={{
+            ...styles.icon,
+            background: friendsActive ? 'var(--color-accent)' : 'var(--color-bg-hover)',
+            color: friendsActive ? '#fff' : 'var(--color-text-secondary)',
+            borderRadius: friendsActive ? '14px' : '50%',
+            border: friendsActive ? '2px solid var(--color-accent)' : '2px solid transparent',
+            fontSize: '16px', fontWeight: 400,
+          }}
+        >
+          &#x263A;
+        </button>
+
         <div style={styles.divider} />
 
         {/* Community icons with context menu */}
         {communityList.map((c) => {
           const { color, bg } = communityColor(c.id);
-          const isActive = !dmActive && activeCommunityId === c.id;
+          const isActive = !dmActive && !friendsActive && activeCommunityId === c.id;
           const isOwner = c.ownerPublicKey === myKey;
           return (
             <ContextMenu
