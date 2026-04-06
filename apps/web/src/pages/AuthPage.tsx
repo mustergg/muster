@@ -1,6 +1,8 @@
 /**
  * Auth page — shown when the user is not logged in.
  * Toggles between Login and Sign Up forms.
+ *
+ * R11-QOL2: Fixed CSS warning (tab styles), improved error messages.
  */
 
 import React, { useState } from 'react';
@@ -42,7 +44,6 @@ export default function AuthPage(): React.JSX.Element {
       await connect();
     } catch (err: unknown) {
       const key = err instanceof Error ? err.message : 'errors.generic';
-      // i18n key or raw message
       setError(t(key, { defaultValue: key }));
     } finally {
       setLoading(false);
@@ -61,13 +62,13 @@ export default function AuthPage(): React.JSX.Element {
         {/* Mode tabs */}
         <div style={styles.tabs}>
           <button
-            style={{ ...styles.tab, ...(mode === 'login'  ? styles.tabActive : {}) }}
+            style={mode === 'login' ? styles.tabActive : styles.tab}
             onClick={() => { setMode('login');  setError(null); }}
           >
             {t('auth.login')}
           </button>
           <button
-            style={{ ...styles.tab, ...(mode === 'signup' ? styles.tabActive : {}) }}
+            style={mode === 'signup' ? styles.tabActive : styles.tab}
             onClick={() => { setMode('signup'); setError(null); }}
           >
             {t('auth.signup')}
@@ -79,10 +80,10 @@ export default function AuthPage(): React.JSX.Element {
           <label style={styles.label}>
             {t('auth.username')}
             <input
-				id="username"
-				name="username"
-				type="text"
-				value={username}
+              id="username"
+              name="username"
+              type="text"
+              value={username}
               onChange={(e) => setUsername(e.target.value)}
               placeholder={t('auth.usernamePlaceholder')}
               autoComplete="username"
@@ -94,13 +95,13 @@ export default function AuthPage(): React.JSX.Element {
           <label style={styles.label}>
             {t('auth.password')}
             <input
-				id="password"
-				name="password"
-				type="password"
-				value={password}
-				onChange={(e) => setPassword(e.target.value)}
-				placeholder={t('auth.passwordPlaceholder')}
-				autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
+              id="password"
+              name="password"
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder={t('auth.passwordPlaceholder')}
+              autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
               required
               disabled={loading}
             />
@@ -110,10 +111,10 @@ export default function AuthPage(): React.JSX.Element {
             <label style={styles.label}>
               {t('auth.confirmPassword')}
               <input
-				id="confirm-password"
-				name="confirm-password"
-				type="password"
-				value={confirm}
+                id="confirm-password"
+                name="confirm-password"
+                type="password"
+                value={confirm}
                 onChange={(e) => setConfirm(e.target.value)}
                 placeholder={t('auth.confirmPasswordPlaceholder')}
                 autoComplete="new-password"
@@ -203,13 +204,20 @@ const styles = {
     cursor: 'pointer',
     fontSize: '14px',
     fontWeight: '500',
-    transition: 'color 0.15s, border-color 0.15s',
     marginBottom: '-1px',
   } as React.CSSProperties,
 
   tabActive: {
+    flex: 1,
+    padding: '10px',
+    background: 'transparent',
+    border: 'none',
+    borderBottom: '2px solid var(--color-accent)',
     color: 'var(--color-accent)',
-    borderBottomColor: 'var(--color-accent)',
+    cursor: 'pointer',
+    fontSize: '14px',
+    fontWeight: '500',
+    marginBottom: '-1px',
   } as React.CSSProperties,
 
   form: {

@@ -3,10 +3,13 @@
  *
  * Generates and handles Ed25519 keypairs used as Muster user identities.
  * Based on @noble/ed25519 — a well-audited, zero-dependency implementation.
+ *
+ * R11-fix: Added deriveKeyPair() for deterministic cross-device identity.
  */
 
 import * as ed from '@noble/ed25519';
 import { sha512 } from '@noble/hashes/sha512';
+import { pbkdf2Async } from '@noble/hashes/pbkdf2';
 import type { KeyPair, PublicKeyBytes, PrivateKeyBytes } from './types.js';
 
 // @noble/ed25519 v2 requires an explicit SHA-512 implementation in non-browser envs
@@ -23,6 +26,32 @@ ed.etc.sha512Sync = (...msgs) => sha512(ed.etc.concatBytes(...msgs));
  */
 export async function generateKeyPair(): Promise<KeyPair> {
   const privateKey: PrivateKeyBytes = ed.utils.randomPrivateKey();
+  const publicKey: PublicKeyBytes = await ed.getPublicKeyAsync(privateKey);
+  return { publicKey, privateKey };
+}
+
+/**
+ * Derive a deterministic Ed25519 keypair from username + password.
+ *
+ * Uses PBKDF2-SHA512 with 210,000 iterations to derive a 32-byte seed
+ * from the credentials. The same username+password will always produce
+ * the same keypair on any device.
+ *
+ * The salt is "muster-identity:" + lowercase(username), ensuring different
+ * users with the same password get different keys.
+ *
+ * @param username - The user's username (case-insensitive for derivation)
+ * @param password - The user's password
+ * @returns Deterministic { publicKey, privateKey } pair
+ */
+export async function deriveKeyPair(username: string, password: string): Promise<KeyPair> {
+  const encoder = new TextEncoder();
+  const salt = encoder.encode('muster-identity:' + username.toLowerCase());
+  const seed = await pbkdf2Async(sha512, encoder.encode(password), salt, {
+    c: 210_000,
+    dkLen: 32,
+  });
+  const privateKey = new Uint8Array(seed) as PrivateKeyBytes;
   const publicKey: PublicKeyBytes = await ed.getPublicKeyAsync(privateKey);
   return { publicKey, privateKey };
 }

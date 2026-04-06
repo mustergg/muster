@@ -1,8 +1,8 @@
 /**
  * Network Store — Real Crypto Integration
  *
- * Changes: Replaced stub sign() with real Ed25519 signing from @muster/crypto.
- * The auth challenge is now signed with the user's actual private key.
+ * R11-QOL2: Passes authMode (login/signup) to relay in AUTH_RESPONSE.
+ * Calls authStore.handleAuthFailure() on auth rejection.
  */
 
 import { create } from 'zustand';
@@ -11,10 +11,6 @@ import { sign as ed25519Sign, toHex, fromHex } from '@muster/crypto';
 
 const encoder = new TextEncoder();
 
-/**
- * Sign a string message with the user's Ed25519 private key.
- * Returns a hex-encoded signature string.
- */
 async function signMessage(message: string, privateKey: Uint8Array): Promise<string> {
   const msgBytes = encoder.encode(message);
   const sigBytes = await ed25519Sign(msgBytes, privateKey);
@@ -67,7 +63,8 @@ export const useNetworkStore = create<NetworkState>((set, get) => {
       const auth = (await import('./authStore.js')).useAuthStore.getState();
       const publicKey = auth.publicKeyHex || '';
       const username = auth.username || '';
-      const keypair = auth._keypair; // Real Ed25519 keypair
+      const keypair = auth._keypair;
+      const authMode = auth._authMode || 'login';
       const url = DEFAULT_RELAY_URL;
 
       if (get().status !== 'disconnected') return;
@@ -85,14 +82,13 @@ export const useNetworkStore = create<NetworkState>((set, get) => {
           set({ status: 'authenticating' });
           const challenge = (msg.payload as any).challenge as string;
 
-          // Real Ed25519 signature of the challenge
           signMessage(challenge, keypair.privateKey).then((signature) => {
             transport.send({
               type: 'AUTH_RESPONSE',
-              payload: { publicKey, signature, username },
+              payload: { publicKey, signature, username, authMode },
               timestamp: Date.now(),
             });
-            console.log('[network] Auth challenge signed with Ed25519');
+            console.log(`[network] Auth challenge signed with Ed25519 (mode: ${authMode})`);
           }).catch((err) => {
             console.error('[network] Failed to sign challenge:', err);
             set({ status: 'disconnected', error: 'Signing failed' });
@@ -108,6 +104,12 @@ export const useNetworkStore = create<NetworkState>((set, get) => {
           } else {
             console.error('[network] Auth failed:', result.reason);
             set({ status: 'disconnected', error: result.reason || 'Authentication failed' });
+            // Stop reconnection on auth failure
+            transport.disconnect();
+            // Clean up auth state
+            import('./authStore.js').then(({ useAuthStore }) => {
+              useAuthStore.getState().handleAuthFailure();
+            });
           }
           return;
         }

@@ -118,21 +118,35 @@ function handleMessage(client: RelayClient, msg: any): void {
 }
 
 async function handleAuth(client: RelayClient, msg: any): Promise<void> {
-  const { publicKey, signature, username } = msg.payload || {};
+  const { publicKey, signature, username, authMode } = msg.payload || {};
   if (!publicKey || !signature || !username) { sendToClient(client, { type: 'AUTH_RESULT', payload: { success: false, reason: 'Missing fields' }, timestamp: Date.now() }); client.ws.close(4001); return; }
   const valid = await verifySignature(client.challenge, signature, publicKey);
   if (!valid) { console.warn(`[relay] Auth FAILED for ${username}`); sendToClient(client, { type: 'AUTH_RESULT', payload: { success: false, reason: 'Invalid signature' }, timestamp: Date.now() }); client.ws.close(4001); return; }
+
   // Check username uniqueness — reject if taken by a different keypair
-  const existingUser = userDB.getUserByUsername(username);
-  if (existingUser && existingUser.publicKey !== publicKey) {
-    console.warn(`[relay] Auth REJECTED: username "${username}" already taken by another account`);
-    sendToClient(client, { type: 'AUTH_RESULT', payload: { success: false, reason: 'Username already taken by another account.' }, timestamp: Date.now() });
+  const existingByName = userDB.getUserByUsername(username);
+  if (existingByName && existingByName.publicKey !== publicKey) {
+    const reason = authMode === 'login' ? 'Wrong password.' : 'Username already taken by another account.';
+    console.warn(`[relay] Auth REJECTED: username "${username}" — ${reason}`);
+    sendToClient(client, { type: 'AUTH_RESULT', payload: { success: false, reason }, timestamp: Date.now() });
     client.ws.close(4001);
     return;
   }
+
+  // Login mode: account must already exist on relay
+  if (authMode === 'login') {
+    const existingByKey = userDB.getUser(publicKey);
+    if (!existingByKey && !existingByName) {
+      console.warn(`[relay] Login REJECTED: account "${username}" does not exist`);
+      sendToClient(client, { type: 'AUTH_RESULT', payload: { success: false, reason: 'Account not found. Please create an account first.' }, timestamp: Date.now() });
+      client.ws.close(4001);
+      return;
+    }
+  }
+
   client.authenticated = true; client.publicKey = publicKey; client.username = username;
   const user = userDB.ensureUser(publicKey, username);
-  console.log(`[relay] Auth OK: ${username} (${publicKey.slice(0, 12)}...) tier=${user.tier}`);
+  console.log(`[relay] Auth OK: ${username} (${publicKey.slice(0, 12)}...) tier=${user.tier} mode=${authMode || 'legacy'}`);
   sendToClient(client, { type: 'AUTH_RESULT', payload: { success: true }, timestamp: Date.now() });
   sendToClient(client, { type: 'ACCOUNT_INFO', payload: userDB.getAccountInfo(publicKey), timestamp: Date.now() });
 }

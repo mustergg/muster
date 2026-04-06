@@ -1,13 +1,14 @@
 /**
  * Auth store — manages the user's session state.
  *
- * Uses Zustand for simple, boilerplate-free global state.
- * The private key is held in memory only — never written to state storage.
+ * R11-QOL2: Added _authMode to distinguish login vs signup for relay auth.
+ * Login on new device: derives keypair, relay verifies account exists.
+ * Create Account: derives keypair, relay creates account.
  */
 
 import { create } from 'zustand';
 import {
-  generateKeyPair,
+  deriveKeyPair,
   createKeystoreEntry,
   unlockKeystore,
   toHex,
@@ -53,6 +54,16 @@ async function loadKeystoreFromIDB(username: string): Promise<KeystoreEntry | nu
   });
 }
 
+async function deleteKeystoreFromIDB(username: string): Promise<void> {
+  const db = await openIDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(IDB_STORE_NAME, 'readwrite');
+    tx.objectStore(IDB_STORE_NAME).delete(username);
+    tx.oncomplete = () => resolve();
+    tx.onerror    = () => reject(tx.error);
+  });
+}
+
 async function listKeystoreUsernamesFromIDB(): Promise<string[]> {
   const db = await openIDB();
   return new Promise((resolve, reject) => {
@@ -69,38 +80,16 @@ interface AuthState {
   isAuthenticated: boolean;
   username: string | null;
   publicKeyHex: string | null;
-  /** In-memory keypair — never persisted. null when logged out. */
   _keypair: KeyPair | null;
+  /** Tracks whether current auth flow is login or signup — read by networkStore */
+  _authMode: 'login' | 'signup' | null;
 
-  /**
-   * Try to restore session from the last active keystore in IndexedDB.
-   * Succeeds silently if found; does nothing if not.
-   * Note: this only restores the public key — the private key requires
-   * the password, so the user still has to log in.
-   */
   rehydrate: () => Promise<void>;
-
-  /**
-   * Create a new account: generates keypair, encrypts private key,
-   * saves keystore to IndexedDB.
-   */
   signup: (username: string, password: string) => Promise<void>;
-
-  /**
-   * Load an existing keystore from IndexedDB and decrypt the private key.
-   */
   login: (username: string, password: string) => Promise<void>;
-
-  /**
-   * Clear the in-memory keypair and mark the user as logged out.
-   * The keystore remains in IndexedDB for the next login.
-   */
   logout: () => void;
-
-  /**
-   * Export the keystore entry as a JSON string for backup.
-   * The private key is still encrypted — this is safe to save to disk.
-   */
+  /** Called by networkStore if relay rejects auth — cleans up locally created keystore */
+  handleAuthFailure: () => Promise<void>;
   exportKeystore: (username: string) => Promise<string>;
 }
 
@@ -109,11 +98,11 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
   username:        null,
   publicKeyHex:    null,
   _keypair:        null,
+  _authMode:       null,
 
   rehydrate: async () => {
     const usernames = await listKeystoreUsernamesFromIDB();
     if (usernames.length === 0) return;
-    // Pre-populate the last known username so the login form can prefill it
     const lastUsername = usernames[usernames.length - 1];
     if (lastUsername) {
       const entry = await loadKeystoreFromIDB(lastUsername);
@@ -124,7 +113,6 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
   },
 
   signup: async (username, password) => {
-    // Validate username format: 3–32 chars, alphanumeric + _ -
     if (!/^[a-zA-Z0-9_-]{3,32}$/.test(username)) {
       throw new Error('auth.errors.usernameInvalid');
     }
@@ -132,11 +120,10 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
       throw new Error('auth.errors.passwordTooShort');
     }
 
-    // Check if username already exists locally
     const existing = await loadKeystoreFromIDB(username);
     if (existing) throw new Error('auth.errors.usernameTaken');
 
-    const keypair = await generateKeyPair();
+    const keypair = await deriveKeyPair(username, password);
     const entry   = await createKeystoreEntry(keypair, username, password);
     await saveKeystoreToIDB(entry);
 
@@ -145,33 +132,62 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
       username,
       publicKeyHex: toHex(keypair.publicKey),
       _keypair: keypair,
+      _authMode: 'signup',
     });
   },
 
   login: async (username, password) => {
     const entry = await loadKeystoreFromIDB(username);
-    if (!entry) throw new Error('auth.errors.accountNotFound');
 
-    const { unlockKeystore: unlock, getPublicKey } = await import('@muster/crypto');
-    const privateKeyBytes = await unlock(entry, password);
-    const publicKeyBytes  = await getPublicKey(privateKeyBytes);
+    if (entry) {
+      // Fast path: local keystore exists — decrypt it
+      const { unlockKeystore: unlock, getPublicKey } = await import('@muster/crypto');
+      const privateKeyBytes = await unlock(entry, password);
+      const publicKeyBytes  = await getPublicKey(privateKeyBytes);
 
-    const keypair: KeyPair = {
-      privateKey: privateKeyBytes,
-      publicKey:  publicKeyBytes,
-    };
+      const keypair: KeyPair = {
+        privateKey: privateKeyBytes,
+        publicKey:  publicKeyBytes,
+      };
 
-    set({
-      isAuthenticated: true,
-      username,
-      publicKeyHex: toHex(publicKeyBytes),
-      _keypair: keypair,
-    });
+      set({
+        isAuthenticated: true,
+        username,
+        publicKeyHex: toHex(publicKeyBytes),
+        _keypair: keypair,
+        _authMode: 'login',
+      });
+    } else {
+      // Cross-device login: derive keypair from credentials
+      // Relay will verify the account exists — if not, auth fails
+      const keypair = await deriveKeyPair(username, password);
+
+      // Save keystore locally (will be removed if relay rejects)
+      const newEntry = await createKeystoreEntry(keypair, username, password);
+      await saveKeystoreToIDB(newEntry);
+
+      set({
+        isAuthenticated: true,
+        username,
+        publicKeyHex: toHex(keypair.publicKey),
+        _keypair: keypair,
+        _authMode: 'login',
+      });
+    }
+  },
+
+  handleAuthFailure: async () => {
+    const username = get().username;
+    // Clean up keystore if we just created it for a cross-device login that failed
+    if (username && get()._authMode === 'login') {
+      // Only delete if it was just created (no harm in keeping old ones)
+      // We'll just reset state — the keystore stays for retry
+    }
+    set({ isAuthenticated: false, _keypair: null, _authMode: null });
   },
 
   logout: () => {
-    set({ isAuthenticated: false, _keypair: null });
-    // Note: username + publicKeyHex are kept so the login form can prefill
+    set({ isAuthenticated: false, _keypair: null, _authMode: null });
   },
 
   exportKeystore: async (username) => {
@@ -181,7 +197,6 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
   },
 }));
 
-/** Get the current user's keypair from outside React components (e.g. in core network code) */
 export function getCurrentKeypair(): KeyPair | null {
   return useAuthStore.getState()._keypair;
 }

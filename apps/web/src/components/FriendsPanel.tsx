@@ -38,6 +38,7 @@ export default function FriendsPanel(): React.JSX.Element {
       const t = setTimeout(clearMessage, 4000);
       return () => clearTimeout(t);
     }
+    return undefined;
   }, [lastMessage]);
 
   const handleAddFriend = () => {

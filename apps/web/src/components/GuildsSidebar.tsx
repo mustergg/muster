@@ -10,6 +10,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useCommunityStore } from '../stores/communityStore.js';
 import { useDMStore } from '../stores/dmStore.js';
+import { useFriendStore } from '../stores/friendStore.js';
 import { useNetworkStore } from '../stores/networkStore.js';
 import CreateCommunityModal from '../pages/CreateCommunityModal.js';
 import JoinCommunityModal from '../pages/JoinCommunityModal.js';
@@ -76,6 +77,7 @@ export default function GuildsSidebar({ activeCommunityId, onSelectCommunity, dm
 
   const communityList = Object.values(communities);
   const unreadDMs = conversations.reduce((sum, c) => sum + (c.unreadCount || 0), 0);
+  const pendingFriends = useFriendStore((s) => s.incomingRequests.length);
 
   const handleLeaveCommunity = (id: string, name: string) => {
     // Check if the user is the owner
@@ -123,10 +125,11 @@ export default function GuildsSidebar({ activeCommunityId, onSelectCommunity, dm
             color: friendsActive ? '#fff' : 'var(--color-text-secondary)',
             borderRadius: friendsActive ? '14px' : '50%',
             border: friendsActive ? '2px solid var(--color-accent)' : '2px solid transparent',
-            fontSize: '16px', fontWeight: 400,
+            fontSize: '16px', fontWeight: 400, position: 'relative' as const,
           }}
         >
           &#x263A;
+          {pendingFriends > 0 && <span style={styles.badge}>{pendingFriends > 9 ? '9+' : pendingFriends}</span>}
         </button>
 
         <div style={styles.divider} />

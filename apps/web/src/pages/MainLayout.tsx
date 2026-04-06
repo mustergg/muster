@@ -50,6 +50,7 @@ export default function MainLayout(): React.JSX.Element {
       loadCommunities();
       return () => { c1(); c2(); c3(); c4(); };
     }
+    return undefined;
   }, [status]);
 
   useEffect(() => { loadCommunities(); }, []);

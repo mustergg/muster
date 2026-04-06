@@ -115,7 +115,7 @@ function FileAttachment({ fileId, fileName, mimeType, size }: {
         </div>
       );
     }
-    return null;
+    return <></>;
   }
 
   // Non-image file

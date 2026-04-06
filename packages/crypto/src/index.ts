@@ -4,7 +4,7 @@
  * Import from this file only. Internal modules are subject to change.
  *
  * @example
- * import { generateKeyPair, createKeystoreEntry, unlockKeystore } from '@muster/crypto';
+ * import { generateKeyPair, deriveKeyPair, createKeystoreEntry, unlockKeystore } from '@muster/crypto';
  */
 
 export type {
@@ -20,6 +20,7 @@ export type {
 
 export {
   generateKeyPair,
+  deriveKeyPair,
   getPublicKey,
   toHex,
   fromHex,

@@ -66,19 +66,19 @@ export const useFriendStore = create<FriendState>((set, get) => ({
   loadFriends: () => {
     const { transport } = useNetworkStore.getState();
     if (!transport?.isConnected) return;
-    transport.send({ type: 'GET_FRIENDS', timestamp: Date.now() });
+    transport.send({ type: 'GET_FRIENDS', payload: {}, timestamp: Date.now() });
   },
 
   loadRequests: () => {
     const { transport } = useNetworkStore.getState();
     if (!transport?.isConnected) return;
-    transport.send({ type: 'GET_FRIEND_REQUESTS', timestamp: Date.now() });
+    transport.send({ type: 'GET_FRIEND_REQUESTS', payload: {}, timestamp: Date.now() });
   },
 
   loadBlocked: () => {
     const { transport } = useNetworkStore.getState();
     if (!transport?.isConnected) return;
-    transport.send({ type: 'GET_BLOCKED_USERS', timestamp: Date.now() });
+    transport.send({ type: 'GET_BLOCKED_USERS', payload: {}, timestamp: Date.now() });
   },
 
   sendRequest: (username: string) => {
