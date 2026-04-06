@@ -21,6 +21,7 @@ export function handleFriendMessage(
   switch (msg.type) {
     case 'SEND_FRIEND_REQUEST':     handleSendRequest(client, msg, friendDB, userDB, sendToClient, clients); break;
     case 'RESPOND_FRIEND_REQUEST':  handleRespondRequest(client, msg, friendDB, sendToClient, clients); break;
+    case 'CANCEL_FRIEND_REQUEST':   handleCancelRequest(client, msg, friendDB, sendToClient, clients); break;
     case 'REMOVE_FRIEND':           handleRemoveFriend(client, msg, friendDB, sendToClient, clients); break;
     case 'BLOCK_USER':              handleBlockUser(client, msg, friendDB, sendToClient); break;
     case 'UNBLOCK_USER':            handleUnblockUser(client, msg, friendDB, sendToClient); break;
@@ -109,6 +110,31 @@ function handleRespondRequest(
     const senderClient = findClientByKey(clients, result.request.fromPublicKey);
     if (senderClient) {
       sendToClient(senderClient, { type: 'FRIEND_ADDED', payload: friend2, timestamp: Date.now() });
+    }
+  }
+}
+
+function handleCancelRequest(
+  client: RelayClient, msg: any, friendDB: FriendDB,
+  sendToClient: (c: RelayClient, m: Record<string, unknown>) => void,
+  clients: Map<WebSocket, RelayClient>,
+): void {
+  const { requestId } = msg.payload || {};
+  if (!requestId) return;
+
+  const result = friendDB.cancelRequest(requestId, client.publicKey);
+  if (!result.success) {
+    sendToClient(client, { type: 'FRIEND_RESULT', payload: { action: 'CANCEL_FRIEND_REQUEST', success: false, message: result.error }, timestamp: Date.now() });
+    return;
+  }
+
+  sendToClient(client, { type: 'FRIEND_RESULT', payload: { action: 'CANCEL_FRIEND_REQUEST', success: true, message: 'Friend request cancelled.' }, timestamp: Date.now() });
+
+  // Notify the target so their incoming list updates
+  if (result.toPublicKey) {
+    const targetClient = findClientByKey(clients, result.toPublicKey);
+    if (targetClient) {
+      sendToClient(targetClient, { type: 'FRIEND_REQUEST_CANCELLED', payload: { requestId }, timestamp: Date.now() });
     }
   }
 }

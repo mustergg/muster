@@ -5,12 +5,14 @@ import ChatArea from '../components/ChatArea.js';
 import MembersSidebar from '../components/MembersSidebar.js';
 import DMConversationList from '../components/DMConversationList.js';
 import DMChatArea from '../components/DMChatArea.js';
+import FriendsPanel from '../components/FriendsPanel.js';
 import VerificationBanner from '../components/VerificationBanner.js';
 import { useNetworkStore } from '../stores/networkStore.js';
 import { useCommunityStore } from '../stores/communityStore.js';
 import { useAuthStore } from '../stores/authStore.js';
 import { useChatStore } from '../stores/chatStore.js';
 import { useDMStore } from '../stores/dmStore.js';
+import { useFriendStore } from '../stores/friendStore.js';
 
 export interface ActiveLocation {
   communityId: string;
@@ -18,7 +20,7 @@ export interface ActiveLocation {
   channelName: string;
 }
 
-type ViewMode = 'community' | 'dm';
+type ViewMode = 'community' | 'dm' | 'friends';
 
 export default function MainLayout(): React.JSX.Element {
   const [viewMode, setViewMode] = useState<ViewMode>('community');
@@ -38,13 +40,15 @@ export default function MainLayout(): React.JSX.Element {
   const chatInit      = useChatStore((s) => s.init);
   const communityInit = useCommunityStore((s) => s.initRelay);
   const dmInit        = useDMStore((s) => s.init);
+  const friendInit    = useFriendStore((s) => s.init);
   useEffect(() => {
     if (status === 'connected') {
       const c1 = chatInit();
       const c2 = communityInit();
       const c3 = dmInit();
+      const c4 = friendInit();
       loadCommunities();
-      return () => { c1(); c2(); c3(); };
+      return () => { c1(); c2(); c3(); c4(); };
     }
   }, [status]);
 
@@ -52,11 +56,11 @@ export default function MainLayout(): React.JSX.Element {
 
   const handleOpenDM = (publicKey: string) => { setViewMode('dm'); setActiveDMPartner(publicKey); };
   const handleSelectDM = () => { setViewMode('dm'); setActiveCommunityId(null); setActive(null); };
+  const handleSelectFriends = () => { setViewMode('friends'); setActiveCommunityId(null); setActive(null); setActiveDMPartner(null); };
   const handleSelectCommunity = (id: string) => { setViewMode('community'); setActiveCommunityId(id); setActiveDMPartner(null); };
 
   return (
     <div style={styles.outerShell}>
-      {/* Verification banner for basic users — above everything */}
       <VerificationBanner />
 
       <div style={styles.shell}>
@@ -65,9 +69,15 @@ export default function MainLayout(): React.JSX.Element {
           onSelectCommunity={handleSelectCommunity}
           dmActive={viewMode === 'dm'}
           onSelectDM={handleSelectDM}
+          friendsActive={viewMode === 'friends'}
+          onSelectFriends={handleSelectFriends}
         />
 
-        {viewMode === 'dm' ? (
+        {viewMode === 'friends' ? (
+          <div style={styles.main}>
+            <FriendsPanel />
+          </div>
+        ) : viewMode === 'dm' ? (
           <>
             <DMConversationList
               activeConversation={activeDMPartner}

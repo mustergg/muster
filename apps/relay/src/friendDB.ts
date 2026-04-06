@@ -161,6 +161,17 @@ export class FriendDB {
     ).all(publicKey) as DBFriendRequest[];
   }
 
+  cancelRequest(requestId: string, senderKey: string): { success: boolean; toPublicKey?: string; error?: string } {
+    const request = this.db.prepare('SELECT * FROM friend_requests WHERE id = ?').get(requestId) as DBFriendRequest | undefined;
+    if (!request) return { success: false, error: 'Friend request not found.' };
+    if (request.fromPublicKey !== senderKey) return { success: false, error: 'You can only cancel your own requests.' };
+    if (request.status !== 'pending') return { success: false, error: 'This request is no longer pending.' };
+
+    this.db.prepare('DELETE FROM friend_requests WHERE id = ?').run(requestId);
+    console.log(`[friend-db] Request cancelled: ${request.fromUsername} → ${request.toUsername}`);
+    return { success: true, toPublicKey: request.toPublicKey };
+  }
+
   // =================================================================
   // Friends
   // =================================================================

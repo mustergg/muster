@@ -47,6 +47,7 @@ interface FriendState {
   loadBlocked: () => void;
   sendRequest: (username: string) => void;
   respondRequest: (requestId: string, action: 'accept' | 'decline' | 'block') => void;
+  cancelRequest: (requestId: string) => void;
   removeFriend: (publicKey: string) => void;
   blockUser: (publicKey: string) => void;
   unblockUser: (publicKey: string) => void;
@@ -91,6 +92,12 @@ export const useFriendStore = create<FriendState>((set, get) => ({
     const { transport } = useNetworkStore.getState();
     if (!transport?.isConnected) return;
     transport.send({ type: 'RESPOND_FRIEND_REQUEST', payload: { requestId, action }, timestamp: Date.now() });
+  },
+
+  cancelRequest: (requestId: string) => {
+    const { transport } = useNetworkStore.getState();
+    if (!transport?.isConnected) return;
+    transport.send({ type: 'CANCEL_FRIEND_REQUEST', payload: { requestId }, timestamp: Date.now() });
   },
 
   removeFriend: (publicKey: string) => {
@@ -149,6 +156,13 @@ export const useFriendStore = create<FriendState>((set, get) => ({
             outgoingRequests: s.outgoingRequests.filter((r) =>
               r.fromPublicKey !== p.publicKey && r.toPublicKey !== p.publicKey
             ),
+          }));
+          break;
+        }
+        case 'FRIEND_REQUEST_CANCELLED': {
+          const p = msg.payload as any;
+          set((s) => ({
+            incomingRequests: s.incomingRequests.filter((r) => r.id !== p.requestId),
           }));
           break;
         }

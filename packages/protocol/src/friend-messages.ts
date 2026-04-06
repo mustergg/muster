@@ -56,6 +56,13 @@ export interface RemoveFriendMsg {
   timestamp: number;
 }
 
+/** Cancel an outgoing friend request. */
+export interface CancelFriendRequestMsg {
+  type: 'CANCEL_FRIEND_REQUEST';
+  payload: { requestId: string };
+  timestamp: number;
+}
+
 /** Block a user (prevents DMs and friend requests). */
 export interface BlockUserMsg {
   type: 'BLOCK_USER';

@@ -112,6 +112,10 @@ export class UserDB {
     return this.db.prepare('SELECT * FROM users WHERE publicKey = ?').get(publicKey) as DBUser | undefined;
   }
 
+  getUserByUsername(username: string): DBUser | undefined {
+    return this.db.prepare('SELECT * FROM users WHERE LOWER(username) = LOWER(?)').get(username) as DBUser | undefined;
+  }
+
   // =================================================================
   // Profile (R10)
   // =================================================================

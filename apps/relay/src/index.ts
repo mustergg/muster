@@ -74,7 +74,7 @@ const CHANNEL_TYPES = new Set(['CREATE_CHANNEL', 'EDIT_CHANNEL', 'DELETE_CHANNEL
 const OWNERSHIP_TYPES = new Set(['CHECK_TRANSFER_ELIGIBILITY', 'TRANSFER_OWNERSHIP', 'DELETE_COMMUNITY_CMD']);
 const FILE_TYPES = new Set(['UPLOAD_FILE', 'REQUEST_FILE']);
 const PROFILE_TYPES = new Set(['UPDATE_PROFILE', 'GET_PROFILE']);
-const FRIEND_TYPES = new Set(['SEND_FRIEND_REQUEST', 'RESPOND_FRIEND_REQUEST', 'REMOVE_FRIEND', 'BLOCK_USER', 'UNBLOCK_USER', 'GET_FRIENDS', 'GET_FRIEND_REQUESTS', 'GET_BLOCKED_USERS']);
+const FRIEND_TYPES = new Set(['SEND_FRIEND_REQUEST', 'RESPOND_FRIEND_REQUEST', 'CANCEL_FRIEND_REQUEST', 'REMOVE_FRIEND', 'BLOCK_USER', 'UNBLOCK_USER', 'GET_FRIENDS', 'GET_FRIEND_REQUESTS', 'GET_BLOCKED_USERS']);
 
 function handleMessage(client: RelayClient, msg: any): void {
   if (msg.type === 'AUTH_RESPONSE') { handleAuth(client, msg); return; }
@@ -122,6 +122,14 @@ async function handleAuth(client: RelayClient, msg: any): Promise<void> {
   if (!publicKey || !signature || !username) { sendToClient(client, { type: 'AUTH_RESULT', payload: { success: false, reason: 'Missing fields' }, timestamp: Date.now() }); client.ws.close(4001); return; }
   const valid = await verifySignature(client.challenge, signature, publicKey);
   if (!valid) { console.warn(`[relay] Auth FAILED for ${username}`); sendToClient(client, { type: 'AUTH_RESULT', payload: { success: false, reason: 'Invalid signature' }, timestamp: Date.now() }); client.ws.close(4001); return; }
+  // Check username uniqueness — reject if taken by a different keypair
+  const existingUser = userDB.getUserByUsername(username);
+  if (existingUser && existingUser.publicKey !== publicKey) {
+    console.warn(`[relay] Auth REJECTED: username "${username}" already taken by another account`);
+    sendToClient(client, { type: 'AUTH_RESULT', payload: { success: false, reason: 'Username already taken by another account.' }, timestamp: Date.now() });
+    client.ws.close(4001);
+    return;
+  }
   client.authenticated = true; client.publicKey = publicKey; client.username = username;
   const user = userDB.ensureUser(publicKey, username);
   console.log(`[relay] Auth OK: ${username} (${publicKey.slice(0, 12)}...) tier=${user.tier}`);

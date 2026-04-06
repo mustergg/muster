@@ -4,6 +4,9 @@
  * Full-page panel for managing friends.
  * Tabs: Friends | Requests | Blocked
  * Includes inline "Add Friend" input.
+ *
+ * NOTE: friendStore.init() is called in MainLayout (like other stores).
+ * This component just refreshes data on mount.
  */
 
 import React, { useState, useEffect } from 'react';
@@ -15,15 +18,18 @@ export default function FriendsPanel(): React.JSX.Element {
   const {
     friends, incomingRequests, outgoingRequests, blockedUsers,
     lastMessage, loading,
-    sendRequest, respondRequest, removeFriend, unblockUser, clearMessage, init,
+    sendRequest, respondRequest, cancelRequest, removeFriend, unblockUser,
+    clearMessage, loadFriends, loadRequests, loadBlocked,
   } = useFriendStore();
 
   const [tab, setTab] = useState<Tab>('friends');
   const [addUsername, setAddUsername] = useState('');
 
+  // Refresh data when panel opens (listener already active via MainLayout)
   useEffect(() => {
-    const cleanup = init();
-    return cleanup;
+    loadFriends();
+    loadRequests();
+    loadBlocked();
   }, []);
 
   // Auto-clear message after 4s
@@ -80,7 +86,7 @@ export default function FriendsPanel(): React.JSX.Element {
           <button
             key={t}
             onClick={() => setTab(t)}
-            style={{ ...styles.tab, ...(tab === t ? styles.tabActive : {}) }}
+            style={tab === t ? styles.tabActive : styles.tab}
           >
             {t === 'friends' && `Friends (${friends.length})`}
             {t === 'requests' && `Requests${totalRequests ? ` (${totalRequests})` : ''}`}
@@ -152,7 +158,7 @@ export default function FriendsPanel(): React.JSX.Element {
                       <div style={styles.since}>Sent {timeAgo(r.createdAt)}</div>
                     </div>
                     <div style={styles.actions}>
-                      <span style={{ fontSize: '11px', color: 'var(--color-text-muted)' }}>Pending</span>
+                      <button onClick={() => cancelRequest(r.id)} style={styles.btnDecline} title="Cancel request">Cancel</button>
                     </div>
                   </div>
                 ))}
@@ -208,8 +214,8 @@ const styles = {
   addBtn: { padding: '8px 16px', borderRadius: 'var(--radius-md)', border: 'none', background: 'var(--color-accent)', color: '#fff', fontSize: '13px', fontWeight: 500, cursor: 'pointer' } as React.CSSProperties,
   message: { padding: '6px 16px', fontSize: '12px', color: 'var(--color-accent)', background: 'var(--color-bg-secondary)', borderBottom: '1px solid var(--color-border)' } as React.CSSProperties,
   tabs: { display: 'flex', borderBottom: '1px solid var(--color-border)', flexShrink: 0 } as React.CSSProperties,
-  tab: { flex: 1, padding: '10px', background: 'transparent', border: 'none', borderBottom: '2px solid transparent', color: 'var(--color-text-muted)', fontSize: '12px', fontWeight: 500, cursor: 'pointer', transition: 'color 0.15s, border-color 0.15s' } as React.CSSProperties,
-  tabActive: { color: 'var(--color-accent)', borderBottomColor: 'var(--color-accent)' } as React.CSSProperties,
+  tab: { flex: 1, padding: '10px', background: 'transparent', border: 'none', borderBottom: '2px solid transparent', color: 'var(--color-text-muted)', fontSize: '12px', fontWeight: 500, cursor: 'pointer' } as React.CSSProperties,
+  tabActive: { flex: 1, padding: '10px', background: 'transparent', border: 'none', borderBottom: '2px solid var(--color-accent)', color: 'var(--color-accent)', fontSize: '12px', fontWeight: 500, cursor: 'pointer' } as React.CSSProperties,
   content: { flex: 1, overflowY: 'auto' as const, padding: '8px 0' } as React.CSSProperties,
   empty: { textAlign: 'center' as const, color: 'var(--color-text-muted)', fontSize: '13px', padding: '32px 16px' } as React.CSSProperties,
   sectionLabel: { fontSize: '11px', fontWeight: 600, color: 'var(--color-text-muted)', textTransform: 'uppercase' as const, letterSpacing: '0.05em', padding: '8px 16px 4px' } as React.CSSProperties,
