@@ -6,6 +6,7 @@ import MembersSidebar from '../components/MembersSidebar.js';
 import DMConversationList from '../components/DMConversationList.js';
 import DMChatArea from '../components/DMChatArea.js';
 import FriendsPanel from '../components/FriendsPanel.js';
+import FeedView from '../components/FeedView.js';
 import VerificationBanner from '../components/VerificationBanner.js';
 import { useNetworkStore } from '../stores/networkStore.js';
 import { useCommunityStore } from '../stores/communityStore.js';
@@ -13,6 +14,7 @@ import { useAuthStore } from '../stores/authStore.js';
 import { useChatStore } from '../stores/chatStore.js';
 import { useDMStore } from '../stores/dmStore.js';
 import { useFriendStore } from '../stores/friendStore.js';
+import { usePostStore } from '../stores/postStore.js';
 
 export interface ActiveLocation {
   communityId: string;
@@ -41,14 +43,16 @@ export default function MainLayout(): React.JSX.Element {
   const communityInit = useCommunityStore((s) => s.initRelay);
   const dmInit        = useDMStore((s) => s.init);
   const friendInit    = useFriendStore((s) => s.init);
+  const postInit      = usePostStore((s) => s.init);
   useEffect(() => {
     if (status === 'connected') {
       const c1 = chatInit();
       const c2 = communityInit();
       const c3 = dmInit();
       const c4 = friendInit();
+      const c5 = postInit();
       loadCommunities();
-      return () => { c1(); c2(); c3(); c4(); };
+      return () => { c1(); c2(); c3(); c4(); c5(); };
     }
     return undefined;
   }, [status]);
@@ -59,6 +63,8 @@ export default function MainLayout(): React.JSX.Element {
   const handleSelectDM = () => { setViewMode('dm'); setActiveCommunityId(null); setActive(null); };
   const handleSelectFriends = () => { setViewMode('friends'); setActiveCommunityId(null); setActive(null); setActiveDMPartner(null); };
   const handleSelectCommunity = (id: string) => { setViewMode('community'); setActiveCommunityId(id); setActiveDMPartner(null); };
+
+  const isFeedActive = active?.channelId === '__feed__';
 
   return (
     <div style={styles.outerShell}>
@@ -98,9 +104,15 @@ export default function MainLayout(): React.JSX.Element {
               }
             />
             <div style={styles.main}>
-              <ChatArea active={active} />
+              {isFeedActive && active ? (
+                <FeedView communityId={active.communityId} />
+              ) : (
+                <ChatArea active={active} />
+              )}
             </div>
-            <MembersSidebar communityId={activeCommunityId} onOpenDM={handleOpenDM} />
+            {!isFeedActive && (
+              <MembersSidebar communityId={activeCommunityId} onOpenDM={handleOpenDM} />
+            )}
           </>
         )}
       </div>

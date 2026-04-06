@@ -1,8 +1,8 @@
 /**
  * DM Store — Real Crypto Integration
  *
- * Changes: Replaced stub sign() with real Ed25519 signing from @muster/crypto.
- * DM messages are now signed with the user's actual private key.
+ * R11-QOL3: Fixed unreadCount — increments on new DM when conversation
+ * is not active, resets when conversation is opened.
  */
 
 import { create } from 'zustand';
@@ -69,7 +69,6 @@ export const useDMStore = create<DMState>((set, get) => ({
     const payload = { recipientPublicKey, content, messageId, timestamp };
     const payloadStr = JSON.stringify(payload);
 
-    // Optimistic update
     const msg: DMMessage = { messageId, content, senderPublicKey: network.publicKey, senderUsername: network.username, recipientPublicKey, timestamp, isOwn: true };
     set((state) => ({
       messages: { ...state.messages, [recipientPublicKey]: [...(state.messages[recipientPublicKey] || []), msg] },
@@ -77,23 +76,26 @@ export const useDMStore = create<DMState>((set, get) => ({
 
     dmDB.addMessage({ messageId, channel: `dm:${[network.publicKey, recipientPublicKey].sort().join(':')}`, content, senderPublicKey: network.publicKey, senderUsername: network.username, timestamp, signature: '' });
 
-    // Sign and send asynchronously
     const privateKey = getPrivateKey();
     if (privateKey) {
       signPayload(payloadStr, privateKey).then((signature) => {
         network.transport!.send({ type: 'SEND_DM', payload, signature, senderPublicKey: network.publicKey, timestamp });
-      }).catch((err) => {
-        console.error('[dm] Failed to sign DM:', err);
+      }).catch(() => {
         network.transport!.send({ type: 'SEND_DM', payload, signature: '', senderPublicKey: network.publicKey, timestamp });
       });
     } else {
-      console.warn('[dm] No private key — sending unsigned DM');
       network.transport!.send({ type: 'SEND_DM', payload, signature: '', senderPublicKey: network.publicKey, timestamp });
     }
   },
 
   openConversation: (publicKey) => {
-    set({ activeConversation: publicKey });
+    // Reset unread count when opening conversation
+    set((state) => ({
+      activeConversation: publicKey,
+      conversations: state.conversations.map((c) =>
+        c.publicKey === publicKey ? { ...c, unreadCount: 0 } : c
+      ),
+    }));
     const network = useNetworkStore.getState();
     if (!network.transport?.isConnected) return;
     network.transport.send({ type: 'DM_HISTORY_REQUEST', payload: { otherPublicKey: publicKey, since: 0 }, timestamp: Date.now() });
@@ -105,7 +107,15 @@ export const useDMStore = create<DMState>((set, get) => ({
     network.transport.send({ type: 'DM_CONVERSATIONS_REQUEST', payload: {}, timestamp: Date.now() });
   },
 
-  setActiveConversation: (publicKey) => set({ activeConversation: publicKey }),
+  setActiveConversation: (publicKey) => {
+    // Reset unread when setting active
+    set((state) => ({
+      activeConversation: publicKey,
+      conversations: publicKey
+        ? state.conversations.map((c) => c.publicKey === publicKey ? { ...c, unreadCount: 0 } : c)
+        : state.conversations,
+    }));
+  },
 
   clearConversation: (publicKey) => {
     set((state) => ({
@@ -127,22 +137,42 @@ export const useDMStore = create<DMState>((set, get) => ({
         case 'DM_MESSAGE': {
           const p = msg.payload as any;
           const otherKey = p.senderPublicKey === myKey ? p.recipientPublicKey : p.senderPublicKey;
-          const dmMsg: DMMessage = { messageId: p.messageId, content: p.content, senderPublicKey: p.senderPublicKey, senderUsername: p.senderUsername, recipientPublicKey: p.recipientPublicKey, timestamp: p.timestamp, isOwn: p.senderPublicKey === myKey };
+          const isOwn = p.senderPublicKey === myKey;
+          const dmMsg: DMMessage = { messageId: p.messageId, content: p.content, senderPublicKey: p.senderPublicKey, senderUsername: p.senderUsername, recipientPublicKey: p.recipientPublicKey, timestamp: p.timestamp, isOwn };
+
           set((state) => {
             const existing = state.messages[otherKey] || [];
             if (existing.some((m) => m.messageId === dmMsg.messageId)) return state;
             return { messages: { ...state.messages, [otherKey]: [...existing, dmMsg].sort((a, b) => a.timestamp - b.timestamp) } };
           });
+
           dmDB.addMessage({ messageId: p.messageId, channel: `dm:${[myKey, otherKey].sort().join(':')}`, content: p.content, senderPublicKey: p.senderPublicKey, senderUsername: p.senderUsername, timestamp: p.timestamp, signature: (msg as any).signature || '' });
 
+          // Update conversation list + unread count
           set((state) => {
             const convs = [...state.conversations];
             const idx = convs.findIndex((c) => c.publicKey === otherKey);
-            const otherName = p.senderPublicKey === myKey ? (p.recipientUsername || otherKey.slice(0, 8) + '...') : p.senderUsername;
+            const otherName = isOwn ? (p.recipientUsername || otherKey.slice(0, 8) + '...') : p.senderUsername;
+            const isActive = state.activeConversation === otherKey;
+
             if (idx >= 0) {
-              convs[idx] = { ...convs[idx], lastMessage: p.content, lastTimestamp: p.timestamp, username: otherName || convs[idx].username };
+              const prev = convs[idx]!;
+              convs[idx] = {
+                ...prev,
+                lastMessage: p.content,
+                lastTimestamp: p.timestamp,
+                username: otherName || prev.username,
+                // Only increment unread if not our own message and conversation is not active
+                unreadCount: (!isOwn && !isActive) ? (prev.unreadCount || 0) + 1 : prev.unreadCount,
+              };
             } else {
-              convs.unshift({ publicKey: otherKey, username: otherName, lastMessage: p.content, lastTimestamp: p.timestamp, unreadCount: 0 });
+              convs.unshift({
+                publicKey: otherKey,
+                username: otherName,
+                lastMessage: p.content,
+                lastTimestamp: p.timestamp,
+                unreadCount: (!isOwn && !isActive) ? 1 : 0,
+              });
             }
             convs.sort((a, b) => b.lastTimestamp - a.lastTimestamp);
             return { conversations: convs };

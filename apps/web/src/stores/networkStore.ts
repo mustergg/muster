@@ -101,6 +101,10 @@ export const useNetworkStore = create<NetworkState>((set, get) => {
           if (result.success) {
             console.log('[network] Authenticated successfully (Ed25519 verified)');
             set({ status: 'connected', error: null, peerCount: 1 });
+            // Save pending keystore now that relay confirmed
+            import('./authStore.js').then(({ useAuthStore }) => {
+              useAuthStore.getState().confirmAuth();
+            });
           } else {
             console.error('[network] Auth failed:', result.reason);
             set({ status: 'disconnected', error: result.reason || 'Authentication failed' });

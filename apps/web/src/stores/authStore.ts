@@ -1,9 +1,8 @@
 /**
  * Auth store — manages the user's session state.
  *
- * R11-QOL2: Added _authMode to distinguish login vs signup for relay auth.
- * Login on new device: derives keypair, relay verifies account exists.
- * Create Account: derives keypair, relay creates account.
+ * R11-QOL3: Keystore is only saved to IDB after relay confirms auth.
+ * Login validates input format. handleAuthFailure cleans up properly.
  */
 
 import { create } from 'zustand';
@@ -81,14 +80,19 @@ interface AuthState {
   username: string | null;
   publicKeyHex: string | null;
   _keypair: KeyPair | null;
-  /** Tracks whether current auth flow is login or signup — read by networkStore */
   _authMode: 'login' | 'signup' | null;
+  /** Keystore waiting to be saved — only persisted after relay confirms auth */
+  _pendingKeystore: KeystoreEntry | null;
+  /** Whether the local keystore already existed before this login */
+  _hadLocalKeystore: boolean;
 
   rehydrate: () => Promise<void>;
   signup: (username: string, password: string) => Promise<void>;
   login: (username: string, password: string) => Promise<void>;
   logout: () => void;
-  /** Called by networkStore if relay rejects auth — cleans up locally created keystore */
+  /** Called by networkStore when relay confirms auth — saves pending keystore */
+  confirmAuth: () => Promise<void>;
+  /** Called by networkStore when relay rejects auth — cleans up */
   handleAuthFailure: () => Promise<void>;
   exportKeystore: (username: string) => Promise<string>;
 }
@@ -99,6 +103,8 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
   publicKeyHex:    null,
   _keypair:        null,
   _authMode:       null,
+  _pendingKeystore: null,
+  _hadLocalKeystore: false,
 
   rehydrate: async () => {
     const usernames = await listKeystoreUsernamesFromIDB();
@@ -125,18 +131,28 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
 
     const keypair = await deriveKeyPair(username, password);
     const entry   = await createKeystoreEntry(keypair, username, password);
-    await saveKeystoreToIDB(entry);
 
+    // Don't save to IDB yet — wait for relay to confirm
     set({
       isAuthenticated: true,
       username,
       publicKeyHex: toHex(keypair.publicKey),
       _keypair: keypair,
       _authMode: 'signup',
+      _pendingKeystore: entry,
+      _hadLocalKeystore: false,
     });
   },
 
   login: async (username, password) => {
+    // Validate input — same rules as signup
+    if (!/^[a-zA-Z0-9_-]{3,32}$/.test(username)) {
+      throw new Error('auth.errors.usernameInvalid');
+    }
+    if (password.length < 8) {
+      throw new Error('auth.errors.passwordTooShort');
+    }
+
     const entry = await loadKeystoreFromIDB(username);
 
     if (entry) {
@@ -156,15 +172,14 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
         publicKeyHex: toHex(publicKeyBytes),
         _keypair: keypair,
         _authMode: 'login',
+        _pendingKeystore: null,
+        _hadLocalKeystore: true,
       });
     } else {
       // Cross-device login: derive keypair from credentials
-      // Relay will verify the account exists — if not, auth fails
+      // Don't save keystore yet — wait for relay to confirm account exists
       const keypair = await deriveKeyPair(username, password);
-
-      // Save keystore locally (will be removed if relay rejects)
       const newEntry = await createKeystoreEntry(keypair, username, password);
-      await saveKeystoreToIDB(newEntry);
 
       set({
         isAuthenticated: true,
@@ -172,22 +187,50 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
         publicKeyHex: toHex(keypair.publicKey),
         _keypair: keypair,
         _authMode: 'login',
+        _pendingKeystore: newEntry,
+        _hadLocalKeystore: false,
       });
+    }
+  },
+
+  confirmAuth: async () => {
+    const pending = get()._pendingKeystore;
+    if (pending) {
+      await saveKeystoreToIDB(pending);
+      set({ _pendingKeystore: null });
+      console.log('[auth] Keystore saved after relay confirmation');
     }
   },
 
   handleAuthFailure: async () => {
     const username = get().username;
-    // Clean up keystore if we just created it for a cross-device login that failed
-    if (username && get()._authMode === 'login') {
-      // Only delete if it was just created (no harm in keeping old ones)
-      // We'll just reset state — the keystore stays for retry
+    const hadLocal = get()._hadLocalKeystore;
+
+    // If we didn't have a local keystore (cross-device login that failed),
+    // there's nothing to clean up in IDB since we never saved
+    // If we DID have a local keystore but relay rejected, delete it
+    // (could be stale from a previous failed attempt)
+    if (username && !hadLocal) {
+      await deleteKeystoreFromIDB(username).catch(() => {});
     }
-    set({ isAuthenticated: false, _keypair: null, _authMode: null });
+
+    set({
+      isAuthenticated: false,
+      _keypair: null,
+      _authMode: null,
+      _pendingKeystore: null,
+      _hadLocalKeystore: false,
+    });
   },
 
   logout: () => {
-    set({ isAuthenticated: false, _keypair: null, _authMode: null });
+    set({
+      isAuthenticated: false,
+      _keypair: null,
+      _authMode: null,
+      _pendingKeystore: null,
+      _hadLocalKeystore: false,
+    });
   },
 
   exportKeystore: async (username) => {

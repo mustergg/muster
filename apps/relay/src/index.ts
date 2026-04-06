@@ -20,6 +20,8 @@ import { handleChannelMessage } from './channelHandler';
 import { handleOwnershipMessage } from './ownershipHandler';
 import { handleFileMessage } from './fileHandler';
 import { handleProfileMessage } from './profileHandler';
+import { PostDB } from './postDB';
+import { handlePostMessage } from './postHandler';
 import { FriendDB } from './friendDB';
 import { handleFriendMessage } from './friendHandler';
 import { enforceTier } from './tierEnforcement';
@@ -38,6 +40,7 @@ const dmDB = new DMDB(messageDB.getDatabase());
 const userDB = new UserDB(messageDB.getDatabase());
 const fileDB = new FileDB(messageDB.getDatabase());
 const friendDB = new FriendDB(messageDB.getDatabase());
+const postDB = new PostDB(messageDB.getDatabase());
 
 const wss = new WebSocketServer({ port: PORT, maxPayload: MAX_MESSAGE_SIZE });
 
@@ -46,7 +49,7 @@ initCrypto().catch((err) => console.error('[relay] Crypto init failed:', err));
 const userCounts = userDB.getUserCount();
 const fileTotalKB = Math.round(fileDB.getTotalSize() / 1024);
 console.log(`[relay] ====================================`);
-console.log(`[relay]  Muster Relay Node (R11)`);
+console.log(`[relay]  Muster Relay Node (R12)`);
 console.log(`[relay]  Listening on port ${PORT}`);
 console.log(`[relay]  Ed25519 signature verification: ENABLED`);
 console.log(`[relay]  Messages: ${messageDB.getMessageCount()}`);
@@ -75,6 +78,7 @@ const OWNERSHIP_TYPES = new Set(['CHECK_TRANSFER_ELIGIBILITY', 'TRANSFER_OWNERSH
 const FILE_TYPES = new Set(['UPLOAD_FILE', 'REQUEST_FILE']);
 const PROFILE_TYPES = new Set(['UPDATE_PROFILE', 'GET_PROFILE']);
 const FRIEND_TYPES = new Set(['SEND_FRIEND_REQUEST', 'RESPOND_FRIEND_REQUEST', 'CANCEL_FRIEND_REQUEST', 'REMOVE_FRIEND', 'BLOCK_USER', 'UNBLOCK_USER', 'GET_FRIENDS', 'GET_FRIEND_REQUESTS', 'GET_BLOCKED_USERS']);
+const POST_TYPES = new Set(['CREATE_POST', 'GET_POSTS', 'DELETE_POST', 'PIN_POST', 'ADD_COMMENT', 'GET_COMMENTS']);
 
 function handleMessage(client: RelayClient, msg: any): void {
   if (msg.type === 'AUTH_RESPONSE') { handleAuth(client, msg); return; }
@@ -83,6 +87,7 @@ function handleMessage(client: RelayClient, msg: any): void {
   if (EMAIL_TYPES.has(msg.type)) { handleEmailMessage(client, msg, userDB, sendToClient); return; }
   if (PROFILE_TYPES.has(msg.type)) { handleProfileMessage(client, msg, userDB, sendToClient); return; }
   if (FRIEND_TYPES.has(msg.type)) { handleFriendMessage(client, msg, friendDB, userDB, sendToClient, clients); return; }
+  if (POST_TYPES.has(msg.type)) { handlePostMessage(client, msg, postDB, communityDB, sendToClient, clients, channels); return; }
   if (OWNERSHIP_TYPES.has(msg.type)) { handleOwnershipMessage(client, msg, communityDB, messageDB, userDB, sendToClient, clients, channels); return; }
 
   if (COMMUNITY_TYPES.has(msg.type)) {

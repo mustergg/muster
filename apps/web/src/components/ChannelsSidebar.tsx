@@ -1,10 +1,8 @@
 /**
- * ChannelsSidebar — R7 update
+ * ChannelsSidebar — R12 update
  *
- * Changes:
- * - Added "+" button next to Channels label (admin+ only) to create channels
- * - Added right-click context menu on channels for Edit / Delete (admin+ only)
- * - Uses myRoles from communityStore to determine admin access
+ * Changes from R10:
+ * - Added Feed item at top of channel list (navigates to community feed)
  */
 
 import React, { useState, useEffect } from 'react';
@@ -119,6 +117,17 @@ export default function ChannelsSidebar({ communityId, activeChannelId, onSelect
             <div style={styles.emptyState}>
               Select or create a community to get started.
             </div>
+          )}
+
+          {/* Feed — always visible when community is selected */}
+          {communityId && (
+            <button
+              onClick={() => onSelectChannel(communityId, '__feed__', 'Feed')}
+              style={{ ...styles.channelItem, ...(activeChannelId === '__feed__' ? styles.channelActive : {}) }}
+            >
+              <span style={styles.chIcon}>{'\u{1F4F0}'}</span>
+              <span style={styles.chName}>Feed</span>
+            </button>
           )}
 
           {textChannels.length > 0 && (
