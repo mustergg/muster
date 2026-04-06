@@ -9,6 +9,11 @@ import { CommunityDB } from './communityDB';
 import type { RelayClient } from './types';
 import { WebSocket } from 'ws';
 
+/** Helper: find a single member by publicKey in a community. */
+function findMember(communityDB: CommunityDB, communityId: string, publicKey: string) {
+  return communityDB.getMembers(communityId).find((m) => m.publicKey === publicKey) || null;
+}
+
 export function handlePostMessage(
   client: RelayClient,
   msg: any,
@@ -39,7 +44,7 @@ function broadcastToCommunity(
 ): void {
   const community = communityDB.getCommunity(communityId);
   if (!community) return;
-  const chList = community.channels || [];
+  const chList = communityDB.getChannels(communityId);
   const sent = new Set<WebSocket>();
   const payload = JSON.stringify(msg);
 
@@ -67,7 +72,7 @@ function handleCreatePost(
   }
 
   // Verify user is a member
-  const member = communityDB.getMember(communityId, client.publicKey);
+  const member = findMember(communityDB, communityId, client.publicKey);
   if (!member) {
     sendToClient(client, { type: 'POST_RESULT', payload: { action: 'CREATE_POST', success: false, message: 'You must be a member to post.' }, timestamp: Date.now() });
     return;
@@ -121,7 +126,7 @@ function handleDeletePost(
 
   // Only author or admin+ can delete
   const isAuthor = post.authorPublicKey === client.publicKey;
-  const member = communityDB.getMember(communityId, client.publicKey);
+  const member = findMember(communityDB, communityId, client.publicKey);
   const isAdmin = member && (member.role === 'owner' || member.role === 'admin' || member.role === 'moderator');
 
   if (!isAuthor && !isAdmin) {
@@ -144,7 +149,7 @@ function handlePinPost(
   if (!communityId || !postId || pinned === undefined) return;
 
   // Only admin+ can pin
-  const member = communityDB.getMember(communityId, client.publicKey);
+  const member = findMember(communityDB, communityId, client.publicKey);
   if (!member || (member.role !== 'owner' && member.role !== 'admin' && member.role !== 'moderator')) {
     sendToClient(client, { type: 'POST_RESULT', payload: { action: 'PIN_POST', success: false, message: 'Only admins can pin posts.' }, timestamp: Date.now() });
     return;
@@ -184,7 +189,7 @@ function handleAddComment(
   }
 
   // Verify user is a member of the community
-  const member = communityDB.getMember(post.communityId, client.publicKey);
+  const member = findMember(communityDB, post.communityId, client.publicKey);
   if (!member) {
     sendToClient(client, { type: 'POST_RESULT', payload: { action: 'ADD_COMMENT', success: false, message: 'You must be a member to comment.' }, timestamp: Date.now() });
     return;
