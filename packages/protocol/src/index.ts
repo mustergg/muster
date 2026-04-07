@@ -60,3 +60,4 @@ export * from './file-messages.js';
 export * from './profile-messages.js';
 export * from './friend-messages.js';
 export * from './post-messages.js';
+export * from './squad-messages.js';

@@ -1,8 +1,9 @@
 /**
- * ChannelsSidebar — R12 update
+ * ChannelsSidebar — R13 update
  *
- * Changes from R10:
- * - Added Feed item at top of channel list (navigates to community feed)
+ * Changes from R12:
+ * - Added Squads section below channels with text/voice items
+ * - Create squad button for community members
  */
 
 import React, { useState, useEffect } from 'react';
@@ -14,6 +15,8 @@ import InviteLinkModal from '../pages/InviteLinkModal.js';
 import CreateChannelModal from '../pages/CreateChannelModal.js';
 import EditChannelModal from '../pages/EditChannelModal.js';
 import EditProfileModal from '../pages/EditProfileModal.js';
+import CreateSquadModal from '../pages/CreateSquadModal.js';
+import { useSquadStore } from '../stores/squadStore.js';
 import ContextMenu from './ContextMenu.js';
 
 interface Props {
@@ -33,6 +36,8 @@ export default function ChannelsSidebar({ communityId, activeChannelId, onSelect
   const [showCreateChannel, setShowCreateChannel] = useState(false);
   const [editingChannel, setEditingChannel] = useState<{ id: string; name: string; visibility: string } | null>(null);
   const [showProfile, setShowProfile] = useState(false);
+  const [showCreateSquad, setShowCreateSquad] = useState(false);
+  const { squads: allSquads, loadSquads: loadSquadsAction } = useSquadStore();
 
   const community = communityId ? communities[communityId] : null;
   const channels  = community?.channels ?? [];
@@ -49,6 +54,7 @@ export default function ChannelsSidebar({ communityId, activeChannelId, onSelect
     console.log('[Sidebar] Setting up presence + requests for:', communityId);
     const unsubPresence  = subscribePresence(communityId);
     const unsubRequests  = serveCommunityRequests(communityId);
+    loadSquadsAction(communityId);
     return () => { unsubPresence(); unsubRequests(); };
   }, [communityId]);
 
@@ -211,6 +217,44 @@ export default function ChannelsSidebar({ communityId, activeChannelId, onSelect
               })}
             </>
           )}
+
+          {/* Squads section */}
+          {communityId && (
+            <>
+              <div style={styles.sectionRow}>
+                <div style={styles.sectionLabel}>Squads</div>
+                <button
+                  title="Create squad"
+                  onClick={() => setShowCreateSquad(true)}
+                  style={styles.createChannelBtn}
+                >
+                  +
+                </button>
+              </div>
+              {(allSquads[communityId] || []).length === 0 && (
+                <div style={{ padding: '4px 14px', fontSize: '11px', color: 'var(--color-text-muted)' }}>No squads yet</div>
+              )}
+              {(allSquads[communityId] || []).map((sq) => (
+                <React.Fragment key={sq.id}>
+                  <button
+                    onClick={() => communityId && onSelectChannel(communityId, `__squad_text__${sq.id}`, `${sq.name}`)}
+                    style={{ ...styles.channelItem, ...(activeChannelId === `__squad_text__${sq.id}` ? styles.channelActive : {}) }}
+                  >
+                    <span style={styles.chIcon}>#</span>
+                    <span style={styles.chName}>{sq.name}</span>
+                    <span style={{ fontSize: '10px', color: 'var(--color-text-muted)' }}>{sq.memberCount}</span>
+                  </button>
+                  <button
+                    onClick={() => communityId && onSelectChannel(communityId, `__squad_voice__${sq.id}`, `${sq.name} Voice`)}
+                    style={{ ...styles.channelItem, ...(activeChannelId === `__squad_voice__${sq.id}` ? styles.channelActive : {}) }}
+                  >
+                    <span style={styles.chIcon}>{'\u{1F3A4}'}</span>
+                    <span style={styles.chName}>{sq.name} Voice</span>
+                  </button>
+                </React.Fragment>
+              ))}
+            </>
+          )}
         </div>
 
         {/* User panel */}
@@ -254,6 +298,10 @@ export default function ChannelsSidebar({ communityId, activeChannelId, onSelect
 
       {showProfile && (
         <EditProfileModal onClose={() => setShowProfile(false)} />
+      )}
+
+      {showCreateSquad && communityId && (
+        <CreateSquadModal communityId={communityId} onClose={() => setShowCreateSquad(false)} />
       )}
     </>
   );

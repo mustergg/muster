@@ -22,6 +22,8 @@ import { handleFileMessage } from './fileHandler';
 import { handleProfileMessage } from './profileHandler';
 import { PostDB } from './postDB';
 import { handlePostMessage } from './postHandler';
+import { SquadDB } from './squadDB';
+import { handleSquadMessage, cleanupSquadSubscriptions } from './squadHandler';
 import { FriendDB } from './friendDB';
 import { handleFriendMessage } from './friendHandler';
 import { enforceTier } from './tierEnforcement';
@@ -41,6 +43,7 @@ const userDB = new UserDB(messageDB.getDatabase());
 const fileDB = new FileDB(messageDB.getDatabase());
 const friendDB = new FriendDB(messageDB.getDatabase());
 const postDB = new PostDB(messageDB.getDatabase());
+const squadDB = new SquadDB(messageDB.getDatabase());
 
 const wss = new WebSocketServer({ port: PORT, maxPayload: MAX_MESSAGE_SIZE });
 
@@ -49,7 +52,7 @@ initCrypto().catch((err) => console.error('[relay] Crypto init failed:', err));
 const userCounts = userDB.getUserCount();
 const fileTotalKB = Math.round(fileDB.getTotalSize() / 1024);
 console.log(`[relay] ====================================`);
-console.log(`[relay]  Muster Relay Node (R12)`);
+console.log(`[relay]  Muster Relay Node (R13)`);
 console.log(`[relay]  Listening on port ${PORT}`);
 console.log(`[relay]  Ed25519 signature verification: ENABLED`);
 console.log(`[relay]  Messages: ${messageDB.getMessageCount()}`);
@@ -79,6 +82,7 @@ const FILE_TYPES = new Set(['UPLOAD_FILE', 'REQUEST_FILE']);
 const PROFILE_TYPES = new Set(['UPDATE_PROFILE', 'GET_PROFILE']);
 const FRIEND_TYPES = new Set(['SEND_FRIEND_REQUEST', 'RESPOND_FRIEND_REQUEST', 'CANCEL_FRIEND_REQUEST', 'REMOVE_FRIEND', 'BLOCK_USER', 'UNBLOCK_USER', 'GET_FRIENDS', 'GET_FRIEND_REQUESTS', 'GET_BLOCKED_USERS']);
 const POST_TYPES = new Set(['CREATE_POST', 'GET_POSTS', 'DELETE_POST', 'PIN_POST', 'ADD_COMMENT', 'GET_COMMENTS']);
+const SQUAD_TYPES = new Set(['CREATE_SQUAD', 'GET_SQUADS', 'INVITE_TO_SQUAD', 'LEAVE_SQUAD', 'KICK_FROM_SQUAD', 'DELETE_SQUAD', 'GET_SQUAD_MEMBERS', 'SUBSCRIBE_SQUAD', 'SEND_SQUAD_MESSAGE', 'SQUAD_HISTORY_REQUEST']);
 
 function handleMessage(client: RelayClient, msg: any): void {
   if (msg.type === 'AUTH_RESPONSE') { handleAuth(client, msg); return; }
@@ -88,6 +92,7 @@ function handleMessage(client: RelayClient, msg: any): void {
   if (PROFILE_TYPES.has(msg.type)) { handleProfileMessage(client, msg, userDB, sendToClient); return; }
   if (FRIEND_TYPES.has(msg.type)) { handleFriendMessage(client, msg, friendDB, userDB, sendToClient, clients); return; }
   if (POST_TYPES.has(msg.type)) { handlePostMessage(client, msg, postDB, communityDB, sendToClient, clients, channels); return; }
+  if (SQUAD_TYPES.has(msg.type)) { handleSquadMessage(client, msg, squadDB, userDB, communityDB, sendToClient, clients); return; }
   if (OWNERSHIP_TYPES.has(msg.type)) { handleOwnershipMessage(client, msg, communityDB, messageDB, userDB, sendToClient, clients, channels); return; }
 
   if (COMMUNITY_TYPES.has(msg.type)) {
@@ -185,7 +190,7 @@ function broadcastPresence(channelId: string): void {
   for (const ws of subs) { if (ws.readyState === WebSocket.OPEN) ws.send(msg); }
 }
 
-function handleDisconnect(client: RelayClient): void { for (const ch of client.channels) { channels.get(ch)?.delete(client.ws); if (channels.get(ch)?.size) broadcastPresence(ch); else channels.delete(ch); } clients.delete(client.ws); }
+function handleDisconnect(client: RelayClient): void { for (const ch of client.channels) { channels.get(ch)?.delete(client.ws); if (channels.get(ch)?.size) broadcastPresence(ch); else channels.delete(ch); } cleanupSquadSubscriptions(client.ws); clients.delete(client.ws); }
 function sendToClient(client: RelayClient, msg: Record<string, unknown>): void { if (client.ws.readyState === WebSocket.OPEN) client.ws.send(JSON.stringify(msg)); }
 function requireAuth(client: RelayClient): boolean { if (!client.authenticated) { sendToClient(client, { type: 'ERROR', payload: { code: 'NOT_AUTH', message: 'Authenticate first' }, timestamp: Date.now() }); return false; } return true; }
 

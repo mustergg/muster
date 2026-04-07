@@ -7,6 +7,7 @@ import DMConversationList from '../components/DMConversationList.js';
 import DMChatArea from '../components/DMChatArea.js';
 import FriendsPanel from '../components/FriendsPanel.js';
 import FeedView from '../components/FeedView.js';
+import SquadChatArea from '../components/SquadChatArea.js';
 import VerificationBanner from '../components/VerificationBanner.js';
 import { useNetworkStore } from '../stores/networkStore.js';
 import { useCommunityStore } from '../stores/communityStore.js';
@@ -15,6 +16,7 @@ import { useChatStore } from '../stores/chatStore.js';
 import { useDMStore } from '../stores/dmStore.js';
 import { useFriendStore } from '../stores/friendStore.js';
 import { usePostStore } from '../stores/postStore.js';
+import { useSquadStore } from '../stores/squadStore.js';
 
 export interface ActiveLocation {
   communityId: string;
@@ -44,6 +46,7 @@ export default function MainLayout(): React.JSX.Element {
   const dmInit        = useDMStore((s) => s.init);
   const friendInit    = useFriendStore((s) => s.init);
   const postInit      = usePostStore((s) => s.init);
+  const squadInit     = useSquadStore((s) => s.init);
   useEffect(() => {
     if (status === 'connected') {
       const c1 = chatInit();
@@ -51,8 +54,9 @@ export default function MainLayout(): React.JSX.Element {
       const c3 = dmInit();
       const c4 = friendInit();
       const c5 = postInit();
+      const c6 = squadInit();
       loadCommunities();
-      return () => { c1(); c2(); c3(); c4(); c5(); };
+      return () => { c1(); c2(); c3(); c4(); c5(); c6(); };
     }
     return undefined;
   }, [status]);
@@ -64,7 +68,14 @@ export default function MainLayout(): React.JSX.Element {
   const handleSelectFriends = () => { setViewMode('friends'); setActiveCommunityId(null); setActive(null); setActiveDMPartner(null); };
   const handleSelectCommunity = (id: string) => { setViewMode('community'); setActiveCommunityId(id); setActiveDMPartner(null); };
 
+  // Determine what's active in the main area
   const isFeedActive = active?.channelId === '__feed__';
+  const squadTextMatch = active?.channelId?.match(/^__squad_text__(.+)$/);
+  const squadVoiceMatch = active?.channelId?.match(/^__squad_voice__(.+)$/);
+  const isSquadText = !!squadTextMatch;
+  const isSquadVoice = !!squadVoiceMatch;
+  const activeSquadId = squadTextMatch?.[1] || squadVoiceMatch?.[1] || null;
+  const isSpecialView = isFeedActive || isSquadText || isSquadVoice;
 
   return (
     <div style={styles.outerShell}>
@@ -106,11 +117,15 @@ export default function MainLayout(): React.JSX.Element {
             <div style={styles.main}>
               {isFeedActive && active ? (
                 <FeedView communityId={active.communityId} />
+              ) : isSquadText && activeSquadId ? (
+                <SquadChatArea squadId={activeSquadId} mode="text" />
+              ) : isSquadVoice && activeSquadId ? (
+                <SquadChatArea squadId={activeSquadId} mode="voice" />
               ) : (
                 <ChatArea active={active} />
               )}
             </div>
-            {!isFeedActive && (
+            {!isSpecialView && (
               <MembersSidebar communityId={activeCommunityId} onOpenDM={handleOpenDM} />
             )}
           </>
