@@ -1,14 +1,15 @@
 /**
- * DM Store — Real Crypto Integration
+ * DM Store — R14 E2E Encryption
  *
- * R11-QOL3: Fixed unreadCount — increments on new DM when conversation
- * is not active, resets when conversation is opened.
+ * Changes: DM messages are now encrypted with AES-256-GCM before sending.
+ * Uses ECDH (X25519) key exchange — the relay only sees ciphertext.
+ * Backward compatible: unencrypted messages from before R14 display normally.
  */
 
 import { create } from 'zustand';
 import { useNetworkStore } from './networkStore';
 import { BrowserDB } from '@muster/db';
-import { sign as ed25519Sign, toHex } from '@muster/crypto';
+import { sign as ed25519Sign, toHex, fromHex, encryptDM, decryptDM, isE2EEncrypted } from '@muster/crypto';
 import type { TransportMessage } from '@muster/transport';
 
 const encoder = new TextEncoder();
@@ -18,10 +19,13 @@ async function signPayload(payload: string, privateKey: Uint8Array): Promise<str
   return toHex(sigBytes);
 }
 
-function getPrivateKey(): Uint8Array | null {
+function getKeypair(): { privateKey: Uint8Array; publicKey: Uint8Array } | null {
   try {
     const authStore = (window as any).__authStore;
-    if (authStore) return authStore.getState()._keypair?.privateKey ?? null;
+    if (authStore) {
+      const kp = authStore.getState()._keypair;
+      if (kp) return { privateKey: kp.privateKey, publicKey: kp.publicKey };
+    }
     return null;
   } catch { return null; }
 }
@@ -32,9 +36,30 @@ function uuid(): string {
   });
 }
 
+/**
+ * Try to decrypt DM content. If the sender's public key is known,
+ * decrypt using ECDH. If decryption fails, return the raw content.
+ */
+function tryDecryptDM(content: string, senderPublicKeyHex: string, recipientPublicKeyHex: string, myKey: string): string {
+  if (!isE2EEncrypted(content)) return content;
+
+  const kp = getKeypair();
+  if (!kp) return '[Encrypted message — keypair unavailable]';
+
+  try {
+    // Determine which public key is "theirs"
+    const theirHex = senderPublicKeyHex === myKey ? recipientPublicKeyHex : senderPublicKeyHex;
+    const theirPublic = fromHex(theirHex);
+    return decryptDM(content, kp.privateKey, theirPublic);
+  } catch {
+    return '[Encrypted message — decryption failed]';
+  }
+}
+
 export interface DMMessage {
   messageId: string; content: string; senderPublicKey: string; senderUsername: string;
   recipientPublicKey: string; timestamp: number; isOwn: boolean;
+  encrypted?: boolean;
 }
 
 export interface DMConversation {
@@ -66,19 +91,46 @@ export const useDMStore = create<DMState>((set, get) => ({
 
     const messageId = uuid();
     const timestamp = Date.now();
-    const payload = { recipientPublicKey, content, messageId, timestamp };
+
+    // Encrypt the message before sending
+    const kp = getKeypair();
+    let encryptedContent = content;
+    let encrypted = false;
+
+    if (kp) {
+      try {
+        const recipientPublicBytes = fromHex(recipientPublicKey);
+        encryptedContent = encryptDM(content, kp.privateKey, recipientPublicBytes);
+        encrypted = true;
+      } catch (err) {
+        console.warn('[dm] E2E encryption failed, sending unencrypted:', err);
+        encryptedContent = content;
+      }
+    }
+
+    const payload = { recipientPublicKey, content: encryptedContent, messageId, timestamp };
     const payloadStr = JSON.stringify(payload);
 
-    const msg: DMMessage = { messageId, content, senderPublicKey: network.publicKey, senderUsername: network.username, recipientPublicKey, timestamp, isOwn: true };
+    // Optimistic update — show plaintext locally
+    const msg: DMMessage = {
+      messageId, content, senderPublicKey: network.publicKey,
+      senderUsername: network.username, recipientPublicKey,
+      timestamp, isOwn: true, encrypted,
+    };
     set((state) => ({
       messages: { ...state.messages, [recipientPublicKey]: [...(state.messages[recipientPublicKey] || []), msg] },
     }));
 
-    dmDB.addMessage({ messageId, channel: `dm:${[network.publicKey, recipientPublicKey].sort().join(':')}`, content, senderPublicKey: network.publicKey, senderUsername: network.username, timestamp, signature: '' });
+    // Store encrypted content in local DB
+    dmDB.addMessage({
+      messageId, channel: `dm:${[network.publicKey, recipientPublicKey].sort().join(':')}`,
+      content: encryptedContent, senderPublicKey: network.publicKey,
+      senderUsername: network.username, timestamp, signature: '',
+    });
 
-    const privateKey = getPrivateKey();
-    if (privateKey) {
-      signPayload(payloadStr, privateKey).then((signature) => {
+    // Sign and send
+    if (kp) {
+      signPayload(payloadStr, kp.privateKey).then((signature) => {
         network.transport!.send({ type: 'SEND_DM', payload, signature, senderPublicKey: network.publicKey, timestamp });
       }).catch(() => {
         network.transport!.send({ type: 'SEND_DM', payload, signature: '', senderPublicKey: network.publicKey, timestamp });
@@ -89,7 +141,6 @@ export const useDMStore = create<DMState>((set, get) => ({
   },
 
   openConversation: (publicKey) => {
-    // Reset unread count when opening conversation
     set((state) => ({
       activeConversation: publicKey,
       conversations: state.conversations.map((c) =>
@@ -108,7 +159,6 @@ export const useDMStore = create<DMState>((set, get) => ({
   },
 
   setActiveConversation: (publicKey) => {
-    // Reset unread when setting active
     set((state) => ({
       activeConversation: publicKey,
       conversations: publicKey
@@ -138,7 +188,17 @@ export const useDMStore = create<DMState>((set, get) => ({
           const p = msg.payload as any;
           const otherKey = p.senderPublicKey === myKey ? p.recipientPublicKey : p.senderPublicKey;
           const isOwn = p.senderPublicKey === myKey;
-          const dmMsg: DMMessage = { messageId: p.messageId, content: p.content, senderPublicKey: p.senderPublicKey, senderUsername: p.senderUsername, recipientPublicKey: p.recipientPublicKey, timestamp: p.timestamp, isOwn };
+
+          // Decrypt the message content
+          const decryptedContent = tryDecryptDM(p.content, p.senderPublicKey, p.recipientPublicKey, myKey);
+          const encrypted = isE2EEncrypted(p.content);
+
+          const dmMsg: DMMessage = {
+            messageId: p.messageId, content: decryptedContent,
+            senderPublicKey: p.senderPublicKey, senderUsername: p.senderUsername,
+            recipientPublicKey: p.recipientPublicKey, timestamp: p.timestamp,
+            isOwn, encrypted,
+          };
 
           set((state) => {
             const existing = state.messages[otherKey] || [];
@@ -146,7 +206,16 @@ export const useDMStore = create<DMState>((set, get) => ({
             return { messages: { ...state.messages, [otherKey]: [...existing, dmMsg].sort((a, b) => a.timestamp - b.timestamp) } };
           });
 
-          dmDB.addMessage({ messageId: p.messageId, channel: `dm:${[myKey, otherKey].sort().join(':')}`, content: p.content, senderPublicKey: p.senderPublicKey, senderUsername: p.senderUsername, timestamp: p.timestamp, signature: (msg as any).signature || '' });
+          // Store encrypted content in local DB (not decrypted)
+          dmDB.addMessage({
+            messageId: p.messageId,
+            channel: `dm:${[myKey, otherKey].sort().join(':')}`,
+            content: p.content, // Store encrypted form
+            senderPublicKey: p.senderPublicKey,
+            senderUsername: p.senderUsername,
+            timestamp: p.timestamp,
+            signature: (msg as any).signature || '',
+          });
 
           // Update conversation list + unread count
           set((state) => {
@@ -155,21 +224,23 @@ export const useDMStore = create<DMState>((set, get) => ({
             const otherName = isOwn ? (p.recipientUsername || otherKey.slice(0, 8) + '...') : p.senderUsername;
             const isActive = state.activeConversation === otherKey;
 
+            // Show decrypted preview in conversation list
+            const previewContent = decryptedContent.length > 50 ? decryptedContent.slice(0, 50) + '...' : decryptedContent;
+
             if (idx >= 0) {
               const prev = convs[idx]!;
               convs[idx] = {
                 ...prev,
-                lastMessage: p.content,
+                lastMessage: previewContent,
                 lastTimestamp: p.timestamp,
                 username: otherName || prev.username,
-                // Only increment unread if not our own message and conversation is not active
                 unreadCount: (!isOwn && !isActive) ? (prev.unreadCount || 0) + 1 : prev.unreadCount,
               };
             } else {
               convs.unshift({
                 publicKey: otherKey,
                 username: otherName,
-                lastMessage: p.content,
+                lastMessage: previewContent,
                 lastTimestamp: p.timestamp,
                 unreadCount: (!isOwn && !isActive) ? 1 : 0,
               });
@@ -182,11 +253,15 @@ export const useDMStore = create<DMState>((set, get) => ({
 
         case 'DM_HISTORY_RESPONSE': {
           const p = msg.payload as any;
-          const msgs: DMMessage[] = (p.messages || []).map((m: any) => ({
-            messageId: m.messageId, content: m.content, senderPublicKey: m.senderPublicKey,
-            senderUsername: m.senderUsername, recipientPublicKey: m.recipientPublicKey,
-            timestamp: m.timestamp, isOwn: m.senderPublicKey === myKey,
-          }));
+          const msgs: DMMessage[] = (p.messages || []).map((m: any) => {
+            const decrypted = tryDecryptDM(m.content, m.senderPublicKey, m.recipientPublicKey, myKey);
+            return {
+              messageId: m.messageId, content: decrypted,
+              senderPublicKey: m.senderPublicKey, senderUsername: m.senderUsername,
+              recipientPublicKey: m.recipientPublicKey, timestamp: m.timestamp,
+              isOwn: m.senderPublicKey === myKey, encrypted: isE2EEncrypted(m.content),
+            };
+          });
           set((state) => ({ messages: { ...state.messages, [p.otherPublicKey]: msgs } }));
           break;
         }

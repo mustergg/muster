@@ -1,10 +1,7 @@
 /**
  * @muster/crypto — public API
  *
- * Import from this file only. Internal modules are subject to change.
- *
- * @example
- * import { generateKeyPair, deriveKeyPair, createKeystoreEntry, unlockKeystore } from '@muster/crypto';
+ * R14: Added E2E encryption exports.
  */
 
 export type {
@@ -45,3 +42,16 @@ export {
   createKeystoreEntry,
   unlockKeystore,
 } from './encryption.js';
+
+export {
+  E2E_PREFIX,
+  edPrivateToX25519,
+  edPublicToX25519,
+  computeSharedSecret,
+  deriveMessageKey,
+  encryptMessage,
+  decryptMessage,
+  encryptDM,
+  decryptDM,
+  isE2EEncrypted,
+} from './e2e.js';
