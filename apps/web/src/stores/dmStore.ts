@@ -9,7 +9,8 @@
 import { create } from 'zustand';
 import { useNetworkStore } from './networkStore';
 import { BrowserDB } from '@muster/db';
-import { sign as ed25519Sign, toHex, fromHex, encryptDM, decryptDM, isE2EEncrypted } from '@muster/crypto';
+import { sign as ed25519Sign, toHex, fromHex } from '@muster/crypto';
+import { encryptDM, decryptDM, isE2EEncrypted } from '@muster/crypto/e2e';
 import type { TransportMessage } from '@muster/transport';
 
 const encoder = new TextEncoder();

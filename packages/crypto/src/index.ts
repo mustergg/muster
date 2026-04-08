@@ -1,7 +1,8 @@
 /**
  * @muster/crypto — public API
  *
- * R14: Added E2E encryption exports.
+ * R14: E2E functions moved to separate entry point '@muster/crypto/e2e'
+ * to avoid loading @noble/curves on the relay (ARM compatibility).
  */
 
 export type {
@@ -42,16 +43,3 @@ export {
   createKeystoreEntry,
   unlockKeystore,
 } from './encryption.js';
-
-export {
-  E2E_PREFIX,
-  edPrivateToX25519,
-  edPublicToX25519,
-  computeSharedSecret,
-  deriveMessageKey,
-  encryptMessage,
-  decryptMessage,
-  encryptDM,
-  decryptDM,
-  isE2EEncrypted,
-} from './e2e.js';
