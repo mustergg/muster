@@ -157,9 +157,14 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
 
     if (entry) {
       // Fast path: local keystore exists — decrypt it
-      const { unlockKeystore: unlock, getPublicKey } = await import('@muster/crypto');
-      const privateKeyBytes = await unlock(entry, password);
-      const publicKeyBytes  = await getPublicKey(privateKeyBytes);
+      
+      //Fallback
+      //const { unlockKeystore: unlock, getPublicKey } = await import('@muster/crypto');
+      //const privateKeyBytes = await unlock(entry, password);
+      //const publicKeyBytes  = await getPublicKey(privateKeyBytes);
+
+      const privateKeyBytes = await unlockKeystore(entry, password);
+      const publicKeyBytes  = fromHex(entry.publicKeyHex);
 
       const keypair: KeyPair = {
         privateKey: privateKeyBytes,

@@ -1,12 +1,18 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { nodePolyfills } from 'vite-plugin-node-polyfills';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+// Resolve @noble/curves from the monorepo root node_modules
+const nobleCurvesDir = path.resolve(__dirname, '../../node_modules/@noble/curves');
 
 export default defineConfig({
   plugins: [
     react(),
     nodePolyfills({
-      // Polyfills necessários para as bibliotecas crypto e libp2p no browser
       include: ['buffer', 'crypto', 'stream', 'util', 'events'],
       globals: {
         Buffer: true,
@@ -17,6 +23,13 @@ export default defineConfig({
   ],
   define: {
     global: 'globalThis',
+  },
+  resolve: {
+    alias: {
+      '@noble/curves/ed25519.js': path.join(nobleCurvesDir, 'ed25519.js'),
+      '@noble/curves/ed25519': path.join(nobleCurvesDir, 'ed25519.js'),
+    },
+    dedupe: ['@noble/curves', '@noble/hashes', '@noble/ciphers'],
   },
   optimizeDeps: {
     include: ['react', 'react-dom', 'i18next', 'react-i18next'],

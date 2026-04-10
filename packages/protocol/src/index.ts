@@ -61,3 +61,4 @@ export * from './profile-messages.js';
 export * from './friend-messages.js';
 export * from './post-messages.js';
 export * from './squad-messages.js';
+export * from './network-messages.js';

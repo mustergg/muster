@@ -173,6 +173,12 @@ export class CommunityDB {
     `).all(publicKey) as any[];
   }
 
+  getAllCommunityIds(): string[] {
+    const rows = this.db.prepare('SELECT id FROM communities').all() as Array<{ id: string }>;
+    return rows.map((r) => r.id);
+  }
+
+
   getCommunityCount(): number {
     return (this.db.prepare('SELECT COUNT(*) as count FROM communities').get() as any)?.count ?? 0;
   }

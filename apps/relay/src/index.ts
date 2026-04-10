@@ -1,8 +1,11 @@
 /**
- * Muster Relay Server — R11
+ * Muster Relay Server — R15
  *
- * Changes from R10:
- * - Added friend system routing (requests, accept/decline/block, friend list)
+ * Changes from R13:
+ * - Multi-node architecture: PEX discovery, community replication
+ * - Node identity + peer connections
+ * - Message forwarding between nodes
+ * - GET_NODES client request
  */
 
 import { WebSocketServer, WebSocket } from 'ws';
@@ -26,6 +29,8 @@ import { SquadDB } from './squadDB';
 import { handleSquadMessage, cleanupSquadSubscriptions } from './squadHandler';
 import { FriendDB } from './friendDB';
 import { handleFriendMessage } from './friendHandler';
+import { NodeDB } from './nodeDB';
+import { PeerManager } from './peerManager';
 import { enforceTier } from './tierEnforcement';
 import { initCrypto, verifySig as verifySignature } from './relayCrypto';
 import type { RelayClient } from './types';
@@ -33,6 +38,7 @@ import type { RelayClient } from './types';
 const PORT = parseInt(process.env.MUSTER_WS_PORT || '4002', 10);
 const MAX_MESSAGE_SIZE = 2 * 1024 * 1024;
 const RETENTION_MS = parseInt(process.env.MUSTER_RETENTION_DAYS || '30', 10) * 24 * 60 * 60 * 1000;
+const NODE_URL = process.env.MUSTER_NODE_URL || `ws://0.0.0.0:${PORT}`;
 
 const clients = new Map<WebSocket, RelayClient>();
 const channels = new Map<string, Set<WebSocket>>();
@@ -44,6 +50,8 @@ const fileDB = new FileDB(messageDB.getDatabase());
 const friendDB = new FriendDB(messageDB.getDatabase());
 const postDB = new PostDB(messageDB.getDatabase());
 const squadDB = new SquadDB(messageDB.getDatabase());
+const nodeDB = new NodeDB(messageDB.getDatabase());
+const peerManager = new PeerManager(nodeDB, messageDB, communityDB, dmDB, NODE_URL);
 
 const wss = new WebSocketServer({ port: PORT, maxPayload: MAX_MESSAGE_SIZE });
 
@@ -52,7 +60,9 @@ initCrypto().catch((err) => console.error('[relay] Crypto init failed:', err));
 const userCounts = userDB.getUserCount();
 const fileTotalKB = Math.round(fileDB.getTotalSize() / 1024);
 console.log(`[relay] ====================================`);
-console.log(`[relay]  Muster Relay Node (R13)`);
+console.log(`[relay]  Muster Relay Node (R15)`);
+console.log(`[relay]  Node ID: ${nodeDB.getNodeId().slice(0, 20)}...`);
+console.log(`[relay]  Node URL: ${NODE_URL}`);
 console.log(`[relay]  Listening on port ${PORT}`);
 console.log(`[relay]  Ed25519 signature verification: ENABLED`);
 console.log(`[relay]  Messages: ${messageDB.getMessageCount()}`);
@@ -60,7 +70,11 @@ console.log(`[relay]  DMs: ${dmDB.getCount()}`);
 console.log(`[relay]  Files: ${fileDB.getCount()} (${fileTotalKB}KB)`);
 console.log(`[relay]  Communities: ${communityDB.getCommunityCount()}`);
 console.log(`[relay]  Users: ${userCounts.total} (${userCounts.verified} verified, ${userCounts.basic} basic)`);
+console.log(`[relay]  Known peers: ${nodeDB.getPeerCount()}`);
 console.log(`[relay] ====================================`);
+
+// Start peer-to-peer connections
+peerManager.start();
 
 wss.on('connection', (ws) => {
   const challenge = randomBytes(32).toString('hex');
@@ -85,8 +99,14 @@ const POST_TYPES = new Set(['CREATE_POST', 'GET_POSTS', 'DELETE_POST', 'PIN_POST
 const SQUAD_TYPES = new Set(['CREATE_SQUAD', 'GET_SQUADS', 'INVITE_TO_SQUAD', 'LEAVE_SQUAD', 'KICK_FROM_SQUAD', 'DELETE_SQUAD', 'GET_SQUAD_MEMBERS', 'SUBSCRIBE_SQUAD', 'SEND_SQUAD_MESSAGE', 'SQUAD_HISTORY_REQUEST']);
 
 function handleMessage(client: RelayClient, msg: any): void {
+  // Peer-to-peer: handle node handshake (before auth check)
+  if (msg.type === 'NODE_HANDSHAKE') { peerManager.handleInboundHandshake(client.ws, msg); return; }
+
   if (msg.type === 'AUTH_RESPONSE') { handleAuth(client, msg); return; }
   if (!requireAuth(client)) return;
+
+  // Client requests list of known nodes
+  if (msg.type === 'GET_NODES') { sendToClient(client, { type: 'NODE_LIST', payload: { nodes: peerManager.getNodeList() }, timestamp: Date.now() }); return; }
 
   if (EMAIL_TYPES.has(msg.type)) { handleEmailMessage(client, msg, userDB, sendToClient); return; }
   if (PROFILE_TYPES.has(msg.type)) { handleProfileMessage(client, msg, userDB, sendToClient); return; }
@@ -173,6 +193,19 @@ async function handlePublish(client: RelayClient, msg: any): Promise<void> {
   const outgoing = JSON.stringify({ type: 'MESSAGE', payload: { channel, content, messageId, timestamp, senderPublicKey: client.publicKey, senderUsername: client.username }, signature });
   const subs = channels.get(channel);
   if (subs) for (const s of subs) { if (s !== client.ws && s.readyState === WebSocket.OPEN) s.send(outgoing); }
+
+  // R15: Forward to peer nodes for replication
+  // Find which community this channel belongs to
+  try {
+    const allCommunities = communityDB.getAllCommunityIds();
+    for (const cid of allCommunities) {
+      const cChannels = communityDB.getChannels(cid);
+      if (cChannels.some((ch) => ch.id === channel)) {
+        peerManager.forwardMessage(cid, { messageId, channel, content, senderPublicKey: client.publicKey, senderUsername: client.username, timestamp, signature });
+        break;
+      }
+    }
+  } catch { /* ignore forwarding errors */ }
 }
 
 function handleSyncRequest(client: RelayClient, msg: any): void {
@@ -201,10 +234,10 @@ setInterval(() => {
   const frDel = friendDB.cleanupExpiredRequests(); if (frDel > 0) console.log(`[relay] Cleanup: ${frDel} expired friend requests`);
 }, 6 * 60 * 60 * 1000);
 
-function shutdown(): void { for (const [ws] of clients) ws.close(1001); wss.close(() => { messageDB.close(); process.exit(0); }); setTimeout(() => process.exit(0), 5000); }
+function shutdown(): void { peerManager.stop(); for (const [ws] of clients) ws.close(1001); wss.close(() => { messageDB.close(); process.exit(0); }); setTimeout(() => process.exit(0), 5000); }
 process.on('SIGTERM', shutdown); process.on('SIGINT', shutdown);
 
 setInterval(() => {
   const auth = [...clients.values()].filter((c) => c.authenticated).length; const uc = userDB.getUserCount();
-  console.log(`[relay] Stats: ${clients.size} conn, ${auth} auth, ${channels.size} ch, ${messageDB.getMessageCount()} msgs, ${dmDB.getCount()} dms, ${fileDB.getCount()} files, ${communityDB.getCommunityCount()} comm, ${uc.total} users (${uc.verified}v/${uc.basic}b)`);
+  console.log(`[relay] Stats: ${clients.size} conn, ${auth} auth, ${channels.size} ch, ${messageDB.getMessageCount()} msgs, ${dmDB.getCount()} dms, ${fileDB.getCount()} files, ${communityDB.getCommunityCount()} comm, ${uc.total} users (${uc.verified}v/${uc.basic}b), ${peerManager.getConnectedPeerCount()} peers`);
 }, 60_000);

@@ -63,6 +63,21 @@ export class DMDB {
       recipientUsername: msg.recipientUsername || '',
     });
   }
+  storeDM(dm: {
+    messageId: string; senderPublicKey: string; senderUsername: string;
+    recipientPublicKey: string; content: string; timestamp: number;
+    signature?: string;
+  }): void {
+    try {
+      this.db.prepare(`
+        INSERT OR IGNORE INTO direct_messages
+        (messageId, senderPublicKey, senderUsername, recipientPublicKey,
+         content, timestamp, signature)
+        VALUES (@messageId, @senderPublicKey, @senderUsername,
+         @recipientPublicKey, @content, @timestamp, @signature)
+      `).run({ ...dm, signature: dm.signature || '' });
+    } catch { /* ignore duplicates */ }
+  }
 
   getHistory(userA: string, userB: string, since: number, limit = 200): DBDirectMessage[] {
     return this.db.prepare(`
