@@ -145,6 +145,10 @@ function handleMessage(client: RelayClient, msg: any): void {
       }
     }
     handleDMMessage(client, msg, dmDB, sendToClient, clients);
+    // R16: After DM conversations load, inject bot welcome for admin
+    if (msg.type === 'DM_CONVERSATIONS_REQUEST' && adminBot.isAdmin(client.publicKey)) {
+      setTimeout(() => adminBot.sendWelcome(client), 200);
+    }
     return;
   }
 
@@ -191,11 +195,6 @@ async function handleAuth(client: RelayClient, msg: any): Promise<void> {
   console.log(`[relay] Auth OK: ${username} (${publicKey.slice(0, 12)}...) tier=${user.tier} mode=${authMode || 'legacy'}`);
   sendToClient(client, { type: 'AUTH_RESULT', payload: { success: true }, timestamp: Date.now() });
   sendToClient(client, { type: 'ACCOUNT_INFO', payload: userDB.getAccountInfo(publicKey), timestamp: Date.now() });
-
-  // R16: Send bot welcome to admin
-  if (adminBot.isAdmin(publicKey)) {
-    setTimeout(() => adminBot.sendWelcome(client), 500);
-  }
 }
 
 function handleSubscribe(client: RelayClient, msg: any): void { for (const ch of (msg.payload?.channels || [])) { client.channels.add(ch); if (!channels.has(ch)) channels.set(ch, new Set()); channels.get(ch)!.add(client.ws); broadcastPresence(ch); } }
