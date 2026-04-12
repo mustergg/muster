@@ -20,7 +20,8 @@ import { DMDB } from './dmDB';
 /** Default seed nodes for first boot. */
 const SEED_NODES: Array<{ url: string; name: string }> = [
   // Add known seed nodes here. The RPi node is the first seed.
-  // { url: 'ws://musternode.duckdns.org:4002', name: 'Muster Seed 1' },
+  { url: 'ws://musternode.duckdns.org:4002', name: 'Muster Seed 1' },
+  { url: 'ws://192.168.1.73:4002', name: 'Muster Seed RPi' },
 ];
 
 /** How often to run PEX gossip (ms). */
