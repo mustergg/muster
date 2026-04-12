@@ -28,6 +28,7 @@ import { SquadDB } from './squadDB';
 import type { RelayClient } from './types';
 import { randomBytes } from 'crypto';
 import { freemem, totalmem, uptime as osUptime, hostname, platform, arch } from 'os';
+import { getCurrentVersion, getGitBranch, getGitCommit, checkForUpdates, executeUpdate, compareVersions } from './nodeUpdater';
 
 /** Reserved public key for the node bot. */
 export const NODE_BOT_KEY = '__NODE_BOT__';
@@ -52,6 +53,7 @@ export class AdminBot {
   private getClientCount: () => number;
   private getChannelCount: () => number;
   private getPeerCount: () => number;
+  private getPeerVersions: () => Array<{ nodeId: string; name: string; url: string; version: string }>;
 
   constructor(deps: {
     nodeDB: NodeDB;
@@ -66,6 +68,7 @@ export class AdminBot {
     getClientCount: () => number;
     getChannelCount: () => number;
     getPeerCount: () => number;
+    getPeerVersions: () => Array<{ nodeId: string; name: string; url: string; version: string }>;
   }) {
     this.nodeDB = deps.nodeDB;
     this.messageDB = deps.messageDB;
@@ -79,6 +82,7 @@ export class AdminBot {
     this.getClientCount = deps.getClientCount;
     this.getChannelCount = deps.getChannelCount;
     this.getPeerCount = deps.getPeerCount;
+    this.getPeerVersions = deps.getPeerVersions;
   }
 
   // =================================================================
@@ -131,6 +135,8 @@ export class AdminBot {
       case '/config':     this.cmdConfig(client, parts.slice(1)); break;
       case '/purge':      this.cmdPurge(client, parts.slice(1)); break;
       case '/restart':    this.cmdRestart(client, parts.slice(1)); break;
+      case '/version':    this.cmdVersion(client); break;
+      case '/update':     this.cmdUpdate(client, parts.slice(1)); break;
       default:
         if (trimmed.startsWith('/')) {
           this.reply(client, `❓ Unknown command: ${cmd}\nType /help for available commands.`);
@@ -154,7 +160,10 @@ export class AdminBot {
       '/users           — Registered users',
       '/config          — View node configuration',
       '/config set <key> <value> — Change a setting',
-      '/purge <days>   — Delete messages older than N days',
+      '/version         — Current version + peer versions',
+      '/update check    — Check for available updates',
+      '/update confirm  — Execute update (git pull + rebuild + restart)',
+      '/purge <days>    — Delete messages older than N days',
       '/restart         — Restart the node',
       '/help            — This message',
       '',
@@ -171,12 +180,18 @@ export class AdminBot {
     const fileSizeKB = Math.round(this.fileDB.getTotalSize() / 1024);
     const memFree = Math.round(freemem() / 1024 / 1024);
     const memTotal = Math.round(totalmem() / 1024 / 1024);
+    const version = getCurrentVersion();
+    const branch = getGitBranch();
+    const commit = getGitCommit();
+    const lastUpdate = this.nodeDB.getConfig('lastUpdate') || 'never';
 
     this.reply(client, [
       `🖥️ Node Status`,
       `━━━━━━━━━━━━━━━━━━━━`,
       `Name:          ${nodeName}`,
       `Node ID:       ${nodeId.slice(0, 20)}...`,
+      `Version:       ${version} (${branch}@${commit})`,
+      `Last update:   ${lastUpdate}`,
       `Platform:      ${platform()} ${arch()}`,
       `Hostname:      ${hostname()}`,
       `Uptime:        ${uptimeStr}`,
@@ -333,11 +348,124 @@ export class AdminBot {
   }
 
   // =================================================================
+  // Version & Update commands (R17)
+  // =================================================================
+
+  private cmdVersion(client: RelayClient): void {
+    const version = getCurrentVersion();
+    const branch = getGitBranch();
+    const commit = getGitCommit();
+    const lastUpdate = this.nodeDB.getConfig('lastUpdate') || 'never';
+    const lastCommit = this.nodeDB.getConfig('lastUpdateCommit') || 'N/A';
+    const peerVersions = this.getPeerVersions();
+
+    const lines = [
+      '📦 Version Info',
+      '━━━━━━━━━━━━━━━━━━━━',
+      `This node:     ${version} (${branch}@${commit})`,
+      `Last update:   ${lastUpdate}`,
+      `Last commit:   ${lastCommit}`,
+      '',
+    ];
+
+    if (peerVersions.length > 0) {
+      lines.push('🌐 Peer Versions:');
+      let newerFound = false;
+      for (const p of peerVersions) {
+        const cmp = compareVersions(p.version, version);
+        const indicator = cmp > 0 ? ' ⬆️ NEWER' : cmp < 0 ? ' ⬇️ older' : ' ✓ same';
+        lines.push(`  • ${p.name || p.nodeId.slice(0, 12)}: ${p.version}${indicator}`);
+        if (cmp > 0) newerFound = true;
+      }
+      lines.push('');
+      if (newerFound) {
+        lines.push('⚠️ A newer version is available! Use /update check for details.');
+      } else {
+        lines.push('✅ You are running the latest version.');
+      }
+    } else {
+      lines.push('No peers connected — cannot compare versions.');
+    }
+
+    this.reply(client, lines.join('\n'));
+  }
+
+  private async cmdUpdate(client: RelayClient, args: string[]): Promise<void> {
+    if (args[0] === 'check') {
+      this.reply(client, '🔍 Checking for updates...');
+      const result = checkForUpdates();
+
+      if (result.error) {
+        this.reply(client, `❌ Update check failed: ${result.error}`);
+        return;
+      }
+
+      if (result.available) {
+        this.reply(client, [
+          `⬆️ Update Available!`,
+          `━━━━━━━━━━━━━━━━━━━━`,
+          `Branch: ${result.branch}`,
+          `Commits behind: ${result.behind}`,
+          ``,
+          `To update, type: /update confirm`,
+          `This will: git pull → pnpm install → rebuild → restart`,
+        ].join('\n'));
+      } else {
+        this.reply(client, [
+          `✅ Up to date!`,
+          `Branch: ${result.branch}`,
+          `No new commits on remote.`,
+        ].join('\n'));
+      }
+      return;
+    }
+
+    if (args[0] === 'confirm') {
+      this.reply(client, [
+        '🔄 Starting update process...',
+        'This may take 1-2 minutes. The node will restart automatically when done.',
+        '',
+        'Steps: git pull → pnpm install → build packages → build relay → restart',
+      ].join('\n'));
+
+      try {
+        const result = await executeUpdate(this.nodeDB);
+
+        // Send the log to admin
+        this.reply(client, result.log.join('\n'));
+
+        if (result.success) {
+          // Schedule restart
+          setTimeout(() => {
+            console.log('[updater] Update complete. Restarting...');
+            process.exit(0); // systemd restarts the service
+          }, 3000);
+        }
+      } catch (err: any) {
+        this.reply(client, `❌ Update failed: ${err.message || 'Unknown error'}`);
+      }
+      return;
+    }
+
+    // No subcommand — show usage
+    this.reply(client, [
+      '📦 Update Commands:',
+      '',
+      '/update check   — Check if updates are available (git fetch)',
+      '/update confirm — Execute update (git pull + rebuild + restart)',
+      '',
+      `Current version: ${getCurrentVersion()} (${getGitBranch()}@${getGitCommit()})`,
+    ].join('\n'));
+  }
+
+  // =================================================================
   // Send welcome message when admin connects
   // =================================================================
 
   sendWelcome(client: RelayClient): void {
     // Inject the bot as a DM conversation
+    const version = getCurrentVersion();
+    const commit = getGitCommit();
     this.sendToClient(client, {
       type: 'DM_MESSAGE',
       payload: {
@@ -347,9 +475,10 @@ export class AdminBot {
         recipientPublicKey: client.publicKey,
         content: [
           `👋 Welcome, admin!`,
-          `I'm your node bot. Type /help to see available commands.`,
+          `I'm your node bot (v${version} • ${commit}).`,
+          `Type /help to see available commands.`,
           ``,
-          `Quick: /status for node stats, /peers for network info.`,
+          `Quick: /status for stats, /version for update info.`,
         ].join('\n'),
         timestamp: Date.now(),
       },

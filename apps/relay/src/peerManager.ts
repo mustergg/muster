@@ -16,12 +16,12 @@ import { NodeDB } from './nodeDB';
 import { RelayDB } from './database';
 import { CommunityDB } from './communityDB';
 import { DMDB } from './dmDB';
+import { getCurrentVersion } from './nodeUpdater';
 
 /** Default seed nodes for first boot. */
 const SEED_NODES: Array<{ url: string; name: string }> = [
   // Add known seed nodes here. The RPi node is the first seed.
-  { url: 'ws://musternode.duckdns.org:4002', name: 'Muster Seed 1' },
-  { url: 'ws://192.168.1.73:4002', name: 'Muster Seed RPi' },
+  // { url: 'ws://musternode.duckdns.org:4002', name: 'Muster Seed 1' },
 ];
 
 /** How often to run PEX gossip (ms). */
@@ -40,6 +40,7 @@ interface PeerConnection {
   ws: WebSocket;
   communityIds: string[];
   connected: boolean;
+  version: string;
 }
 
 export class PeerManager {
@@ -55,7 +56,7 @@ export class PeerManager {
   private peers = new Map<string, PeerConnection>();
 
   /** Inbound peer connections (peers that connected to us). Keyed by nodeId. */
-  private inboundPeers = new Map<string, { nodeId: string; ws: WebSocket; communityIds: string[] }>();
+  private inboundPeers = new Map<string, { nodeId: string; ws: WebSocket; communityIds: string[]; version: string }>();
 
   private pexTimer: ReturnType<typeof setInterval> | null = null;
   private reconnectTimer: ReturnType<typeof setInterval> | null = null;
@@ -139,7 +140,7 @@ export class PeerManager {
     try {
       const ws = new WebSocket(url);
 
-      const conn: PeerConnection = { nodeId, url, name, ws, communityIds: [], connected: false };
+      const conn: PeerConnection = { nodeId, url, name, ws, communityIds: [], connected: false, version: '' };
       this.peers.set(nodeId, conn);
 
       ws.on('open', () => {
@@ -155,7 +156,7 @@ export class PeerManager {
             url: this.nodeUrl,
             name: this.nodeName,
             communityIds: myCommunities,
-            version: 'R15',
+            version: getCurrentVersion(),
           },
           timestamp: Date.now(),
         }));
@@ -195,7 +196,7 @@ export class PeerManager {
     console.log(`[peer] Inbound peer: ${name || nodeId.slice(0, 16)} (${url}) v${version}`);
 
     // Store the inbound connection
-    this.inboundPeers.set(nodeId, { nodeId, ws, communityIds: communityIds || [] });
+    this.inboundPeers.set(nodeId, { nodeId, ws, communityIds: communityIds || [], version: version || '' });
 
     // Update our known peers DB
     this.nodeDB.addOrUpdatePeer(nodeId, url, name || '', communityIds || []);
@@ -209,7 +210,7 @@ export class PeerManager {
         url: this.nodeUrl,
         name: this.nodeName,
         communityIds: myCommunities,
-        version: 'R15',
+        version: getCurrentVersion(),
       },
       timestamp: Date.now(),
     }));
@@ -272,7 +273,7 @@ export class PeerManager {
   }
 
   private handleHandshakeAck(conn: PeerConnection, msg: any): void {
-    const { nodeId, url, name, communityIds } = msg.payload || {};
+    const { nodeId, url, name, communityIds, version } = msg.payload || {};
     // Update the connection with the real nodeId from the peer
     if (nodeId && nodeId !== conn.nodeId) {
       this.peers.delete(conn.nodeId);
@@ -280,6 +281,7 @@ export class PeerManager {
       this.peers.set(nodeId, conn);
     }
     conn.communityIds = communityIds || [];
+    conn.version = version || '';
 
     // Update DB
     this.nodeDB.addOrUpdatePeer(nodeId, url || conn.url, name || conn.name, communityIds || []);
@@ -541,6 +543,20 @@ export class PeerManager {
 
   getNodeId(): string { return this.nodeId; }
   getConnectedPeerCount(): number { return this.peers.size + this.inboundPeers.size; }
+
+  /** Get version info for all connected peers. */
+  getPeerVersions(): Array<{ nodeId: string; name: string; url: string; version: string }> {
+    const result: Array<{ nodeId: string; name: string; url: string; version: string }> = [];
+    for (const [, conn] of this.peers) {
+      if (conn.connected) {
+        result.push({ nodeId: conn.nodeId, name: conn.name, url: conn.url, version: conn.version || 'unknown' });
+      }
+    }
+    for (const [, conn] of this.inboundPeers) {
+      result.push({ nodeId: conn.nodeId, name: '', url: '', version: conn.version || 'unknown' });
+    }
+    return result;
+  }
 
   // =================================================================
   // Helpers

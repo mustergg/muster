@@ -1,10 +1,10 @@
 /**
- * Muster Relay Server — R16
+ * Muster Relay Server — R17
  *
- * Changes from R15:
- * - Node admin DM bot: admin interacts with node via DM commands
- * - Bot appears as special contact (__NODE_BOT__) in admin's DM list
- * - Commands: /status, /peers, /communities, /users, /config, /purge, /restart
+ * Changes from R16:
+ * - Node self-update via git pull + rebuild + restart
+ * - Version tracking and peer version comparison
+ * - New bot commands: /version, /update check, /update confirm
  */
 
 import { WebSocketServer, WebSocket } from 'ws';
@@ -31,6 +31,7 @@ import { handleFriendMessage } from './friendHandler';
 import { NodeDB } from './nodeDB';
 import { PeerManager } from './peerManager';
 import { AdminBot, NODE_BOT_KEY } from './adminBot';
+import { getCurrentVersion, getGitBranch, getGitCommit } from './nodeUpdater';
 import { enforceTier } from './tierEnforcement';
 import { initCrypto, verifySig as verifySignature } from './relayCrypto';
 import type { RelayClient } from './types';
@@ -58,6 +59,7 @@ const adminBot = new AdminBot({
   getClientCount: () => clients.size,
   getChannelCount: () => channels.size,
   getPeerCount: () => peerManager.getConnectedPeerCount(),
+  getPeerVersions: () => peerManager.getPeerVersions(),
 });
 
 const wss = new WebSocketServer({ port: PORT, maxPayload: MAX_MESSAGE_SIZE });
@@ -67,7 +69,8 @@ initCrypto().catch((err) => console.error('[relay] Crypto init failed:', err));
 const userCounts = userDB.getUserCount();
 const fileTotalKB = Math.round(fileDB.getTotalSize() / 1024);
 console.log(`[relay] ====================================`);
-console.log(`[relay]  Muster Relay Node (R16)`);
+console.log(`[relay]  Muster Relay Node (R17)`);
+console.log(`[relay]  Version: ${getCurrentVersion()} (${getGitBranch()}@${getGitCommit()})`);
 console.log(`[relay]  Node ID: ${nodeDB.getNodeId().slice(0, 20)}...`);
 console.log(`[relay]  Node URL: ${NODE_URL}`);
 console.log(`[relay]  Listening on port ${PORT}`);
