@@ -8,6 +8,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useSquadStore } from '../stores/squadStore.js';
 import { useNetworkStore } from '../stores/networkStore.js';
+import VoicePanel from './VoicePanel.js';
 
 interface Props {
   squadId: string;
@@ -64,20 +65,8 @@ export default function SquadChatArea({ squadId, mode }: Props): React.JSX.Eleme
   };
 
   if (mode === 'voice') {
-    return (
-      <div style={s.container}>
-        <div style={s.header}>
-          <span style={s.headerIcon}>{'\u{1F3A4}'}</span>
-          <span style={s.headerTitle}>{squad?.name || 'Squad'} — Voice</span>
-        </div>
-        <div style={s.voicePlaceholder}>
-          <div style={s.voiceIcon}>{'\u{1F50A}'}</div>
-          <h3 style={{ margin: '0 0 8px', fontSize: '18px', fontWeight: 600 }}>Voice Channel</h3>
-          <p style={{ margin: 0, color: 'var(--color-text-muted)', fontSize: '13px' }}>Voice chat coming in R18 (WebRTC).</p>
-          <p style={{ margin: '4px 0 0', color: 'var(--color-text-muted)', fontSize: '12px' }}>The infrastructure is ready — just needs the audio engine.</p>
-        </div>
-      </div>
-    );
+    const voiceChannelId = squad?.voiceChannelId || `sq-voice-${squadId}`;
+    return <VoicePanel channelId={voiceChannelId} channelName={`${squad?.name || 'Squad'} Voice`} />;
   }
 
   return (

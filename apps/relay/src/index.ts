@@ -1,10 +1,10 @@
 /**
- * Muster Relay Server — R17
+ * Muster Relay Server — R18
  *
- * Changes from R16:
- * - Node self-update via git pull + rebuild + restart
- * - Version tracking and peer version comparison
- * - New bot commands: /version, /update check, /update confirm
+ * Changes from R17:
+ * - Voice chat via WebRTC (relay as signaling server)
+ * - Voice channel state management (join/leave/mute)
+ * - P2P audio via mesh topology
  */
 
 import { WebSocketServer, WebSocket } from 'ws';
@@ -26,6 +26,7 @@ import { PostDB } from './postDB';
 import { handlePostMessage } from './postHandler';
 import { SquadDB } from './squadDB';
 import { handleSquadMessage, cleanupSquadSubscriptions } from './squadHandler';
+import { handleVoiceMessage, cleanupVoiceParticipant, getVoiceStats } from './voiceHandler';
 import { FriendDB } from './friendDB';
 import { handleFriendMessage } from './friendHandler';
 import { NodeDB } from './nodeDB';
@@ -69,7 +70,7 @@ initCrypto().catch((err) => console.error('[relay] Crypto init failed:', err));
 const userCounts = userDB.getUserCount();
 const fileTotalKB = Math.round(fileDB.getTotalSize() / 1024);
 console.log(`[relay] ====================================`);
-console.log(`[relay]  Muster Relay Node (R17)`);
+console.log(`[relay]  Muster Relay Node (R18)`);
 console.log(`[relay]  Version: ${getCurrentVersion()} (${getGitBranch()}@${getGitCommit()})`);
 console.log(`[relay]  Node ID: ${nodeDB.getNodeId().slice(0, 20)}...`);
 console.log(`[relay]  Node URL: ${NODE_URL}`);
@@ -107,6 +108,7 @@ const PROFILE_TYPES = new Set(['UPDATE_PROFILE', 'GET_PROFILE']);
 const FRIEND_TYPES = new Set(['SEND_FRIEND_REQUEST', 'RESPOND_FRIEND_REQUEST', 'CANCEL_FRIEND_REQUEST', 'REMOVE_FRIEND', 'BLOCK_USER', 'UNBLOCK_USER', 'GET_FRIENDS', 'GET_FRIEND_REQUESTS', 'GET_BLOCKED_USERS']);
 const POST_TYPES = new Set(['CREATE_POST', 'GET_POSTS', 'DELETE_POST', 'PIN_POST', 'ADD_COMMENT', 'GET_COMMENTS']);
 const SQUAD_TYPES = new Set(['CREATE_SQUAD', 'GET_SQUADS', 'INVITE_TO_SQUAD', 'LEAVE_SQUAD', 'KICK_FROM_SQUAD', 'DELETE_SQUAD', 'GET_SQUAD_MEMBERS', 'SUBSCRIBE_SQUAD', 'SEND_SQUAD_MESSAGE', 'SQUAD_HISTORY_REQUEST']);
+const VOICE_TYPES = new Set(['VOICE_JOIN', 'VOICE_LEAVE', 'VOICE_SIGNAL', 'VOICE_ICE_CANDIDATE', 'VOICE_MUTE']);
 
 function handleMessage(client: RelayClient, msg: any): void {
   // Peer-to-peer: handle node handshake (before auth check)
@@ -123,6 +125,7 @@ function handleMessage(client: RelayClient, msg: any): void {
   if (FRIEND_TYPES.has(msg.type)) { handleFriendMessage(client, msg, friendDB, userDB, sendToClient, clients); return; }
   if (POST_TYPES.has(msg.type)) { handlePostMessage(client, msg, postDB, communityDB, sendToClient, clients, channels); return; }
   if (SQUAD_TYPES.has(msg.type)) { handleSquadMessage(client, msg, squadDB, userDB, communityDB, sendToClient, clients); return; }
+  if (VOICE_TYPES.has(msg.type)) { handleVoiceMessage(client, msg, sendToClient, clients); return; }
   if (OWNERSHIP_TYPES.has(msg.type)) { handleOwnershipMessage(client, msg, communityDB, messageDB, userDB, sendToClient, clients, channels); return; }
 
   if (COMMUNITY_TYPES.has(msg.type)) {
@@ -242,7 +245,7 @@ function broadcastPresence(channelId: string): void {
   for (const ws of subs) { if (ws.readyState === WebSocket.OPEN) ws.send(msg); }
 }
 
-function handleDisconnect(client: RelayClient): void { for (const ch of client.channels) { channels.get(ch)?.delete(client.ws); if (channels.get(ch)?.size) broadcastPresence(ch); else channels.delete(ch); } cleanupSquadSubscriptions(client.ws); clients.delete(client.ws); }
+function handleDisconnect(client: RelayClient): void { for (const ch of client.channels) { channels.get(ch)?.delete(client.ws); if (channels.get(ch)?.size) broadcastPresence(ch); else channels.delete(ch); } cleanupSquadSubscriptions(client.ws); cleanupVoiceParticipant(client.ws, clients); clients.delete(client.ws); }
 function sendToClient(client: RelayClient, msg: Record<string, unknown>): void { if (client.ws.readyState === WebSocket.OPEN) client.ws.send(JSON.stringify(msg)); }
 function requireAuth(client: RelayClient): boolean { if (!client.authenticated) { sendToClient(client, { type: 'ERROR', payload: { code: 'NOT_AUTH', message: 'Authenticate first' }, timestamp: Date.now() }); return false; } return true; }
 

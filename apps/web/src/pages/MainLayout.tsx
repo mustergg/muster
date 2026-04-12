@@ -17,6 +17,8 @@ import { useDMStore } from '../stores/dmStore.js';
 import { useFriendStore } from '../stores/friendStore.js';
 import { usePostStore } from '../stores/postStore.js';
 import { useSquadStore } from '../stores/squadStore.js';
+import { useVoiceStore } from '../stores/voiceStore.js';
+import VoicePanel from '../components/VoicePanel.js';
 
 export interface ActiveLocation {
   communityId: string;
@@ -32,7 +34,7 @@ export default function MainLayout(): React.JSX.Element {
   const [activeCommunityId, setActiveCommunityId] = useState<string | null>(null);
   const [activeDMPartner, setActiveDMPartner]     = useState<string | null>(null);
   const { connect, status }   = useNetworkStore();
-  const { loadCommunities }   = useCommunityStore();
+  const { loadCommunities, communities } = useCommunityStore();
 
   const { isAuthenticated } = useAuthStore();
   useEffect(() => {
@@ -47,6 +49,7 @@ export default function MainLayout(): React.JSX.Element {
   const friendInit    = useFriendStore((s) => s.init);
   const postInit      = usePostStore((s) => s.init);
   const squadInit     = useSquadStore((s) => s.init);
+  const voiceInit     = useVoiceStore((s) => s.init);
   useEffect(() => {
     if (status === 'connected') {
       const c1 = chatInit();
@@ -55,8 +58,9 @@ export default function MainLayout(): React.JSX.Element {
       const c4 = friendInit();
       const c5 = postInit();
       const c6 = squadInit();
+      const c7 = voiceInit();
       loadCommunities();
-      return () => { c1(); c2(); c3(); c4(); c5(); c6(); };
+      return () => { c1(); c2(); c3(); c4(); c5(); c6(); c7(); };
     }
     return undefined;
   }, [status]);
@@ -75,7 +79,13 @@ export default function MainLayout(): React.JSX.Element {
   const isSquadText = !!squadTextMatch;
   const isSquadVoice = !!squadVoiceMatch;
   const activeSquadId = squadTextMatch?.[1] || squadVoiceMatch?.[1] || null;
-  const isSpecialView = isFeedActive || isSquadText || isSquadVoice;
+
+  // R18: Detect community voice channels
+  const activeCommunity = activeCommunityId ? communities[activeCommunityId] : null;
+  const activeChannelData = activeCommunity?.channels?.find((ch: any) => ch.id === active?.channelId);
+  const isCommunityVoice = activeChannelData?.type === 'voice' || activeChannelData?.type === 'voice-temp';
+
+  const isSpecialView = isFeedActive || isSquadText || isSquadVoice || isCommunityVoice;
 
   return (
     <div style={styles.outerShell}>
@@ -121,6 +131,8 @@ export default function MainLayout(): React.JSX.Element {
                 <SquadChatArea squadId={activeSquadId} mode="text" />
               ) : isSquadVoice && activeSquadId ? (
                 <SquadChatArea squadId={activeSquadId} mode="voice" />
+              ) : isCommunityVoice && active ? (
+                <VoicePanel channelId={active.channelId} channelName={active.channelName} />
               ) : (
                 <ChatArea active={active} />
               )}
