@@ -6,7 +6,6 @@ import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-// Resolve @noble/curves from the monorepo root node_modules
 const nobleCurvesDir = path.resolve(__dirname, '../../node_modules/@noble/curves');
 
 export default defineConfig({
@@ -19,6 +18,7 @@ export default defineConfig({
         global: true,
         process: true,
       },
+      protocolImports: true,
     }),
   ],
   define: {
@@ -43,5 +43,11 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     sourcemap: true,
+    commonjsOptions: {
+      transformMixedEsModules: true,
+    },
+    rollupOptions: {
+      external: ['vite-plugin-node-polyfills/shims/buffer'],
+    },
   },
 });
