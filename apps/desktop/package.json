@@ -1,0 +1,27 @@
+{
+  "name": "@muster/desktop",
+  "version": "0.1.0",
+  "description": "Muster Desktop Application (Tauri v2)",
+  "private": true,
+  "scripts": {
+    "dev": "tauri dev",
+    "build": "tauri build",
+    "build:debug": "tauri build --debug",
+    "build:windows": "tauri build --target x86_64-pc-windows-msvc",
+    "build:macos": "tauri build --target universal-apple-darwin",
+    "build:linux": "tauri build --target x86_64-unknown-linux-gnu",
+    "build:android-init": "tauri android init",
+    "build:android": "tauri android build",
+    "dev:android": "tauri android dev",
+    "icon": "tauri icon src-tauri/icons/app-icon.png"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.0.0",
+    "@tauri-apps/plugin-deep-link": "^2.0.0",
+    "@tauri-apps/plugin-process": "^2.0.0",
+    "@tauri-apps/plugin-shell": "^2.0.0"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.0.0"
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "app": {
+    "withGlobalTauri": true
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["apk"],
+    "android": {
+      "minSdkVersion": 26
+    }
+  }
+}
