@@ -7,6 +7,7 @@
  * - P2P audio via mesh topology
  */
 
+import { handleNodeInfoRequest, initNodeInfo } from './nodeInfoHandler';
 import { WebSocketServer, WebSocket } from 'ws';
 import { randomBytes } from 'crypto';
 import { RelayDB } from './database';
@@ -53,6 +54,7 @@ const friendDB = new FriendDB(messageDB.getDatabase());
 const postDB = new PostDB(messageDB.getDatabase());
 const squadDB = new SquadDB(messageDB.getDatabase());
 const nodeDB = new NodeDB(messageDB.getDatabase());
+initNodeInfo(nodeDB);
 const peerManager = new PeerManager(nodeDB, messageDB, communityDB, dmDB, NODE_URL);
 const adminBot = new AdminBot({
   nodeDB, messageDB, communityDB, dmDB, userDB, fileDB, postDB, squadDB,
@@ -119,6 +121,10 @@ function handleMessage(client: RelayClient, msg: any): void {
 
   // Client requests list of known nodes
   if (msg.type === 'GET_NODES') { sendToClient(client, { type: 'NODE_LIST', payload: { nodes: peerManager.getNodeList() }, timestamp: Date.now() }); return; }
+  if (msg.type === 'GET_NODE_INFO' || msg.type === 'GET_NODE_PEERS') {
+    handleNodeInfoRequest(client, msg, nodeDB, sendToClient);
+    return;
+  }
 
   if (EMAIL_TYPES.has(msg.type)) { handleEmailMessage(client, msg, userDB, sendToClient); return; }
   if (PROFILE_TYPES.has(msg.type)) { handleProfileMessage(client, msg, userDB, sendToClient); return; }

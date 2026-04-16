@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "description": "Muster seed nodes — bootstrap list for first-time connections. After connecting, the client discovers more nodes via PEX.",
+  "nodes": [
+    {
+      "url": "ws://musternode.duckdns.org:4002",
+      "name": "Muster Main Node",
+      "region": "EU-PT"
+    },
+	{
+      "url": "ws://192.168.1.73:4002"",
+      "name": "Local Dev",
+      "region": "EU-PT"
+    }
+  ]
+}

@@ -3,12 +3,12 @@
   "productName": "Muster",
   "identifier": "gg.muster.app",
   "version": "0.1.0",
-  "build": {
-    "frontendDist": "../../../apps/web/dist",
+"build": {
+    "frontendDist": "../../web/dist",
     "devUrl": "http://localhost:5173",
     "beforeDevCommand": "pnpm --filter @muster/web dev",
     "beforeBuildCommand": "pnpm --filter @muster/web build"
-  },
+},
   "app": {
     "withGlobalTauri": true,
     "windows": [
@@ -28,7 +28,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; connect-src 'self' ws: wss: https:; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; media-src 'self' blob:; font-src 'self' data:"
+      "csp": "default-src 'self' ipc: http://ipc.localhost; connect-src 'self' ipc: http://ipc.localhost ws: wss: https:; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; media-src 'self' blob:; font-src 'self' data:"
     },
     "trayIcon": {
       "id": "main-tray",

@@ -145,7 +145,7 @@ export const useCommunityStore = create<CommunityState>()((set, get) => {
         break;
       }
 
-      case 'COMMUNITIES_LIST': {
+      case 'COMMUNITY_LIST': {
         const communities = (msg.payload as any).communities as StoredCommunity[];
         const record: Record<string, StoredCommunity> = {};
         for (const c of communities) record[c.id] = c;

@@ -9,17 +9,13 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const nobleCurvesDir = path.resolve(__dirname, '../../node_modules/@noble/curves');
 
 export default defineConfig({
+  base: './',
   plugins: [
     react(),
-    nodePolyfills({
-      include: ['buffer', 'crypto', 'stream', 'util', 'events'],
-      globals: {
-        Buffer: true,
-        global: true,
-        process: true,
-      },
-      protocolImports: true,
-    }),
+nodePolyfills({
+  include: ['buffer', 'crypto', 'stream', 'util'],
+  globals: { Buffer: false },
+})
   ],
   define: {
     global: 'globalThis',
