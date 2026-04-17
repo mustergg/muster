@@ -26,7 +26,7 @@ export interface ActiveLocation {
   channelName: string;
 }
 
-type ViewMode = 'community' | 'dm' | 'friends';
+type ViewMode = 'community' | 'dm' | 'friends' | 'settings';
 
 export default function MainLayout(): React.JSX.Element {
   const [viewMode, setViewMode] = useState<ViewMode>('community');

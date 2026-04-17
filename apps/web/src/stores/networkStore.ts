@@ -62,6 +62,7 @@ export const useNetworkStore = create<NetworkState>((set, get) => {
   const messageHandlers = new Set<(msg: TransportMessage) => void>();
   let fallbackTimeout: ReturnType<typeof setTimeout> | null = null;
   let intentionalDisconnect = false;
+  let connectionGen = 0; // bump on every new connection attempt
 
   /** Try connecting to the next available node. */
   async function tryNextNode(): Promise<void> {
@@ -81,6 +82,8 @@ export const useNetworkStore = create<NetworkState>((set, get) => {
 
   /** Connect to a specific relay URL. */
   async function connectToUrl(url: string): Promise<void> {
+    const myGen = ++connectionGen;
+    if (fallbackTimeout) { clearTimeout(fallbackTimeout); fallbackTimeout = null; }
     const auth = (await import('./authStore.js')).useAuthStore.getState();
     const publicKey = auth.publicKeyHex || '';
     const username = auth.username || '';
@@ -98,7 +101,7 @@ export const useNetworkStore = create<NetworkState>((set, get) => {
       try { existing.disconnect(); } catch { /* ignore */ }
     }
 
-    const transport = new WebSocketTransport({ reconnectBaseDelay: 1000, reconnectMaxDelay: 2000 });
+    const transport = new WebSocketTransport({ reconnectBaseDelay: 100, reconnectMaxDelay: 200, maxReconnectAttempts: 10, autoReconnect: false });
     set({ transport, status: 'connecting', error: null, publicKey, username, peerId: publicKey, connectedNodeUrl: url });
 
     transport.on('message', (msg) => {
@@ -219,6 +222,7 @@ export const useNetworkStore = create<NetworkState>((set, get) => {
 
         if (fallbackTimeout) clearTimeout(fallbackTimeout);
         fallbackTimeout = setTimeout(() => {
+          if (myGen !== connectionGen) return;
           set({ fallbackActive: true });
           tryNextNode();
         }, FALLBACK_DELAY);
@@ -239,6 +243,7 @@ export const useNetworkStore = create<NetworkState>((set, get) => {
       if (!intentionalDisconnect) {
         if (fallbackTimeout) clearTimeout(fallbackTimeout);
         fallbackTimeout = setTimeout(() => {
+          if (myGen !== connectionGen) return;
           set({ fallbackActive: true });
           tryNextNode();
         }, FALLBACK_DELAY);

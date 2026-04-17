@@ -1,10 +1,14 @@
+#[cfg(desktop)]
 use tauri::{
     menu::{MenuBuilder, MenuItemBuilder},
     tray::TrayIconBuilder,
-	Emitter,
+    Emitter,
     Listener,
     Manager,
 };
+
+#[cfg(not(desktop))]
+use tauri::{Emitter, Listener, Manager};
 
 #[tauri::command]
 fn get_app_version() -> String {

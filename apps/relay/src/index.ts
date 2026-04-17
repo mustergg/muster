@@ -37,6 +37,9 @@ import { getCurrentVersion, getGitBranch, getGitCommit } from './nodeUpdater';
 import { enforceTier } from './tierEnforcement';
 import { initCrypto, verifySig as verifySignature } from './relayCrypto';
 import type { RelayClient } from './types';
+import { TierManager } from './nodeTier';
+import { handleTierMessage } from './tierHandler';
+
 
 const PORT = parseInt(process.env.MUSTER_WS_PORT || '4002', 10);
 const MAX_MESSAGE_SIZE = 2 * 1024 * 1024;
@@ -54,8 +57,14 @@ const friendDB = new FriendDB(messageDB.getDatabase());
 const postDB = new PostDB(messageDB.getDatabase());
 const squadDB = new SquadDB(messageDB.getDatabase());
 const nodeDB = new NodeDB(messageDB.getDatabase());
+const tierManager = new TierManager(nodeDB);
+tierManager.autoHostAll(communityDB);
+tierManager.startPurgeScheduler(messageDB, dmDB);
+
 initNodeInfo(nodeDB);
 const peerManager = new PeerManager(nodeDB, messageDB, communityDB, dmDB, NODE_URL);
+tierManager.autoHostAll(communityDB);
+tierManager.startPurgeScheduler(messageDB, dmDB);
 const adminBot = new AdminBot({
   nodeDB, messageDB, communityDB, dmDB, userDB, fileDB, postDB, squadDB,
   sendToClient,
@@ -72,7 +81,8 @@ initCrypto().catch((err) => console.error('[relay] Crypto init failed:', err));
 const userCounts = userDB.getUserCount();
 const fileTotalKB = Math.round(fileDB.getTotalSize() / 1024);
 console.log(`[relay] ====================================`);
-console.log(`[relay]  Muster Relay Node (R18)`);
+console.log(`[relay]  Muster Relay Node (R21)`);
+console.log(`[relay]  Tier: ${tierManager.getTier()}`);
 console.log(`[relay]  Version: ${getCurrentVersion()} (${getGitBranch()}@${getGitCommit()})`);
 console.log(`[relay]  Node ID: ${nodeDB.getNodeId().slice(0, 20)}...`);
 console.log(`[relay]  Node URL: ${NODE_URL}`);
@@ -111,6 +121,7 @@ const FRIEND_TYPES = new Set(['SEND_FRIEND_REQUEST', 'RESPOND_FRIEND_REQUEST', '
 const POST_TYPES = new Set(['CREATE_POST', 'GET_POSTS', 'DELETE_POST', 'PIN_POST', 'ADD_COMMENT', 'GET_COMMENTS']);
 const SQUAD_TYPES = new Set(['CREATE_SQUAD', 'GET_SQUADS', 'INVITE_TO_SQUAD', 'LEAVE_SQUAD', 'KICK_FROM_SQUAD', 'DELETE_SQUAD', 'GET_SQUAD_MEMBERS', 'SUBSCRIBE_SQUAD', 'SEND_SQUAD_MESSAGE', 'SQUAD_HISTORY_REQUEST']);
 const VOICE_TYPES = new Set(['VOICE_JOIN', 'VOICE_LEAVE', 'VOICE_SIGNAL', 'VOICE_ICE_CANDIDATE', 'VOICE_MUTE']);
+const TIER_TYPES = new Set(['GET_STORAGE_STATS', 'STORAGE_PREFERENCE', 'CLEAR_CACHE']);
 
 function handleMessage(client: RelayClient, msg: any): void {
   // Peer-to-peer: handle node handshake (before auth check)
@@ -120,9 +131,10 @@ function handleMessage(client: RelayClient, msg: any): void {
   if (!requireAuth(client)) return;
 
   // Client requests list of known nodes
-  if (msg.type === 'GET_NODES') { sendToClient(client, { type: 'NODE_LIST', payload: { nodes: peerManager.getNodeList() }, timestamp: Date.now() }); return; }
+  if (msg.type === 'GET_NODES') { sendToClient(client, { type: 'NODE_LIST', payload: {tier: tierManager.getTier(), nodes: peerManager.getNodeList() }, timestamp: Date.now() }); return; }
   if (msg.type === 'GET_NODE_INFO' || msg.type === 'GET_NODE_PEERS') {
     handleNodeInfoRequest(client, msg, nodeDB, sendToClient);
+    
     return;
   }
 
@@ -161,6 +173,7 @@ function handleMessage(client: RelayClient, msg: any): void {
     if (msg.type === 'DM_CONVERSATIONS_REQUEST' && adminBot.isAdmin(client.publicKey)) {
       setTimeout(() => adminBot.sendWelcome(client), 200);
     }
+    if (TIER_TYPES.has(msg.type)) { handleTierMessage(client, msg, tierManager, messageDB, communityDB, dmDB, sendToClient); return; }
     return;
   }
 

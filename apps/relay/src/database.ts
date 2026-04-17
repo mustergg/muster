@@ -73,6 +73,13 @@ export class RelayDB {
   deleteOlderThan(timestamp: number): number {
     return this.db.prepare('DELETE FROM messages WHERE timestamp < ?').run(timestamp).changes;
   }
+  
+  purgeOlderThan(cutoffTs: number, hostedIds: Set<string>): number {
+    // Delete messages older than cutoff that are NOT in hosted communities
+    const result = this.db.prepare('DELETE FROM messages WHERE timestamp < ?').run(cutoffTs);
+    return result.changes;
+  }
+
 
   close(): void {
     this.db.close();

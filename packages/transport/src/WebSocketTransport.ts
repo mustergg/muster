@@ -21,6 +21,8 @@ export interface WebSocketTransportOptions {
   reconnectMaxDelay?: number;
   /** Maximum number of reconnect attempts before giving up (default: Infinity). */
   maxReconnectAttempts?: number;
+  /** Whether to auto-reconnect on disconnect (default: true). */
+  autoReconnect?: boolean;
 }
 
 export class WebSocketTransport
@@ -36,12 +38,14 @@ export class WebSocketTransport
   private readonly reconnectBaseDelay: number;
   private readonly reconnectMaxDelay: number;
   private readonly maxReconnectAttempts: number;
+  private readonly autoReconnect: boolean;
 
   constructor(options: WebSocketTransportOptions = {}) {
     super();
     this.reconnectBaseDelay = options.reconnectBaseDelay ?? 2000;
     this.reconnectMaxDelay = options.reconnectMaxDelay ?? 30000;
     this.maxReconnectAttempts = options.maxReconnectAttempts ?? Infinity;
+    this.autoReconnect = options.autoReconnect ?? true;
   }
 
   // ---------------------------------------------------------------
@@ -132,6 +136,7 @@ export class WebSocketTransport
 
   private scheduleReconnect(): void {
     if (this.intentionalClose) return;
+    if (!this.autoReconnect) return;
     if (this.reconnectAttempts >= this.maxReconnectAttempts) {
       console.warn('[transport] Max reconnect attempts reached — giving up');
       this.emit('error', new Error('Max reconnect attempts reached'));
