@@ -1,0 +1,11 @@
+{
+  "shell": {
+    "scope": {
+      "node": {
+        "name": "node",
+        "cmd": "node",
+        "args": true
+      }
+    }
+  }
+}
