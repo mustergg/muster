@@ -39,6 +39,8 @@ import { initCrypto, verifySig as verifySignature } from './relayCrypto';
 import type { RelayClient } from './types';
 import { TierManager } from './nodeTier';
 import { handleTierMessage } from './tierHandler';
+import { GroupKeyDB } from './groupKeyDB';
+import { handleGroupKeyMessage } from './groupKeyHandler';
 
 
 const PORT = parseInt(process.env.MUSTER_WS_PORT || '4002', 10);
@@ -49,6 +51,7 @@ const NODE_URL = process.env.MUSTER_NODE_URL || `ws://0.0.0.0:${PORT}`;
 const clients = new Map<WebSocket, RelayClient>();
 const channels = new Map<string, Set<WebSocket>>();
 const messageDB = new RelayDB();
+const groupKeyDB = new GroupKeyDB(messageDB.getDatabase());
 const communityDB = new CommunityDB(messageDB.getDatabase());
 const dmDB = new DMDB(messageDB.getDatabase());
 const userDB = new UserDB(messageDB.getDatabase());
@@ -63,8 +66,7 @@ tierManager.startPurgeScheduler(messageDB, dmDB);
 
 initNodeInfo(nodeDB);
 const peerManager = new PeerManager(nodeDB, messageDB, communityDB, dmDB, NODE_URL);
-tierManager.autoHostAll(communityDB);
-tierManager.startPurgeScheduler(messageDB, dmDB);
+
 const adminBot = new AdminBot({
   nodeDB, messageDB, communityDB, dmDB, userDB, fileDB, postDB, squadDB,
   sendToClient,
@@ -173,11 +175,18 @@ function handleMessage(client: RelayClient, msg: any): void {
     if (msg.type === 'DM_CONVERSATIONS_REQUEST' && adminBot.isAdmin(client.publicKey)) {
       setTimeout(() => adminBot.sendWelcome(client), 200);
     }
-    if (TIER_TYPES.has(msg.type)) { handleTierMessage(client, msg, tierManager, messageDB, communityDB, dmDB, sendToClient); return; }
     return;
   }
 
+  if (TIER_TYPES.has(msg.type)) { handleTierMessage(client, msg, tierManager, messageDB, communityDB, dmDB, sendToClient); return; }
   if (ROLE_TYPES.has(msg.type)) { handleRoleMessage(client, msg, communityDB, messageDB, sendToClient, clients, channels); return; }
+
+const GROUP_KEY_TYPES = new Set(['GROUP_KEY_REQUEST', 'GROUP_KEY_DISTRIBUTE', 'GROUP_KEY_ROTATE', 'GROUP_CRYPTO_CONFIG']);
+if (GROUP_KEY_TYPES.has(msg.type)) {
+  handleGroupKeyMessage(client, msg, groupKeyDB, communityDB, sendToClient, clients);
+  return;
+}
+
 
   switch (msg.type) {
     case 'SUBSCRIBE': handleSubscribe(client, msg); break;
