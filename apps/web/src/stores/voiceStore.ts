@@ -9,6 +9,9 @@
 import { create } from 'zustand';
 import { useNetworkStore } from './networkStore';
 import type { TransportMessage } from '@muster/transport';
+import { useNatStore } from './natStore';
+
+
 
 export interface VoiceParticipant {
   publicKey: string;
@@ -104,7 +107,8 @@ function createPeerConnection(
 ): RTCPeerConnection {
   const { transport, publicKey: myKey } = useNetworkStore.getState();
 
-  const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+const iceServers = useNatStore.getState().getIceServers();
+const pc = new RTCPeerConnection({ iceServers });
 
   // Add local tracks
   if (localStream) {

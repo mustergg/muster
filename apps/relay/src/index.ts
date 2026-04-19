@@ -41,6 +41,7 @@ import { TierManager } from './nodeTier';
 import { handleTierMessage } from './tierHandler';
 import { GroupKeyDB } from './groupKeyDB';
 import { handleGroupKeyMessage } from './groupKeyHandler';
+import { registerProxiedNode, handlePortCheck, getProxyStats } from './wsRelay';
 
 
 const PORT = parseInt(process.env.MUSTER_WS_PORT || '4002', 10);
@@ -126,6 +127,9 @@ const VOICE_TYPES = new Set(['VOICE_JOIN', 'VOICE_LEAVE', 'VOICE_SIGNAL', 'VOICE
 const TIER_TYPES = new Set(['GET_STORAGE_STATS', 'STORAGE_PREFERENCE', 'CLEAR_CACHE']);
 
 function handleMessage(client: RelayClient, msg: any): void {
+
+  if (msg.type === 'PORT_CHECK_REQUEST') { handlePortCheck(client, msg, sendToClient); return; }
+  
   // Peer-to-peer: handle node handshake (before auth check)
   if (msg.type === 'NODE_HANDSHAKE') { peerManager.handleInboundHandshake(client.ws, msg); return; }
 

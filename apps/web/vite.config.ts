@@ -43,7 +43,7 @@ nodePolyfills({
       transformMixedEsModules: true,
     },
     rollupOptions: {
-      external: ['vite-plugin-node-polyfills/shims/buffer'],
+      external: ['vite-plugin-node-polyfills/shims/buffer', '@tauri-apps/plugin-shell'],
     },
   },
 });

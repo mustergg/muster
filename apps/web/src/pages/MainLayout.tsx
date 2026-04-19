@@ -9,6 +9,8 @@ import FriendsPanel from '../components/FriendsPanel.js';
 import FeedView from '../components/FeedView.js';
 import SquadChatArea from '../components/SquadChatArea.js';
 import VerificationBanner from '../components/VerificationBanner.js';
+import SettingsPanel from '../components/SettingsPanel.js';
+import VoicePanel from '../components/VoicePanel.js';
 import { useNetworkStore } from '../stores/networkStore.js';
 import { useCommunityStore } from '../stores/communityStore.js';
 import { useAuthStore } from '../stores/authStore.js';
@@ -18,7 +20,11 @@ import { useFriendStore } from '../stores/friendStore.js';
 import { usePostStore } from '../stores/postStore.js';
 import { useSquadStore } from '../stores/squadStore.js';
 import { useVoiceStore } from '../stores/voiceStore.js';
-import VoicePanel from '../components/VoicePanel.js';
+import { useStorageStore } from '../stores/storageStore.js';
+import { useGroupCryptoStore } from '../stores/groupCryptoStore.js';
+// clientNodeStore is imported dynamically (only registers global, no init needed)
+import '../stores/clientNodeStore.js';
+import { useNatStore } from '../stores/natStore.js';
 
 export interface ActiveLocation {
   communityId: string;
@@ -43,13 +49,18 @@ export default function MainLayout(): React.JSX.Element {
     }
   }, [isAuthenticated]);
 
-  const chatInit      = useChatStore((s) => s.init);
-  const communityInit = useCommunityStore((s) => s.initRelay);
-  const dmInit        = useDMStore((s) => s.init);
-  const friendInit    = useFriendStore((s) => s.init);
-  const postInit      = usePostStore((s) => s.init);
-  const squadInit     = useSquadStore((s) => s.init);
-  const voiceInit     = useVoiceStore((s) => s.init);
+  const chatInit        = useChatStore((s) => s.init);
+  const communityInit   = useCommunityStore((s) => s.initRelay);
+  const dmInit          = useDMStore((s) => s.init);
+  const friendInit      = useFriendStore((s) => s.init);
+  const postInit        = usePostStore((s) => s.init);
+  const squadInit       = useSquadStore((s) => s.init);
+  const voiceInit       = useVoiceStore((s) => s.init);
+  const storageInit     = useStorageStore((s) => s.init);
+  const groupCryptoInit = useGroupCryptoStore((s) => s.init);
+  const natInit = useNatStore((s) => s.init);
+
+
   useEffect(() => {
     if (status === 'connected') {
       const c1 = chatInit();
@@ -59,8 +70,11 @@ export default function MainLayout(): React.JSX.Element {
       const c5 = postInit();
       const c6 = squadInit();
       const c7 = voiceInit();
+      const c8 = storageInit();
+      const c9 = groupCryptoInit();
+      const c10 = natInit(); 
       loadCommunities();
-      return () => { c1(); c2(); c3(); c4(); c5(); c6(); c7(); };
+      return () => { c1(); c2(); c3(); c4(); c5(); c6(); c7(); c8(); c9(); c10(); };
     }
     return undefined;
   }, [status]);
@@ -71,6 +85,7 @@ export default function MainLayout(): React.JSX.Element {
   const handleSelectDM = () => { setViewMode('dm'); setActiveCommunityId(null); setActive(null); };
   const handleSelectFriends = () => { setViewMode('friends'); setActiveCommunityId(null); setActive(null); setActiveDMPartner(null); };
   const handleSelectCommunity = (id: string) => { setViewMode('community'); setActiveCommunityId(id); setActiveDMPartner(null); };
+  const handleSelectSettings = () => { setViewMode('settings'); setActiveCommunityId(null); setActive(null); setActiveDMPartner(null); };
 
   // Determine what's active in the main area
   const isFeedActive = active?.channelId === '__feed__';
@@ -99,9 +114,13 @@ export default function MainLayout(): React.JSX.Element {
           onSelectDM={handleSelectDM}
           friendsActive={viewMode === 'friends'}
           onSelectFriends={handleSelectFriends}
+          settingsActive={viewMode === 'settings'}
+          onSelectSettings={handleSelectSettings}
         />
 
-        {viewMode === 'friends' ? (
+        {viewMode === 'settings' ? (
+          <SettingsPanel />
+        ) : viewMode === 'friends' ? (
           <div style={styles.main}>
             <FriendsPanel />
           </div>
