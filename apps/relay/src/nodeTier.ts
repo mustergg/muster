@@ -255,6 +255,44 @@ export class TierManager {
     }
   }
 
+  /**
+   * Purge messages for a single non-hosted community on demand.
+   * Returns the number of messages deleted, or -1 if the community is hosted
+   * (we never purge hosted content — that's the tier invariant).
+   */
+  purgeCommunity(communityId: string, messageDB: RelayDB, communityDB: CommunityDB): number {
+    if (this.isHosted(communityId)) return -1;
+
+    const channels = communityDB.getChannels(communityId);
+    let deleted = 0;
+    for (const ch of channels) {
+      const before = messageDB.getMessageCount();
+      messageDB.deleteMessagesByChannel(ch.id);
+      const after = messageDB.getMessageCount();
+      deleted += (before - after);
+    }
+    console.log(`[tier] Purged ${deleted} messages from community ${communityId.slice(0, 12)} (${channels.length} channels)`);
+    return deleted;
+  }
+
+  /**
+   * Purge messages from every non-hosted community on demand.
+   * Returns the number of messages deleted. Hosted communities are skipped.
+   */
+  purgeAllNonHosted(messageDB: RelayDB, communityDB: CommunityDB): number {
+    const allIds = communityDB.getAllCommunityIds();
+    let deleted = 0;
+    let touched = 0;
+    for (const id of allIds) {
+      if (this.isHosted(id)) continue;
+      const n = this.purgeCommunity(id, messageDB, communityDB);
+      if (n > 0) deleted += n;
+      if (n >= 0) touched++;
+    }
+    console.log(`[tier] Purge-all complete: ${deleted} messages across ${touched} non-hosted communities`);
+    return deleted;
+  }
+
   /** Run a purge cycle. */
   private runPurge(messageDB: RelayDB, dmDB: DMDB): void {
     if (this.config.tier === 'main' && this.config.defaultRetentionDays === 0) {

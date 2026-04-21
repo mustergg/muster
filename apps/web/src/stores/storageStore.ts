@@ -178,6 +178,17 @@ export const useStorageStore = create<StorageState>((set, get) => {
           const p = msg.payload as any;
           if (p.tier) set({ connectedNodeTier: p.tier });
         }
+
+        if (msg.type === 'CACHE_CLEARED') {
+          const p = msg.payload as any;
+          if (p.skipped === 'hosted') {
+            console.warn(`[storage] Cache not cleared for ${p.targetId?.slice?.(0, 12) || p.targetId}: community is hosted on this node.`);
+          } else {
+            console.log(`[storage] Cache cleared — purged ${p.purged || 0} messages (${p.targetId}).`);
+          }
+          // Refresh stats so the UI reflects the new totals.
+          get().requestStats();
+        }
       });
 
       // Request stats on init

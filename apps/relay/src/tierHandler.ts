@@ -42,16 +42,25 @@ export function handleTierMessage(
 
     case 'CLEAR_CACHE': {
       const { targetId, all } = msg.payload || {};
+      let purged = 0;
+      let skipped: string | null = null;
+
       if (all) {
         console.log(`[tier] User ${client.username} requested full cache clear`);
-        // Only clear non-hosted content
-        // Actual purge is handled by TierManager's purge scheduler
-      } else if (targetId) {
-        console.log(`[tier] User ${client.username} requested cache clear for: ${targetId}`);
+        purged = tierManager.purgeAllNonHosted(messageDB, communityDB);
+      } else if (typeof targetId === 'string' && targetId) {
+        console.log(`[tier] User ${client.username} requested cache clear for: ${targetId.slice(0, 12)}`);
+        const result = tierManager.purgeCommunity(targetId, messageDB, communityDB);
+        if (result < 0) {
+          skipped = 'hosted';
+        } else {
+          purged = result;
+        }
       }
+
       sendToClient(client, {
         type: 'CACHE_CLEARED',
-        payload: { targetId: targetId || 'all', success: true },
+        payload: { targetId: targetId || 'all', success: skipped === null, purged, skipped },
         timestamp: Date.now(),
       });
       break;
