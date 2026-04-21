@@ -53,11 +53,6 @@ let localStream: MediaStream | null = null;
 let audioContext: AudioContext | null = null;
 let analyser: AnalyserNode | null = null;
 
-const ICE_SERVERS: RTCIceServer[] = [
-  { urls: 'stun:stun.l.google.com:19302' },
-  { urls: 'stun:stun1.l.google.com:19302' },
-];
-
 /** Create audio element for remote stream. */
 function playRemoteStream(stream: MediaStream, publicKey: string): void {
   // Remove existing audio element for this peer
@@ -107,8 +102,8 @@ function createPeerConnection(
 ): RTCPeerConnection {
   const { transport, publicKey: myKey } = useNetworkStore.getState();
 
-const iceServers = useNatStore.getState().getIceServers();
-const pc = new RTCPeerConnection({ iceServers });
+  const iceServers = useNatStore.getState().getIceServers();
+  const pc = new RTCPeerConnection({ iceServers });
 
   // Add local tracks
   if (localStream) {
