@@ -9,6 +9,7 @@ node_modules/
 dist/
 build/
 *.tsbuildinfo
+apps/relay/bundle/
 
 # Environment files — NEVER commit these
 .env
