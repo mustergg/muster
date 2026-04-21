@@ -3,8 +3,9 @@
  * Only visible to admin+ roles.
  */
 
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useCommunityStore } from '../stores/communityStore.js';
+import { useGroupCryptoStore } from '../stores/groupCryptoStore.js';
 
 interface Props {
   communityId: string;
@@ -14,15 +15,71 @@ interface Props {
   onClose: () => void;
 }
 
+type CryptoBusy = null | 'enabling' | 'rotating';
+
 export default function EditChannelModal({ communityId, channelId, currentName, currentVisibility, onClose }: Props): React.JSX.Element {
-  const { editChannel } = useCommunityStore();
+  const { editChannel, members: allMembers, fetchCommunity, myRoles } = useCommunityStore();
+  const groupChannels = useGroupCryptoStore((s) => s.channels);
+  const setupEncryption = useGroupCryptoStore((s) => s.setupEncryption);
+  const rotateKey = useGroupCryptoStore((s) => s.rotateKey);
+
   const [name, setName] = useState(currentName);
   const [visibility, setVisibility] = useState(currentVisibility);
+  const [historyAccess, setHistoryAccess] = useState<'from_join' | 'from_now' | 'full'>('from_join');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [cryptoBusy, setCryptoBusy] = useState<CryptoBusy>(null);
+  const [cryptoError, setCryptoError] = useState<string | null>(null);
+
+  const members = allMembers[communityId] || [];
+  const myRole = myRoles[communityId] || '';
+  const canManageCrypto = myRole === 'owner' || myRole === 'admin';
+
+  const channelCrypto = groupChannels.get(channelId);
+  const encryptionEnabled = !!channelCrypto?.enabled;
+  const currentEpoch = channelCrypto?.currentEpoch ?? 0;
+
+  // Refresh members list on open so setupEncryption has the real roster.
+  useEffect(() => {
+    if (canManageCrypto) fetchCommunity(communityId);
+  }, [canManageCrypto, communityId, fetchCommunity]);
 
   const cleanName = name.trim().toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9_-]/g, '');
   const hasChanges = cleanName !== currentName || visibility !== currentVisibility;
+
+  const memberKeys = useMemo(() => members.map((m) => m.publicKey), [members]);
+
+  const handleEnableEncryption = async (): Promise<void> => {
+    setCryptoError(null);
+    if (memberKeys.length === 0) {
+      setCryptoError('No members loaded yet — try again in a moment.');
+      return;
+    }
+    setCryptoBusy('enabling');
+    try {
+      await setupEncryption(channelId, communityId, memberKeys, historyAccess);
+    } catch (err: unknown) {
+      setCryptoError(err instanceof Error ? err.message : 'Failed to enable encryption');
+    } finally {
+      setCryptoBusy(null);
+    }
+  };
+
+  const handleRotateKey = async (): Promise<void> => {
+    setCryptoError(null);
+    if (memberKeys.length === 0) {
+      setCryptoError('No members loaded yet — try again in a moment.');
+      return;
+    }
+    setCryptoBusy('rotating');
+    try {
+      await rotateKey(channelId, memberKeys, 'manual');
+    } catch (err: unknown) {
+      setCryptoError(err instanceof Error ? err.message : 'Failed to rotate key');
+    } finally {
+      setCryptoBusy(null);
+    }
+  };
 
   const handleSave = async (): Promise<void> => {
     if (!cleanName || !hasChanges) return;
@@ -87,6 +144,68 @@ export default function EditChannelModal({ communityId, channelId, currentName, 
             </div>
           </label>
 
+          {canManageCrypto && (
+            <div style={styles.cryptoSection}>
+              <div style={styles.sectionHeader}>
+                <span style={styles.sectionTitle}>End-to-end encryption</span>
+                {encryptionEnabled ? (
+                  <span style={styles.enabledBadge}>Enabled · epoch {currentEpoch}</span>
+                ) : (
+                  <span style={styles.disabledBadge}>Disabled</span>
+                )}
+              </div>
+
+              {!encryptionEnabled && (
+                <>
+                  <label style={styles.label}>
+                    History access for new members
+                    <div style={styles.optionRow}>
+                      {(['from_join', 'from_now', 'full'] as const).map((h) => (
+                        <button
+                          key={h}
+                          onClick={() => setHistoryAccess(h)}
+                          disabled={cryptoBusy !== null}
+                          style={{ ...styles.optionBtn, ...(historyAccess === h ? styles.optionActive : {}) }}
+                        >
+                          {h === 'from_join' ? 'From join' : h === 'from_now' ? 'From now' : 'Full'}
+                        </button>
+                      ))}
+                    </div>
+                  </label>
+                  <span style={styles.hint}>
+                    Keys will be distributed to {memberKeys.length} member{memberKeys.length === 1 ? '' : 's'}.
+                  </span>
+                  <button
+                    className="btn btn-primary"
+                    onClick={handleEnableEncryption}
+                    disabled={cryptoBusy !== null || memberKeys.length === 0}
+                    style={styles.cryptoBtn}
+                  >
+                    {cryptoBusy === 'enabling' ? 'Enabling…' : 'Enable encryption'}
+                  </button>
+                </>
+              )}
+
+              {encryptionEnabled && (
+                <>
+                  <span style={styles.hint}>
+                    Rotate the key to revoke access for removed members or after a suspected compromise.
+                  </span>
+                  <button
+                    className="btn btn-ghost"
+                    onClick={handleRotateKey}
+                    disabled={cryptoBusy !== null || memberKeys.length === 0}
+                    style={styles.cryptoBtn}
+                  >
+                    {cryptoBusy === 'rotating' ? 'Rotating…' : 'Rotate key'}
+                  </button>
+                </>
+              )}
+
+              {cryptoError && <p style={styles.error}>{cryptoError}</p>}
+            </div>
+          )}
+
           {error && <p style={styles.error}>{error}</p>}
         </div>
 
@@ -122,4 +241,11 @@ const styles = {
   optionActive: { borderColor: 'var(--color-accent)', color: 'var(--color-accent)' } as React.CSSProperties,
   error: { fontSize: '13px', color: 'var(--color-red)', padding: '8px 12px', background: 'rgba(240,96,96,0.08)', border: '1px solid rgba(240,96,96,0.3)', borderRadius: 'var(--radius-md)' } as React.CSSProperties,
   footer: { display: 'flex', justifyContent: 'flex-end', gap: '8px', padding: '16px 20px', borderTop: '1px solid var(--color-border)' } as React.CSSProperties,
+  cryptoSection: { display: 'flex', flexDirection: 'column' as const, gap: '10px', padding: '14px', background: 'var(--color-bg-input)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)' } as React.CSSProperties,
+  sectionHeader: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' } as React.CSSProperties,
+  sectionTitle: { fontSize: '13px', fontWeight: 600, color: 'var(--color-text-primary)' } as React.CSSProperties,
+  enabledBadge: { fontSize: '11px', color: 'var(--color-accent)', padding: '3px 8px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-accent)', fontFamily: 'var(--font-mono)' } as React.CSSProperties,
+  disabledBadge: { fontSize: '11px', color: 'var(--color-text-muted)', padding: '3px 8px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-border)' } as React.CSSProperties,
+  hint: { fontSize: '11px', color: 'var(--color-text-muted)' } as React.CSSProperties,
+  cryptoBtn: { alignSelf: 'flex-start' } as React.CSSProperties,
 } as const;

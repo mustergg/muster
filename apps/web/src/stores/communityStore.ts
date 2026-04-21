@@ -80,15 +80,25 @@ function loadFromLocalStorage(): Record<string, StoredCommunity> {
 // Store interface
 // =================================================================
 
+export interface CommunityMember {
+  publicKey: string;
+  username: string;
+  role: string;
+}
+
 interface CommunityState {
   communities: Record<string, StoredCommunity>;
   onlineMembers: Record<string, OnlineMember[]>;
+  /** Full member list per community (populated from COMMUNITY_DATA / COMMUNITY_MEMBER_UPDATE). */
+  members: Record<string, CommunityMember[]>;
   /** Current user's role in each community (populated from COMMUNITY_DATA). */
   myRoles: Record<string, string>;
 
   loadCommunities: () => void;
   createCommunity: (name: string, description?: string) => Promise<StoredCommunity>;
   joinCommunity: (communityId: string) => Promise<StoredCommunity>;
+  /** Request a fresh COMMUNITY_DATA (refreshes members and roles). */
+  fetchCommunity: (communityId: string) => void;
   generateInvite: (communityId: string) => string;
   subscribePresence: (communityId: string) => () => void;
   announcePresence: (communityId: string) => Promise<void>;
@@ -156,7 +166,7 @@ export const useCommunityStore = create<CommunityState>()((set, get) => {
 
       case 'COMMUNITY_DATA': {
         const community = (msg.payload as any).community as StoredCommunity;
-        const members = (msg.payload as any).members as Array<{ publicKey: string; username: string; role: string }>;
+        const members = (msg.payload as any).members as CommunityMember[];
 
         // Track current user's role
         const myKey = useNetworkStore.getState().publicKey;
@@ -167,6 +177,9 @@ export const useCommunityStore = create<CommunityState>()((set, get) => {
           saveToLocalStorage(updated);
           return {
             communities: updated,
+            members: members
+              ? { ...state.members, [community.id]: members }
+              : state.members,
             myRoles: myMember
               ? { ...state.myRoles, [community.id]: myMember.role }
               : state.myRoles,
@@ -248,16 +261,20 @@ export const useCommunityStore = create<CommunityState>()((set, get) => {
       case 'COMMUNITY_MEMBER_UPDATE': {
         const p = msg.payload as any;
         const communityId = p.communityId;
-        const members = p.members as Array<{ publicKey: string; username: string; role: string }>;
+        const members = p.members as CommunityMember[];
 
         // Update role if our role changed
         const myKey = useNetworkStore.getState().publicKey;
         const myMember = members?.find((m) => m.publicKey === myKey);
-        if (myMember) {
-          set((state) => ({
-            myRoles: { ...state.myRoles, [communityId]: myMember.role },
-          }));
-        }
+
+        set((state) => ({
+          members: members
+            ? { ...state.members, [communityId]: members }
+            : state.members,
+          myRoles: myMember
+            ? { ...state.myRoles, [communityId]: myMember.role }
+            : state.myRoles,
+        }));
         break;
       }
 
@@ -380,7 +397,14 @@ export const useCommunityStore = create<CommunityState>()((set, get) => {
   return {
     communities: {},
     onlineMembers: {},
+    members: {},
     myRoles: {},
+
+    fetchCommunity: (communityId: string) => {
+      const { transport } = useNetworkStore.getState();
+      if (!transport?.isConnected) return;
+      transport.send({ type: 'GET_COMMUNITY', payload: { communityId }, timestamp: Date.now() });
+    },
 
     loadCommunities: () => {
       const cached = loadFromLocalStorage();
