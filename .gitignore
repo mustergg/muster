@@ -1,6 +1,9 @@
 # Claude Settings
 .claude/
 
+# Local-only project status doc (not meant for the public repo)
+MUSTER_PROJECT_CONTEXT.md
+
 # Dependencies
 node_modules/
 .pnpm-store/
