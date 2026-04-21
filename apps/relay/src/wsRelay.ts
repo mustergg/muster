@@ -16,6 +16,7 @@
  */
 
 import { WebSocket } from 'ws';
+import { createConnection } from 'net';
 import type { RelayClient } from './types';
 
 // =================================================================
@@ -135,23 +136,68 @@ export function forwardToClient(
 // Port check handler
 // =================================================================
 
-/** Handle PORT_CHECK_REQUEST from a client — try to connect to their port. */
+/** Port probe timeout (ms). */
+const PORT_PROBE_TIMEOUT_MS = 5000;
+
+/** Normalize a remoteAddress (strips IPv4-mapped IPv6 prefix `::ffff:`). */
+function normalizeRemoteAddress(addr: string | undefined): string {
+  if (!addr) return '';
+  return addr.startsWith('::ffff:') ? addr.slice(7) : addr;
+}
+
+/** TCP-connect probe: resolves to true if the port accepts a connection within the timeout. */
+function probePort(host: string, port: number, timeoutMs: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (ok: boolean) => {
+      if (settled) return;
+      settled = true;
+      try { socket.destroy(); } catch { /* */ }
+      resolve(ok);
+    };
+
+    const socket = createConnection({ host, port, timeout: timeoutMs });
+    socket.once('connect', () => finish(true));
+    socket.once('timeout', () => finish(false));
+    socket.once('error', () => finish(false));
+  });
+}
+
+/**
+ * Handle PORT_CHECK_REQUEST from a client — probe the port from this relay.
+ *
+ * Target host is the client's remote IP (what the relay sees), optionally
+ * overridden by `payload.host` so clients with a public DNS name can check
+ * that specific name. This is a legitimate external probe whenever the relay
+ * is reached over the public internet; it degenerates to a LAN probe only
+ * when the relay and client share a network.
+ */
 export function handlePortCheck(
   client: RelayClient,
   msg: any,
   sendToClient: (c: RelayClient, m: Record<string, unknown>) => void,
 ): void {
-  const { port } = msg.payload || {};
-  if (!port) return;
+  const { port, host: hostOverride } = msg.payload || {};
+  if (!port || typeof port !== 'number') return;
 
-  // We can't reliably check from the relay itself (same network issues).
-  // Instead, report based on whether we've seen inbound connections from this IP.
-  // For a proper check, we'd need an external service.
-  // For now, return 'unknown' and let the client handle it.
-  sendToClient(client, {
-    type: 'PORT_CHECK_RESULT',
-    payload: { port, reachable: null, note: 'Port check requires external probe service (not yet implemented)' },
-    timestamp: Date.now(),
+  const remoteIp = normalizeRemoteAddress((client.ws as any)._socket?.remoteAddress);
+  const host = (typeof hostOverride === 'string' && hostOverride.trim()) || remoteIp;
+
+  if (!host) {
+    sendToClient(client, {
+      type: 'PORT_CHECK_RESULT',
+      payload: { port, reachable: null, note: 'Relay could not determine client address' },
+      timestamp: Date.now(),
+    });
+    return;
+  }
+
+  probePort(host, port, PORT_PROBE_TIMEOUT_MS).then((reachable) => {
+    sendToClient(client, {
+      type: 'PORT_CHECK_RESULT',
+      payload: { port, reachable, probedHost: host, timeoutMs: PORT_PROBE_TIMEOUT_MS },
+      timestamp: Date.now(),
+    });
   });
 }
 
