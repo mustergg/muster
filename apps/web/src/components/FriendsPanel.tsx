@@ -9,12 +9,18 @@
  * This component just refreshes data on mount.
  */
 
+
+
 import React, { useState, useEffect } from 'react';
 import { useFriendStore } from '../stores/friendStore.js';
 
+interface Props {
+  onOpenDM?: (publicKey: string) => void;
+}
+
 type Tab = 'friends' | 'requests' | 'blocked';
 
-export default function FriendsPanel(): React.JSX.Element {
+export default function FriendsPanel({ onOpenDM }: Props): React.JSX.Element {
   const {
     friends, incomingRequests, outgoingRequests, blockedUsers,
     lastMessage, loading,
@@ -24,6 +30,28 @@ export default function FriendsPanel(): React.JSX.Element {
 
   const [tab, setTab] = useState<Tab>('friends');
   const [addUsername, setAddUsername] = useState('');
+  const [viewingProfile, setViewingProfile] = useState<string | null>(null);
+  const [profileData, setProfileData] = useState<any>(null);
+
+  const viewProfile = (publicKey: string) => {
+    setViewingProfile(publicKey);
+    setProfileData(null);
+    const { transport } = (window as any).__network.getState();
+    if (transport?.isConnected) {
+      transport.send({ type: 'GET_PROFILE', payload: { publicKey }, timestamp: Date.now() });
+    }
+  };
+
+  // Listen for profile response
+  useEffect(() => {
+    if (!viewingProfile) return;
+    const unsub = (window as any).__network.getState().onMessage((msg: any) => {
+      if (msg.type === 'PROFILE_DATA' && msg.payload?.publicKey === viewingProfile) {
+        setProfileData(msg.payload);
+      }
+    });
+    return unsub;
+  }, [viewingProfile]);
 
   // Refresh data when panel opens (listener already active via MainLayout)
   useEffect(() => {
@@ -114,6 +142,20 @@ export default function FriendsPanel(): React.JSX.Element {
                 </div>
                 <div style={styles.actions}>
                   <button
+                    onClick={() => viewProfile(f.publicKey)}
+                    style={styles.btnAccept}
+                    title="View profile"
+                  >
+                    {'\u{1F464}'}
+                  </button>
+                  <button
+                    onClick={() => onOpenDM?.(f.publicKey)}
+                    style={styles.btnAccept}
+                    title="Send message"
+                  >
+                    DM
+                  </button>
+                  <button
                     onClick={() => { if (confirm(`Remove ${f.username} from friends?`)) removeFriend(f.publicKey); }}
                     style={styles.btnDanger}
                     title="Remove friend"
@@ -191,6 +233,34 @@ export default function FriendsPanel(): React.JSX.Element {
           )
         )}
       </div>
+          {/* Profile modal */}
+      {viewingProfile && (
+        <div style={profileStyles.overlay} onClick={() => setViewingProfile(null)}>
+          <div style={profileStyles.modal} onClick={(e) => e.stopPropagation()}>
+            <button onClick={() => setViewingProfile(null)} style={profileStyles.closeBtn}>{'\u{2715}'}</button>
+            {!profileData ? (
+              <div style={profileStyles.loading}>Loading profile...</div>
+            ) : (
+              <>
+                <div style={profileStyles.avatarLarge}>
+                  {(profileData.displayName || profileData.username || '?').slice(0, 2).toUpperCase()}
+                </div>
+                <div style={profileStyles.displayName}>{profileData.displayName || profileData.username}</div>
+                {profileData.displayName && <div style={profileStyles.username}>@{profileData.username}</div>}
+                {profileData.bio && <div style={profileStyles.bio}>{profileData.bio}</div>}
+                {profileData.location && <div style={profileStyles.field}>{'\u{1F4CD}'} {profileData.location}</div>}
+                {profileData.website && <div style={profileStyles.field}>{'\u{1F517}'} {profileData.website}</div>}
+                <div style={profileStyles.field}>{'\u{1F4C5}'} Joined {new Date(profileData.createdAt || 0).toLocaleDateString()}</div>
+                <div style={profileStyles.btnRow}>
+                  <button onClick={() => { onOpenDM?.(viewingProfile); setViewingProfile(null); }} style={profileStyles.dmBtn}>
+                    {'\u{1F4AC}'} Send Message
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -231,4 +301,17 @@ const styles = {
   btnDecline: { padding: '4px 10px', borderRadius: '6px', border: '1px solid var(--color-border)', background: 'transparent', color: 'var(--color-text-muted)', cursor: 'pointer', fontSize: '12px' } as React.CSSProperties,
   btnBlock: { padding: '4px 10px', borderRadius: '6px', border: '1px solid var(--color-border)', background: 'transparent', color: '#E24B4A', cursor: 'pointer', fontSize: '12px' } as React.CSSProperties,
   btnDanger: { width: '28px', height: '28px', borderRadius: '6px', border: '1px solid var(--color-border)', background: 'transparent', color: '#E24B4A', cursor: 'pointer', fontSize: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center' } as React.CSSProperties,
+} as const;
+const profileStyles = {
+  overlay: { position: 'fixed' as const, inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 } as React.CSSProperties,
+  modal: { background: 'var(--color-bg-secondary)', borderRadius: 'var(--radius-lg)', padding: '24px', minWidth: '300px', maxWidth: '400px', position: 'relative' as const, textAlign: 'center' as const } as React.CSSProperties,
+  closeBtn: { position: 'absolute' as const, top: '8px', right: '12px', background: 'transparent', border: 'none', color: 'var(--color-text-muted)', fontSize: '16px', cursor: 'pointer' } as React.CSSProperties,
+  loading: { padding: '32px', color: 'var(--color-text-muted)', fontSize: '13px' } as React.CSSProperties,
+  avatarLarge: { width: '72px', height: '72px', borderRadius: '50%', background: 'var(--color-bg-tertiary)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '24px', fontWeight: 700, color: 'var(--color-text-secondary)', margin: '0 auto 12px' } as React.CSSProperties,
+  displayName: { fontSize: '18px', fontWeight: 700, marginBottom: '2px' } as React.CSSProperties,
+  username: { fontSize: '13px', color: 'var(--color-text-muted)', marginBottom: '12px' } as React.CSSProperties,
+  bio: { fontSize: '13px', color: 'var(--color-text-secondary)', lineHeight: 1.5, marginBottom: '12px', padding: '0 8px' } as React.CSSProperties,
+  field: { fontSize: '12px', color: 'var(--color-text-muted)', marginBottom: '4px' } as React.CSSProperties,
+  btnRow: { marginTop: '16px', display: 'flex', justifyContent: 'center', gap: '8px' } as React.CSSProperties,
+  dmBtn: { padding: '8px 20px', border: 'none', borderRadius: 'var(--radius-md)', background: 'var(--color-accent)', color: '#fff', fontSize: '13px', fontWeight: 600, cursor: 'pointer' } as React.CSSProperties,
 } as const;

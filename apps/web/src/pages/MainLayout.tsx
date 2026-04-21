@@ -122,7 +122,7 @@ export default function MainLayout(): React.JSX.Element {
           <SettingsPanel />
         ) : viewMode === 'friends' ? (
           <div style={styles.main}>
-            <FriendsPanel />
+            <FriendsPanel onOpenDM={handleOpenDM} />
           </div>
         ) : viewMode === 'dm' ? (
           <>
