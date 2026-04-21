@@ -116,7 +116,7 @@ export class TierManager {
     }
 
     // Default to 'main' tier for existing nodes (backward compat)
-    const tierStr = this.nodeDB.getConfig('nodeTier') || 'main';
+    const tierStr = process.env.MUSTER_NODE_TIER || this.nodeDB.getConfig('nodeTier') || 'main';
     const tier = (['main', 'client', 'temp'].includes(tierStr) ? tierStr : 'main') as NodeTier;
     const defaults = DEFAULT_CONFIGS[tier];
 

@@ -16,6 +16,7 @@
     "postinstall": "node scripts/fix-webrtc-stub.js"
   },
   "devDependencies": {
+    "esbuild": "^0.28.0",
     "typescript": "^5.4.5"
   },
   "pnpm": {

@@ -17,6 +17,7 @@
     "@muster/protocol": "workspace:*",
     "@muster/transport": "workspace:*",
     "@noble/curves": "^2.0.1",
+    "@tauri-apps/api": "^2.10.1",
     "@tauri-apps/plugin-shell": "^2.3.5",
     "buffer": "^6.0.3",
     "i18next": "^23.11.5",

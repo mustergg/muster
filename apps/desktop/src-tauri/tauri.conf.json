@@ -7,7 +7,7 @@
     "frontendDist": "../../web/dist",
     "devUrl": "http://localhost:5173",
     "beforeDevCommand": "pnpm --filter @muster/web dev",
-    "beforeBuildCommand": "pnpm --filter @muster/web build"
+    "beforeBuildCommand": "pnpm --filter @muster/web build && pnpm --filter @muster/relay build && pnpm --filter @muster/web build"
 },
   "app": {
     "withGlobalTauri": true,
@@ -48,7 +48,9 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "resources": [],
+    "resources": {
+      "../../relay/bundle/": "relay/"
+    },
     "copyright": "© 2026 Muster.GG",
     "category": "SocialNetworking",
     "shortDescription": "Decentralized, privacy-first community platform",
@@ -77,12 +79,11 @@
       "providerShortName": null
     }
   },
-  "plugins": {
-"deep-link": {
-  "desktop": {
-    "schemes": ["muster"]
-  },
-  "mobile": []
-}
+"plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": ["muster"]
+      }
+    }
   }
 }
