@@ -13,10 +13,11 @@
     "build": "pnpm --filter './packages/**' build && pnpm --filter './apps/**' build",
     "test": "pnpm --filter './packages/**' test",
     "clean": "find . -name 'dist' -not -path '*/node_modules/*' | xargs rm -rf",
-    "postinstall": "node scripts/fix-webrtc-stub.js"
+    "postinstall": "node scripts/fix-webrtc-stub.js && node scripts/fetch-node-sidecar.js"
   },
   "devDependencies": {
     "esbuild": "^0.28.0",
+    "tar-fs": "^3.1.2",
     "typescript": "^5.4.5"
   },
   "pnpm": {

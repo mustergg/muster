@@ -51,6 +51,7 @@
     "resources": {
       "../../relay/bundle/": "relay/"
     },
+    "externalBin": ["bin/node"],
     "copyright": "© 2026 Muster.GG",
     "category": "SocialNetworking",
     "shortDescription": "Decentralized, privacy-first community platform",

@@ -14,6 +14,9 @@ build/
 *.tsbuildinfo
 apps/relay/bundle/
 
+# Bundled Node sidecar (fetched by scripts/fetch-node-sidecar.js)
+apps/desktop/src-tauri/bin/node-*
+
 # Environment files — NEVER commit these
 .env
 .env.local

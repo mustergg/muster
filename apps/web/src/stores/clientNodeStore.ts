@@ -139,29 +139,54 @@ async function spawnRelay(
   addLog(`[client-node] Starting relay on port ${config.port} (mode: ${config.mode})`);
   addLog(`[client-node] Entry: ${resolvedPath}`);
 
-  const command = Command.create('node', [resolvedPath], { env });
+  // Prefer the bundled Node sidecar — pinned to a known ABI (v22 LTS),
+  // independent of host Node install. Fall back to system "node" if the
+  // sidecar binary is absent for some reason (older builds).
+  let command: any;
+  try {
+    command = Command.sidecar('bin/node', [resolvedPath], { env });
+    addLog('[client-node] Using bundled Node runtime (v22 LTS)');
+  } catch (sidecarErr: any) {
+    addLog(`[client-node] Sidecar unavailable (${sidecarErr?.message || sidecarErr}); falling back to system node`);
+    command = Command.create('node', [resolvedPath], { env });
+  }
 
   command.on('close', (data: any) => {
     addLog(`[client-node] Relay process exited with code ${data.code}`);
     childProcess = null;
   });
 
+  let lastError: string | null = null;
   command.on('error', (error: string) => {
+    lastError = error;
     addLog(`[client-node] Error: ${error}`);
+  });
+
+  command.stderr.on('data', (line: string) => {
+    const text = line.trim();
+    if (text) lastError = text;
+    addLog(`[stderr] ${text}`);
   });
 
   command.stdout.on('data', (line: string) => {
     addLog(line.trim());
   });
 
-  command.stderr.on('data', (line: string) => {
-    addLog(`[stderr] ${line.trim()}`);
-  });
-
-  const child = await command.spawn();
-  childProcess = child;
-
-  return { pid: child.pid };
+  try {
+    const child = await command.spawn();
+    childProcess = child;
+    return { pid: child.pid };
+  } catch (err: any) {
+    const raw = err?.message || String(err);
+    addLog(`[client-node] Raw spawn error: ${raw}`);
+    if (lastError) addLog(`[client-node] Last stderr/error: ${lastError}`);
+    const hint = /ENOENT|not found|no such file|os error 2/i.test(raw)
+      ? ' — "node" not found on PATH. Install Node.js ≥20 and restart the app (or restart Explorer to refresh PATH).'
+      : lastError
+        ? ` — ${lastError}`
+        : ` — ${raw}`;
+    throw new Error(`Failed to spawn relay${hint}`);
+  }
 }
 
 async function killRelay(): Promise<void> {

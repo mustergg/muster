@@ -11,7 +11,7 @@
   },
   "dependencies": {
     "ws": "^8.16.0",
-    "better-sqlite3": "^11.7.0",
+    "better-sqlite3": "^12.9.0",
     "@muster/crypto": "workspace:*",
     "@muster/protocol": "workspace:*"
   },

@@ -22,11 +22,17 @@
     "shell:allow-open",
     {
       "identifier": "shell:allow-execute",
-      "allow": [{ "name": "node", "cmd": "node", "args": true }]
+      "allow": [
+        { "name": "node", "cmd": "node", "args": true },
+        { "name": "bin/node", "sidecar": true, "args": true }
+      ]
     },
     {
       "identifier": "shell:allow-spawn",
-      "allow": [{ "name": "node", "cmd": "node", "args": true }]
+      "allow": [
+        { "name": "node", "cmd": "node", "args": true },
+        { "name": "bin/node", "sidecar": true, "args": true }
+      ]
     },
     "shell:allow-stdin-write",
     "shell:allow-kill",
