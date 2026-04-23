@@ -4,6 +4,10 @@
 # Local-only project status doc (not meant for the public repo)
 MUSTER_PROJECT_CONTEXT.md
 
+# Private architecture notes — ARCHITECTURE.md is public, these are not
+docs/architecture/DECISIONS.md
+docs/roadmap/
+
 # Dependencies
 node_modules/
 .pnpm-store/
