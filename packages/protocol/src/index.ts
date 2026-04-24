@@ -69,3 +69,5 @@ export * from './group-crypto-messages.js';
 export * from './envelope.js';
 // R25 — Phase 2: signed community manifest
 export * from './manifest.js';
+// R25 — Phase 3: causal op log
+export * from './op.js';

@@ -115,7 +115,17 @@ export type Permission =
   | 'streams.end_any'
   | 'streams.configure_slots'
   | 'voice.deafen_others'
-  | 'voice.kick_from_voice';
+  | 'voice.kick_from_voice'
+  // ── R25 Phase 3 — manifest / op-log coarse-grained permissions ──
+  // Used by CommunityManifest admins + AdminOp authority checks.
+  // Coarser than the <domain>.<action> grants above; mapped 1:N to the
+  // granular perms during enforcement in later phases.
+  | 'manage_channels'
+  | 'manage_members'
+  | 'manage_roles'
+  | 'manage_manifest'
+  | 'seal_chunks'
+  | 'moderate_messages';
 
 // ─── Custom role ─────────────────────────────────────────────────────────────
 

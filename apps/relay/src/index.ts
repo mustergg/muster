@@ -50,6 +50,9 @@ import { runTwoLayerMigration } from './twoLayerMigration';
 // R25 — Phase 2: signed community manifests
 import { ManifestDB } from './manifestDB';
 import { handleManifestMessage } from './manifestHandler';
+// R25 — Phase 3: causal admin op log
+import { OpLogDB } from './opLogDB';
+import { handleOpMessage } from './opHandler';
 
 
 const PORT = parseInt(process.env.MUSTER_WS_PORT || '4002', 10);
@@ -82,9 +85,11 @@ const TWO_LAYER_ENABLED = process.env.MUSTER_TWO_LAYER === '1';
 const envelopeDB = TWO_LAYER_ENABLED ? new EnvelopeDB(messageDB.getDatabase()) : null;
 const blobDB = TWO_LAYER_ENABLED ? new BlobDB(messageDB.getDatabase()) : null;
 const manifestDB = TWO_LAYER_ENABLED ? new ManifestDB(messageDB.getDatabase()) : null;
+const opLogDB = TWO_LAYER_ENABLED ? new OpLogDB(messageDB.getDatabase()) : null;
 if (TWO_LAYER_ENABLED) {
   console.log('[relay] Two-layer envelope+blob model ENABLED (MUSTER_TWO_LAYER=1)');
   console.log(`[relay]   manifests on file: ${manifestDB?.count() ?? 0}`);
+  console.log(`[relay]   admin ops on file: ${opLogDB?.count() ?? 0}`);
   try {
     const r = runTwoLayerMigration(messageDB.getDatabase());
     if (r.ran) {
@@ -166,8 +171,9 @@ function handleMessage(client: RelayClient, msg: any): void {
   if (!requireAuth(client)) return;
 
   // R25 — two-layer dispatch (gated). Falls through to legacy when disabled.
-  if (TWO_LAYER_ENABLED && envelopeDB && blobDB && manifestDB) {
+  if (TWO_LAYER_ENABLED && envelopeDB && blobDB && manifestDB && opLogDB) {
     if (handleManifestMessage(client, msg, manifestDB, sendToClient, clients)) return;
+    if (handleOpMessage(client, msg, opLogDB, manifestDB, sendToClient, clients)) return;
     if (handleEnvelopeMessage(client, msg, envelopeDB, blobDB, manifestDB, sendToClient, channels, clients)) return;
   }
 
