@@ -67,3 +67,5 @@ export * from './group-crypto-messages.js';
 
 // R25 — Phase 1: two-layer envelope + blob model
 export * from './envelope.js';
+// R25 — Phase 2: signed community manifest
+export * from './manifest.js';

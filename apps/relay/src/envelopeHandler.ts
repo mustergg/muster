@@ -31,10 +31,15 @@ import {
   MAX_INLINE_CIPHERTEXT,
   MAX_MIME_LEN,
   type Envelope,
+  manifestFromCborMap,
+  isAdmin,
+  findChannel,
+  type CommunityManifest,
 } from '@muster/protocol';
 import type { RelayClient } from './types';
 import type { EnvelopeDB } from './envelopeDB';
 import type { BlobDB } from './blobDB';
+import type { ManifestDB } from './manifestDB';
 
 type Send = (client: RelayClient, msg: any) => void;
 
@@ -44,6 +49,7 @@ export function handleEnvelopeMessage(
   msg: any,
   envelopeDB: EnvelopeDB,
   blobDB: BlobDB,
+  manifestDB: ManifestDB | null,
   sendToClient: Send,
   channels: Map<string, Set<WebSocket>>,
   clients: Map<WebSocket, RelayClient>,
@@ -51,7 +57,7 @@ export function handleEnvelopeMessage(
   switch (msg.type) {
     case 'ENVELOPE':
       // Fire and forget — async signature verification.
-      void handleEnvelope(client, msg, envelopeDB, blobDB, sendToClient, channels, clients);
+      void handleEnvelope(client, msg, envelopeDB, blobDB, manifestDB, sendToClient, channels, clients);
       return true;
     case 'ENVELOPE_HISTORY':
       handleEnvelopeHistory(client, msg, envelopeDB, sendToClient);
@@ -77,6 +83,7 @@ async function handleEnvelope(
   msg: any,
   envelopeDB: EnvelopeDB,
   blobDB: BlobDB,
+  manifestDB: ManifestDB | null,
   sendToClient: Send,
   channels: Map<string, Set<WebSocket>>,
   clients: Map<WebSocket, RelayClient>,
@@ -118,6 +125,27 @@ async function handleEnvelope(
   const now = Date.now();
   if (Math.abs(env.ts - now) > CLOCK_SKEW_MS) {
     return reject(client, sendToClient, msg, 'ts out of window');
+  }
+
+  // 4b. R25 — Phase 2. Gate on the latest signed manifest when the
+  // relay has one on file. Missing manifest → accept (Phase 1 fallback
+  // so legacy + freshly-migrated envelopes stay deliverable). Present
+  // manifest → channel MUST exist and sender MUST be owner/admin.
+  // Full member-list enforcement lands in Phase 3 when the op log
+  // binds member_invite/kick ops to the manifest.
+  if (manifestDB) {
+    const manifest = resolveManifestForEnvelope(env, manifestDB);
+    if (manifest) {
+      const channel = findChannel(manifest, env.channelId);
+      if (!channel) {
+        return reject(client, sendToClient, msg, 'unknown channel');
+      }
+      if (!isAdmin(manifest, env.senderPubkey)) {
+        // Member-check TODO(Phase 3). For now, admins+owner only when a
+        // manifest is published for the community.
+        return reject(client, sendToClient, msg, 'sender not in admin roster');
+      }
+    }
   }
 
   // 5. Body shape sanity (community membership/channel-exists checks
@@ -337,4 +365,20 @@ async function verifyEnvelopeSig(env: Envelope): Promise<boolean> {
 function base64Decode(s: string): Uint8Array {
   // Node has Buffer; browser path is not used here (this is the relay).
   return new Uint8Array(Buffer.from(s, 'base64'));
+}
+
+/**
+ * Lookup + decode the latest manifest for an envelope's community. Returns
+ * null when the community has no manifest on file — callers treat that as
+ * "Phase 1 fallback, accept without manifest gate".
+ */
+function resolveManifestForEnvelope(env: Envelope, manifestDB: ManifestDB): CommunityManifest | null {
+  const row = manifestDB.getLatest(Buffer.from(env.communityId));
+  if (!row) return null;
+  try {
+    const map = decodeCanonical(new Uint8Array(row.cbor)) as Record<string, unknown>;
+    return manifestFromCborMap(map);
+  } catch {
+    return null;
+  }
 }
