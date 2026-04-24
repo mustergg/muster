@@ -19,6 +19,7 @@ import {
   fromHex,
   toHex,
   pieceId as computePieceId,
+  merkleProof,
   PIECE_SIZE,
   sha256,
   verify as ed25519Verify,
@@ -299,11 +300,45 @@ function handlePieceRequest(
   blobDB: BlobDB,
   sendToClient: Send,
 ): void {
-  const pieceIdHex = msg.payload?.pieceId;
-  if (typeof pieceIdHex !== 'string' || !/^[0-9a-f]+$/i.test(pieceIdHex)) {
-    return reject(client, sendToClient, msg, 'bad pieceId');
+  // Phase 4: accept EITHER (pieceId) OR (blobRoot, pieceIdx). The idx form is
+  // how web callers fetch pieces since they only have a BlobRef, not the
+  // list of pieceIds. Relay resolves idx → pieceId via blob_pieces.
+  const rawPieceIdHex: string | undefined = msg.payload?.pieceId;
+  const blobRootHex: string | undefined = msg.payload?.blobRoot;
+  const rawPieceIdxIn: number | undefined = typeof msg.payload?.pieceIdx === 'number'
+    ? msg.payload.pieceIdx : undefined;
+
+  let pieceIdHex: string | null = null;
+  let pieceIdBytes: Buffer | null = null;
+  let resolvedIdx: number | undefined = rawPieceIdxIn;
+
+  if (typeof rawPieceIdHex === 'string' && /^[0-9a-f]+$/i.test(rawPieceIdHex)) {
+    pieceIdHex = rawPieceIdHex.toLowerCase();
+    pieceIdBytes = Buffer.from(fromHex(pieceIdHex));
+  } else if (
+    typeof blobRootHex === 'string' && /^[0-9a-f]+$/i.test(blobRootHex)
+    && typeof rawPieceIdxIn === 'number' && rawPieceIdxIn >= 0
+  ) {
+    const rootBuf = Buffer.from(fromHex(blobRootHex));
+    const links = blobDB.getBlobPieces(rootBuf);
+    const hit = links.find((l) => l.pieceIdx === rawPieceIdxIn);
+    if (hit) {
+      pieceIdBytes = Buffer.from(hit.pieceId);
+      pieceIdHex = pieceIdBytes.toString('hex');
+      resolvedIdx = hit.pieceIdx;
+    } else {
+      sendToClient(client, {
+        type: 'PIECE_RESPONSE',
+        payload: { blobRoot: blobRootHex, pieceIdx: rawPieceIdxIn, notHave: true },
+        timestamp: Date.now(),
+      });
+      return;
+    }
+  } else {
+    return reject(client, sendToClient, msg, 'bad pieceId/(blobRoot,pieceIdx)');
   }
-  const piece = blobDB.getPiece(Buffer.from(fromHex(pieceIdHex)));
+
+  const piece = blobDB.getPiece(pieceIdBytes);
   if (!piece) {
     sendToClient(client, {
       type: 'PIECE_RESPONSE',
@@ -312,9 +347,44 @@ function handlePieceRequest(
     });
     return;
   }
+
+  // Optional Merkle proof — requested by `payload.blobRoot` + `withProof:true`.
+  // A piece can belong to multiple blobs (dedup); callers pick the blob they
+  // want the proof against. Without blobRoot we return raw bytes only
+  // (backward compat with Phase 1 clients).
+  let proofField: unknown = undefined;
+  let totalPieces: number | undefined;
+  let pieceIdx: number | undefined = resolvedIdx;
+
+  if (msg.payload?.withProof === true && typeof blobRootHex === 'string' && /^[0-9a-f]+$/i.test(blobRootHex)) {
+    const rootBuf = Buffer.from(fromHex(blobRootHex));
+    const blob = blobDB.getBlob(rootBuf);
+    const links = blob ? blobDB.getBlobPieces(rootBuf) : [];
+    const hit = links.find((l) => l.pieceId.equals(pieceIdBytes!));
+    if (blob && hit) {
+      // Rebuild leaves from piece ids in order — blobDB guarantees ordered links.
+      const leaves = links.map((l) => new Uint8Array(l.pieceId));
+      const proof = merkleProof(leaves, hit.pieceIdx);
+      proofField = proof.map((p) => Buffer.from(p).toString('base64'));
+      totalPieces = blob.pieceCount;
+      pieceIdx = hit.pieceIdx;
+    }
+  }
+
+  const payload: Record<string, unknown> = {
+    pieceId: pieceIdHex,
+    bytes: piece.bytes.toString('base64'),
+  };
+  if (pieceIdx !== undefined) payload.pieceIdx = pieceIdx;
+  if (blobRootHex !== undefined) payload.blobRoot = blobRootHex;
+  if (proofField !== undefined) {
+    payload.proof = proofField;
+    payload.totalPieces = totalPieces;
+  }
+
   sendToClient(client, {
     type: 'PIECE_RESPONSE',
-    payload: { pieceId: pieceIdHex, bytes: piece.bytes.toString('base64') },
+    payload,
     timestamp: Date.now(),
   });
 }
