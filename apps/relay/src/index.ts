@@ -42,6 +42,11 @@ import { handleTierMessage } from './tierHandler';
 import { GroupKeyDB } from './groupKeyDB';
 import { handleGroupKeyMessage } from './groupKeyHandler';
 import { registerProxiedNode, handlePortCheck, getProxyStats } from './wsRelay';
+// R25 — Phase 1: two-layer envelope + blob model (gated by MUSTER_TWO_LAYER=1)
+import { EnvelopeDB } from './envelopeDB';
+import { BlobDB } from './blobDB';
+import { handleEnvelopeMessage } from './envelopeHandler';
+import { runTwoLayerMigration } from './twoLayerMigration';
 
 
 const PORT = parseInt(process.env.MUSTER_WS_PORT || '4002', 10);
@@ -67,6 +72,25 @@ tierManager.startPurgeScheduler(messageDB, dmDB);
 
 initNodeInfo(nodeDB);
 const peerManager = new PeerManager(nodeDB, messageDB, communityDB, dmDB, NODE_URL);
+
+// R25 — Phase 1: two-layer envelope/blob storage. Disabled by default;
+// flip MUSTER_TWO_LAYER=1 to enable the new path alongside the legacy one.
+const TWO_LAYER_ENABLED = process.env.MUSTER_TWO_LAYER === '1';
+const envelopeDB = TWO_LAYER_ENABLED ? new EnvelopeDB(messageDB.getDatabase()) : null;
+const blobDB = TWO_LAYER_ENABLED ? new BlobDB(messageDB.getDatabase()) : null;
+if (TWO_LAYER_ENABLED) {
+  console.log('[relay] Two-layer envelope+blob model ENABLED (MUSTER_TWO_LAYER=1)');
+  try {
+    const r = runTwoLayerMigration(messageDB.getDatabase());
+    if (r.ran) {
+      console.log(`[relay] two-layer migration: imported=${r.imported} skipped=${r.skipped} (${r.durationMs}ms)`);
+    } else {
+      console.log('[relay] two-layer migration: already applied');
+    }
+  } catch (err) {
+    console.error('[relay] two-layer migration FAILED:', err);
+  }
+}
 
 const adminBot = new AdminBot({
   nodeDB, messageDB, communityDB, dmDB, userDB, fileDB, postDB, squadDB,
@@ -135,6 +159,11 @@ function handleMessage(client: RelayClient, msg: any): void {
 
   if (msg.type === 'AUTH_RESPONSE') { handleAuth(client, msg); return; }
   if (!requireAuth(client)) return;
+
+  // R25 — two-layer dispatch (gated). Falls through to legacy when disabled.
+  if (TWO_LAYER_ENABLED && envelopeDB && blobDB) {
+    if (handleEnvelopeMessage(client, msg, envelopeDB, blobDB, sendToClient, channels, clients)) return;
+  }
 
   // Client requests list of known nodes
   if (msg.type === 'GET_NODES') { sendToClient(client, { type: 'NODE_LIST', payload: {tier: tierManager.getTier(), nodes: peerManager.getNodeList() }, timestamp: Date.now() }); return; }

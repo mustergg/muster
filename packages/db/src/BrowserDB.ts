@@ -12,11 +12,23 @@
  */
 
 import Dexie, { type Table } from 'dexie';
-import type { DBMessage, DBChannelSync } from './types';
+import type {
+  DBMessage,
+  DBChannelSync,
+  DBEnvelope,
+  DBBlob,
+  DBPiece,
+  DBBlobPiece,
+} from './types';
 
 export class BrowserDB extends Dexie {
   messages!: Table<DBMessage, string>;
   channelSync!: Table<DBChannelSync, string>;
+  // R25 — Phase 1: two-layer envelope + blob caches.
+  envelopes!: Table<DBEnvelope, string>;
+  blobs!: Table<DBBlob, string>;
+  pieces!: Table<DBPiece, string>;
+  blobPieces!: Table<DBBlobPiece, string>;
 
   constructor() {
     super('muster-db');
@@ -28,6 +40,16 @@ export class BrowserDB extends Dexie {
 
       // channelId is the primary key
       channelSync: 'channelId',
+    });
+
+    // R25 — Phase 1: add envelope + blob + piece tables. Old data preserved.
+    this.version(2).stores({
+      messages: 'messageId, channel, timestamp, [channel+timestamp]',
+      channelSync: 'channelId',
+      envelopes: 'envelopeId, channelId, communityId, ts, blobRoot, [channelId+ts]',
+      blobs: 'root, firstSeenAt',
+      pieces: 'pieceId, lastAccessedAt',
+      blobPieces: 'key, root, pieceId',
     });
   }
 
@@ -115,5 +137,87 @@ export class BrowserDB extends Dexie {
   /** Update the last sync timestamp for a channel. */
   async setLastSyncTimestamp(channel: string, timestamp: number): Promise<void> {
     await this.channelSync.put({ channelId: channel, lastSyncTimestamp: timestamp });
+  }
+
+  // =================================================================
+  // R25 — Phase 1: envelopes, blobs, pieces
+  // =================================================================
+
+  /** Cache a received envelope. Silently ignores duplicates. */
+  async addEnvelope(env: DBEnvelope): Promise<void> {
+    try {
+      await this.envelopes.put(env);
+    } catch (err) {
+      console.warn('[db] addEnvelope failed:', err);
+    }
+  }
+
+  async getEnvelope(envelopeId: string): Promise<DBEnvelope | undefined> {
+    return this.envelopes.get(envelopeId);
+  }
+
+  /** Get envelopes for a channel, ts-ascending, optionally since a cutoff. */
+  async getEnvelopesByChannel(channelId: string, since: number = 0, limit: number = 500): Promise<DBEnvelope[]> {
+    try {
+      const arr = await this.envelopes
+        .where('[channelId+ts]')
+        .between([channelId, since], [channelId, Infinity])
+        .limit(limit)
+        .sortBy('ts');
+      return arr;
+    } catch (err) {
+      console.warn('[db] getEnvelopesByChannel failed:', err);
+      return [];
+    }
+  }
+
+  async setEnvelopeBlobStatus(envelopeId: string, status: 'pending' | 'ready' | 'failed'): Promise<void> {
+    await this.envelopes.update(envelopeId, { blobStatus: status });
+  }
+
+  async clearEnvelopesByChannel(channelId: string): Promise<void> {
+    await this.envelopes.where('channelId').equals(channelId).delete();
+  }
+
+  // ── Blobs ────────────────────────────────────────────────────────
+
+  async putBlob(blob: DBBlob): Promise<void> {
+    await this.blobs.put(blob);
+  }
+
+  async getBlob(root: string): Promise<DBBlob | undefined> {
+    return this.blobs.get(root);
+  }
+
+  // ── Pieces ───────────────────────────────────────────────────────
+
+  async putPiece(piece: DBPiece): Promise<void> {
+    await this.pieces.put(piece);
+  }
+
+  async getPiece(pieceId: string): Promise<DBPiece | undefined> {
+    const p = await this.pieces.get(pieceId);
+    if (p) {
+      // Touch LRU.
+      await this.pieces.update(pieceId, { lastAccessedAt: Date.now() });
+    }
+    return p;
+  }
+
+  async hasPiece(pieceId: string): Promise<boolean> {
+    return (await this.pieces.where('pieceId').equals(pieceId).count()) > 0;
+  }
+
+  async linkBlobPiece(root: string, pieceIdx: number, pieceId: string): Promise<void> {
+    await this.blobPieces.put({
+      key: `${root}:${pieceIdx}`,
+      root,
+      pieceIdx,
+      pieceId,
+    });
+  }
+
+  async getBlobPieces(root: string): Promise<DBBlobPiece[]> {
+    return this.blobPieces.where('root').equals(root).sortBy('pieceIdx');
   }
 }

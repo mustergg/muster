@@ -12,12 +12,18 @@
 
 import { create } from 'zustand';
 import { useNetworkStore } from './networkStore';
+import { useGroupCryptoStore } from './groupCryptoStore';
 import { BrowserDB, type DBMessage } from '@muster/db';
-import { sign as ed25519Sign, toHex } from '@muster/crypto';
+import { sign as ed25519Sign, toHex, sha256, fromHex, decodeCanonical } from '@muster/crypto';
 import type { TransportMessage } from '@muster/transport';
+// R25 — Phase 1: two-layer envelope path (gated by VITE_TWO_LAYER=1).
+import { buildEnvelope, sendBuiltEnvelope } from '../lib/envelope';
+import { fromCborMap } from '@muster/protocol';
 
 const encoder = new TextEncoder();
 const FILE_PREFIX = '__FILE__';
+
+const TWO_LAYER_ENABLED = (import.meta as any).env?.VITE_TWO_LAYER === '1';
 
 async function signPayload(payload: string, privateKey: Uint8Array): Promise<string> {
   const sigBytes = await ed25519Sign(encoder.encode(payload), privateKey);
@@ -99,6 +105,69 @@ function dbMsgToChatMsg(msg: DBMessage, myKey: string): ChatMessage {
   };
 }
 
+// ── R25 — Phase 1 envelope helpers ─────────────────────────────────────────
+
+/** Map a legacy channel string id to a 32-byte canonical channelId. */
+function channelIdBytes(channel: string): Uint8Array {
+  return sha256(new TextEncoder().encode(`channel:${channel}`));
+}
+
+/** Same idea for community ids until Phase 2 wires real signed manifests. */
+function communityIdBytesFromChannel(channel: string): Uint8Array {
+  // Legacy data has no real community id. Derive a stable surrogate.
+  return sha256(new TextEncoder().encode(`legacy-community:${channel.slice(0, 4)}`));
+}
+
+/**
+ * Build + send an envelope for `content` on `channel`. Uses the channel's
+ * group key when E2E is enabled; otherwise falls back to a sentinel "no-op"
+ * key so the wire shape is exercised end-to-end during rollout.
+ */
+async function sendAsEnvelope(
+  channel: string,
+  content: string,
+  senderPublicKeyHex: string,
+  privateKey: Uint8Array,
+): Promise<void> {
+  const network = useNetworkStore.getState();
+  if (!network.transport?.isConnected) return;
+
+  const groupCrypto = useGroupCryptoStore.getState();
+  const epoch = groupCrypto.channels.get(channel)?.currentEpoch ?? 0;
+
+  const senderPubkey = fromHex(senderPublicKeyHex);
+
+  const built = await buildEnvelope({
+    communityId: communityIdBytesFromChannel(channel),
+    channelId: channelIdBytes(channel),
+    senderPubkey,
+    senderPrivkey: privateKey,
+    kind: 'text',
+    payload: content,
+    epoch,
+    encryptBody: async (plaintext) => {
+      // Prefer the channel's group key. If none, use a per-message random
+      // key (still correct AES-GCM, just not group-decryptable). Recipients
+      // without the key see ciphertext they can't open — fine for the
+      // shadow path during rollout.
+      const enc = await groupCrypto.encrypt(channel, new TextDecoder().decode(plaintext));
+      if (enc) return { ciphertext: fromHex(enc.ciphertext), nonce: fromHex(enc.nonce) };
+      const nonce = crypto.getRandomValues(new Uint8Array(12));
+      const key = crypto.getRandomValues(new Uint8Array(32));
+      const ck = await crypto.subtle.importKey('raw', key.buffer as ArrayBuffer, 'AES-GCM', false, ['encrypt']);
+      const ct = new Uint8Array(
+        await crypto.subtle.encrypt({ name: 'AES-GCM', iv: nonce.buffer as ArrayBuffer }, ck, plaintext.buffer as ArrayBuffer),
+      );
+      return { ciphertext: ct, nonce };
+    },
+  });
+
+  await sendBuiltEnvelope({
+    send: (m) => network.transport!.send(m),
+    isConnected: network.transport.isConnected,
+  }, built);
+}
+
 export const useChatStore = create<ChatState>((set, get) => ({
   messages: {},
   presence: {},
@@ -154,6 +223,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
       });
     } else {
       network.transport!.send({ type: 'PUBLISH', payload, timestamp, signature: '', senderPublicKey: network.publicKey });
+    }
+
+    // R25 — Phase 1: dual-write through the envelope path so the relay can
+    // exercise verification + storage. Legacy PUBLISH stays the source of
+    // truth until the migration cutover (Phase 10).
+    if (TWO_LAYER_ENABLED && privateKey) {
+      void sendAsEnvelope(channel, content, network.publicKey, privateKey).catch((err) => {
+        console.warn('[chat] envelope dual-write failed:', err);
+      });
     }
   },
 
@@ -245,6 +323,39 @@ export const useChatStore = create<ChatState>((set, get) => ({
         case 'PRESENCE': {
           const p = msg.payload as any;
           set((state) => ({ presence: { ...state.presence, [p.channel]: p.users || [] } }));
+          break;
+        }
+
+        // R25 — Phase 1 shadow path. Cache the envelope so the next phase
+        // can render straight from it. Doesn't yet replace 'MESSAGE'.
+        case 'ENVELOPE': {
+          if (!TWO_LAYER_ENABLED) break;
+          const cborB64 = (msg as any).payload?.cbor;
+          if (typeof cborB64 !== 'string') break;
+          try {
+            const bin = Uint8Array.from(atob(cborB64), (c) => c.charCodeAt(0));
+            const map = decodeCanonical(bin) as Record<string, unknown>;
+            const env = fromCborMap(map);
+            const id = sha256(bin);
+            void browserDB.addEnvelope({
+              envelopeId: toHex(id),
+              communityId: toHex(env.communityId),
+              channelId: toHex(env.channelId),
+              senderPubkey: toHex(env.senderPubkey),
+              ts: env.ts,
+              kind: env.kind,
+              hasBlob: env.body.inline ? 0 : 1,
+              blobRoot: env.body.inline ? undefined : toHex((env.body as any).blobRef.root),
+              replyTo: env.replyTo ? toHex(env.replyTo) : undefined,
+              edits: env.edits ? toHex(env.edits) : undefined,
+              tombstones: env.tombstones ? toHex(env.tombstones) : undefined,
+              cborB64,
+              receivedAt: Date.now(),
+              blobStatus: env.body.inline ? 'ready' : 'pending',
+            });
+          } catch (err) {
+            console.warn('[chat] envelope cache failed:', err);
+          }
           break;
         }
       }

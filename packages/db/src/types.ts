@@ -40,3 +40,64 @@ export interface DBChannelSync {
   /** Timestamp of the last successfully synced message. */
   lastSyncTimestamp: number;
 }
+
+// R25 — Phase 1: two-layer envelope + blob caching. See docs/specs/.
+
+/** A cached Envelope (signed metadata). Ciphertext body is inside `cborB64`. */
+export interface DBEnvelope {
+  /** hex(envelopeId) — primary key. */
+  envelopeId: string;
+  /** hex(communityId). Indexed. */
+  communityId: string;
+  /** hex(channelId). Indexed. */
+  channelId: string;
+  /** hex(senderPubkey). */
+  senderPubkey: string;
+  /** Milliseconds since Unix epoch. Indexed. */
+  ts: number;
+  kind: 'text' | 'voice' | 'file' | 'image' | 'edit' | 'tombstone' | 'system';
+  /** True if body is inline ciphertext; false for blob-ref bodies. */
+  hasBlob: 0 | 1;
+  /** hex(blobRoot) when hasBlob===1, else undefined. Indexed. */
+  blobRoot?: string;
+  replyTo?: string;
+  edits?: string;
+  tombstones?: string;
+  /** base64(canonicalCBOR(envelope)) — re-serialised on send, authoritative on verify. */
+  cborB64: string;
+  /** When this envelope was received locally (for UI ordering when ts is equal). */
+  receivedAt: number;
+  /** UI placeholder state for envelopes whose blob is still being fetched. */
+  blobStatus?: 'pending' | 'ready' | 'failed';
+}
+
+/** Blob metadata (what we know about a blob, independent of which pieces we have). */
+export interface DBBlob {
+  /** hex(root) — primary key. */
+  root: string;
+  size: number;
+  mime: string;
+  pieceCount: number;
+  pieceSize: number;
+  /** How many of the pieces are present locally. */
+  piecesHeld: number;
+  firstSeenAt: number;
+}
+
+/** A single ciphertext piece, content-addressed. */
+export interface DBPiece {
+  /** hex(pieceId) — primary key. */
+  pieceId: string;
+  bytes: Uint8Array;
+  size: number;
+  lastAccessedAt: number;
+}
+
+/** Maps a blob root + index to a piece id. */
+export interface DBBlobPiece {
+  /** Composite key: `${root}:${pieceIdx}`. */
+  key: string;
+  root: string;
+  pieceIdx: number;
+  pieceId: string;
+}
