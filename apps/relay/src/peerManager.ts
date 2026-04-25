@@ -95,6 +95,15 @@ export class PeerManager {
     onDisconnect?: (peerId: string) => void;
   } | null = null;
 
+  // R25 — Phase 8: sealed-sender DM routing hook. Receives any frame
+  // whose `type === 'DM_FRAME'` from a connected peer relay. The handler
+  // is responsible for further forwarding / orphan storage; peerManager
+  // only does the dispatch.
+  private dmHooks: {
+    onMessage?: (peerId: string, msg: any) => void;
+    onDisconnect?: (peerId: string) => void;
+  } | null = null;
+
   constructor(
     nodeDB: NodeDB,
     messageDB: RelayDB,
@@ -203,6 +212,38 @@ export class PeerManager {
     this.posHooks = hooks;
   }
 
+  /**
+   * R25 — Phase 8. Register sealed-sender DM routing callbacks.
+   * peerManager will:
+   *   - call `onMessage(peerId, msg)` for any frame whose `type === 'DM_FRAME'`
+   *   - call `onDisconnect(peerId)` on close
+   */
+  setDmHooks(hooks: {
+    onMessage?: (peerId: string, msg: any) => void;
+    onDisconnect?: (peerId: string) => void;
+  }): void {
+    this.dmHooks = hooks;
+  }
+
+  /** R25 — Phase 8. Used by DM routing to skip self when forwarding. */
+  getOwnUrl(): string { return this.nodeUrl; }
+
+  /** R25 — Phase 8. Find a connected peer by its advertised wsUrl.
+   *  Used to translate DHT INBOX_ROUTE.wsUrl → live peerId for forwarding. */
+  findPeerByUrl(url: string): string | null {
+    if (!url) return null;
+    for (const [id, c] of this.peers) {
+      if (c.connected && c.url === url) return id;
+    }
+    // Inbound peers expose their url via nodeDB once we've recorded
+    // the handshake. Fall back to that lookup.
+    const all = this.nodeDB.getAllPeers();
+    for (const p of all) {
+      if (p.url === url && this.inboundPeers.has(p.nodeId)) return p.nodeId;
+    }
+    return null;
+  }
+
   /** R25 — Phase 6. (peerStringId, dhtPubkey, dhtUrl) snapshot for DHT bootstrap. */
   getDhtPeers(): Array<{ peerId: string; dhtPubkeyHex: string; dhtUrl: string }> {
     const out: Array<{ peerId: string; dhtPubkeyHex: string; dhtUrl: string }> = [];
@@ -301,6 +342,10 @@ export class PeerManager {
             this.posHooks?.onMessage?.(conn.nodeId, msg);
             return;
           }
+          if (msg && msg.type === 'DM_FRAME') {
+            this.dmHooks?.onMessage?.(conn.nodeId, msg);
+            return;
+          }
           this.handlePeerMessage(conn, msg);
         } catch { /* ignore parse errors */ }
       });
@@ -308,10 +353,11 @@ export class PeerManager {
       ws.on('close', () => {
         console.log(`[peer] Disconnected from peer: ${name}`);
         conn.connected = false;
-        // R25 — Phase 5/6/7. Notify swarm + DHT + POS before dropping the connection.
+        // R25 — Phase 5/6/7/8. Notify swarm + DHT + POS + DM before dropping the connection.
         try { this.swarmHooks?.onDisconnect?.(conn.nodeId); } catch { /* ignore */ }
         try { this.dhtHooks?.onDisconnect?.(conn.nodeId); } catch { /* ignore */ }
         try { this.posHooks?.onDisconnect?.(conn.nodeId); } catch { /* ignore */ }
+        try { this.dmHooks?.onDisconnect?.(conn.nodeId); } catch { /* ignore */ }
         this.peers.delete(conn.nodeId);
       });
 
@@ -385,6 +431,7 @@ export class PeerManager {
       try { this.swarmHooks?.onDisconnect?.(nodeId); } catch { /* ignore */ }
       try { this.dhtHooks?.onDisconnect?.(nodeId); } catch { /* ignore */ }
       try { this.posHooks?.onDisconnect?.(nodeId); } catch { /* ignore */ }
+      try { this.dmHooks?.onDisconnect?.(nodeId); } catch { /* ignore */ }
       this.inboundPeers.delete(nodeId);
     });
 
@@ -403,6 +450,10 @@ export class PeerManager {
         }
         if (peerMsg.type === 'POS') {
           this.posHooks?.onMessage?.(nodeId, peerMsg);
+          return;
+        }
+        if (peerMsg.type === 'DM_FRAME') {
+          this.dmHooks?.onMessage?.(nodeId, peerMsg);
           return;
         }
         // Route peer messages

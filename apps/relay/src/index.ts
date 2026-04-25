@@ -64,6 +64,9 @@ import { deriveContentKey } from '@muster/dht';
 import { RepDB } from './repDB';
 import { ReputationManager } from './reputation';
 import { PosManager } from './posHandler';
+// R25 — Phase 8: sealed-sender DM routing (rotating inbox hashes)
+import { DmRoutingDB } from './dmRoutingDB';
+import { DmRoutingHandler } from './dmRoutingHandler';
 
 
 const PORT = parseInt(process.env.MUSTER_WS_PORT || '4002', 10);
@@ -112,6 +115,10 @@ const posManager = TWO_LAYER_ENABLED && blobDB && reputation
   ? new PosManager(peerManager, blobDB, reputation)
   : null;
 if (swarmManager && reputation && posManager) swarmManager.setReputation(reputation, posManager);
+// R25 — Phase 8: sealed-sender DM routing tables. The handler is created
+// after the DHT manager (it needs to advertise inbox hashes into the DHT).
+const dmRoutingDB = TWO_LAYER_ENABLED ? new DmRoutingDB(messageDB.getDatabase()) : null;
+let dmRouting: DmRoutingHandler | null = null;
 // R25 — Phase 6: Kademlia DHT manager. Created lazily after we resolve the
 // node's persistent Ed25519 keypair from nodeDB (see boot block below).
 let dhtManager: DhtManager | null = null;
@@ -199,6 +206,17 @@ console.log(`[relay] ====================================`);
   }
   // Register DHT hooks BEFORE peerManager.start so no handshake races past us.
   if (dhtManager) dhtManager.start();
+  // R25 — Phase 8. Sealed-sender DM routing — wired AFTER the DHT manager
+  // exists so it can advertise inbox subscriptions in the DHT.
+  if (TWO_LAYER_ENABLED && dmRoutingDB) {
+    dmRouting = new DmRoutingHandler(peerManager, dmRoutingDB, dhtManager, reputation);
+    peerManager.setDmHooks({
+      onMessage: (peerId, msg) => { dmRouting?.handlePeerMessage(peerId, msg); },
+      onDisconnect: (_peerId) => { /* no-op: peer subscriptions are not stored */ },
+    });
+    dmRouting.start();
+    console.log('[relay]   dm-route: sealed-sender DM routing ENABLED');
+  }
   peerManager.start();
 })();
 
@@ -241,6 +259,13 @@ function handleMessage(client: RelayClient, msg: any): void {
     if (handleManifestMessage(client, msg, manifestDB, sendToClient, clients)) return;
     if (handleOpMessage(client, msg, opLogDB, manifestDB, sendToClient, clients)) return;
     if (handleEnvelopeMessage(client, msg, envelopeDB, blobDB, manifestDB, sendToClient, channels, clients)) return;
+  }
+
+  // R25 — Phase 8: sealed-sender DM routing. Browser clients SUBSCRIBE
+  // to their own inbox hashes, then publish DM_FRAME envelopes. The
+  // handler does NOT consult plaintext recipient ids.
+  if (TWO_LAYER_ENABLED && dmRouting) {
+    if (dmRouting.handleClientMessage({ ws: client.ws, clientKey: client.publicKey }, msg)) return;
   }
 
   // Client requests list of known nodes
@@ -454,7 +479,7 @@ function broadcastPresence(channelId: string): void {
   for (const ws of subs) { if (ws.readyState === WebSocket.OPEN) ws.send(msg); }
 }
 
-function handleDisconnect(client: RelayClient): void { for (const ch of client.channels) { channels.get(ch)?.delete(client.ws); if (channels.get(ch)?.size) broadcastPresence(ch); else channels.delete(ch); } cleanupSquadSubscriptions(client.ws); cleanupVoiceParticipant(client.ws, clients); clients.delete(client.ws); }
+function handleDisconnect(client: RelayClient): void { for (const ch of client.channels) { channels.get(ch)?.delete(client.ws); if (channels.get(ch)?.size) broadcastPresence(ch); else channels.delete(ch); } cleanupSquadSubscriptions(client.ws); cleanupVoiceParticipant(client.ws, clients); if (dmRouting && client.publicKey) dmRouting.forgetClient(client.publicKey); clients.delete(client.ws); }
 function sendToClient(client: RelayClient, msg: Record<string, unknown>): void { if (client.ws.readyState === WebSocket.OPEN) client.ws.send(JSON.stringify(msg)); }
 function requireAuth(client: RelayClient): boolean { if (!client.authenticated) { sendToClient(client, { type: 'ERROR', payload: { code: 'NOT_AUTH', message: 'Authenticate first' }, timestamp: Date.now() }); return false; } return true; }
 
@@ -503,7 +528,7 @@ if (TWO_LAYER_ENABLED && posManager && swarmManager && blobDB) {
   }, POS_SWEEP_INTERVAL_MS);
 }
 
-function shutdown(): void { dhtManager?.stop(); swarmManager?.stop(); pieceEvictor?.stop(); peerManager.stop(); for (const [ws] of clients) ws.close(1001); wss.close(() => { messageDB.close(); process.exit(0); }); setTimeout(() => process.exit(0), 5000); }
+function shutdown(): void { dmRouting?.stop(); dhtManager?.stop(); swarmManager?.stop(); pieceEvictor?.stop(); peerManager.stop(); for (const [ws] of clients) ws.close(1001); wss.close(() => { messageDB.close(); process.exit(0); }); setTimeout(() => process.exit(0), 5000); }
 process.on('SIGTERM', shutdown); process.on('SIGINT', shutdown);
 
 setInterval(() => {

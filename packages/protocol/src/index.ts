@@ -75,3 +75,5 @@ export * from './op.js';
 export * from './swarm.js';
 // R25 — Phase 7: Proof-of-Storage challenges + reputation
 export * from './pos.js';
+// R25 — Phase 8: Sealed-sender DM routing (inbox-hash addressing)
+export * from './dm.js';

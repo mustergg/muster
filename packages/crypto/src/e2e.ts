@@ -194,3 +194,82 @@ function base64ToBytes(b64: string): Uint8Array {
   for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
   return bytes;
 }
+
+// =================================================================
+// R25 — Phase 8: Sealed-sender DM routing (inbox hashes)
+// =================================================================
+//
+// Per docs/specs/DM.md §Inbox hash:
+//   windowStart = floor(nowMs / WINDOW_MS) * WINDOW_MS    // 6h
+//   inboxHash   = HKDF-SHA256(
+//                   ikm    = recipientPubkey,
+//                   salt   = u64_be(windowStart),
+//                   info   = "muster-inbox-v1",
+//                   length = 32)
+//
+// Recipient subscribes to three windows at any time (current, prev, next)
+// so a DM delivered just before/after a rotation boundary still lands.
+
+export const INBOX_WINDOW_MS = 6 * 60 * 60 * 1000; // 6h
+export const INBOX_HASH_BYTES = 32;
+const INBOX_HKDF_INFO = new TextEncoder().encode('muster-inbox-v1');
+
+/** Floor `nowMs` to the start of its 6h inbox window. */
+export function inboxWindowStart(nowMs: number = Date.now()): number {
+  return Math.floor(nowMs / INBOX_WINDOW_MS) * INBOX_WINDOW_MS;
+}
+
+/** Big-endian u64 of an integer ≤ 2^53-1 (safe-integer range). */
+function u64be(n: number): Uint8Array {
+  const out = new Uint8Array(8);
+  // JS numbers are 53-bit safe — high 11 bits stay 0 for any realistic
+  // ms-since-epoch into the year 2255.
+  let v = BigInt(n);
+  for (let i = 7; i >= 0; i--) {
+    out[i] = Number(v & 0xffn);
+    v >>= 8n;
+  }
+  return out;
+}
+
+/** Derive the inbox hash for `recipientEdPubkey` at `windowStart`. */
+export function inboxHash(
+  recipientEdPubkey: Uint8Array,
+  windowStart: number,
+): Uint8Array {
+  if (recipientEdPubkey.length !== 32) {
+    throw new Error('inboxHash: recipientEdPubkey must be 32 bytes');
+  }
+  const salt = u64be(windowStart);
+  return hkdf(sha256, recipientEdPubkey, salt, INBOX_HKDF_INFO, INBOX_HASH_BYTES);
+}
+
+/**
+ * Compute the trio of inbox hashes the recipient currently subscribes to:
+ * previous window, current window, next window. Order: [prev, current, next].
+ */
+export function currentInboxHashes(
+  recipientEdPubkey: Uint8Array,
+  nowMs: number = Date.now(),
+): { prev: Uint8Array; current: Uint8Array; next: Uint8Array } {
+  const cur = inboxWindowStart(nowMs);
+  return {
+    prev: inboxHash(recipientEdPubkey, cur - INBOX_WINDOW_MS),
+    current: inboxHash(recipientEdPubkey, cur),
+    next: inboxHash(recipientEdPubkey, cur + INBOX_WINDOW_MS),
+  };
+}
+
+/**
+ * Per-DM AEAD key, bound to the recipient's inbox hash so the same
+ * sender→recipient pair gets a fresh key every 6h window.
+ *
+ * key = HKDF-SHA256(sharedSecret, salt = inboxHash, info = "muster-dm-v1", 32)
+ */
+const DM_HKDF_INFO = new TextEncoder().encode('muster-dm-v1');
+export function deriveSealedDmKey(
+  sharedSecret: Uint8Array,
+  inbox: Uint8Array,
+): Uint8Array {
+  return hkdf(sha256, sharedSecret, inbox, DM_HKDF_INFO, 32);
+}
