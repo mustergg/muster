@@ -55,6 +55,8 @@ import { OpLogDB } from './opLogDB';
 import { handleOpMessage } from './opHandler';
 // R25 — Phase 4: tier-aware piece eviction
 import { PieceEvictor, formatBytes } from './pieceEviction';
+// R25 — Phase 5: BitSwap-lite swarm
+import { SwarmManager } from './swarmHandler';
 
 
 const PORT = parseInt(process.env.MUSTER_WS_PORT || '4002', 10);
@@ -91,6 +93,9 @@ const opLogDB = TWO_LAYER_ENABLED ? new OpLogDB(messageDB.getDatabase()) : null;
 const pieceEvictor = TWO_LAYER_ENABLED && envelopeDB && blobDB
   ? new PieceEvictor(messageDB.getDatabase(), blobDB, envelopeDB, tierManager)
   : null;
+const swarmManager = TWO_LAYER_ENABLED && blobDB && opLogDB
+  ? new SwarmManager(peerManager, blobDB, opLogDB, nodeDB.getNodeId())
+  : null;
 if (TWO_LAYER_ENABLED) {
   console.log('[relay] Two-layer envelope+blob model ENABLED (MUSTER_TWO_LAYER=1)');
   console.log(`[relay]   manifests on file: ${manifestDB?.count() ?? 0}`);
@@ -103,6 +108,10 @@ if (TWO_LAYER_ENABLED) {
       console.warn('[relay]   piece stats unavailable:', (err as Error).message);
     }
     pieceEvictor.start();
+  }
+  if (swarmManager) {
+    swarmManager.start();
+    console.log('[relay]   swarm: BitSwap-lite ENABLED');
   }
   try {
     const r = runTwoLayerMigration(messageDB.getDatabase());
@@ -343,7 +352,7 @@ setInterval(() => {
   const frDel = friendDB.cleanupExpiredRequests(); if (frDel > 0) console.log(`[relay] Cleanup: ${frDel} expired friend requests`);
 }, 6 * 60 * 60 * 1000);
 
-function shutdown(): void { pieceEvictor?.stop(); peerManager.stop(); for (const [ws] of clients) ws.close(1001); wss.close(() => { messageDB.close(); process.exit(0); }); setTimeout(() => process.exit(0), 5000); }
+function shutdown(): void { swarmManager?.stop(); pieceEvictor?.stop(); peerManager.stop(); for (const [ws] of clients) ws.close(1001); wss.close(() => { messageDB.close(); process.exit(0); }); setTimeout(() => process.exit(0), 5000); }
 process.on('SIGTERM', shutdown); process.on('SIGINT', shutdown);
 
 setInterval(() => {

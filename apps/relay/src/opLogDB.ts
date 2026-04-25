@@ -101,6 +101,13 @@ export class OpLogDB {
     `).get(communityId) as StoredOp | undefined) ?? null;
   }
 
+  /** R25 — Phase 5. Enumerate every op id we hold. Used by the swarm
+   *  layer to populate HAVE_ANNOUNCE on peer connect. */
+  allOpIds(): Buffer[] {
+    return (this.db.prepare('SELECT opId FROM community_ops').all() as { opId: Buffer }[])
+      .map((r) => r.opId);
+  }
+
   count(): number {
     return (this.db.prepare('SELECT COUNT(*) AS n FROM community_ops').get() as { n: number }).n;
   }

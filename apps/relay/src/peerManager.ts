@@ -61,6 +61,15 @@ export class PeerManager {
   private pexTimer: ReturnType<typeof setInterval> | null = null;
   private reconnectTimer: ReturnType<typeof setInterval> | null = null;
 
+  // R25 — Phase 5: pluggable hooks for the swarm layer. peerManager owns
+  // peer connections; swarmManager piggybacks on them for HAVE/WANT
+  // exchange. Hooks are called from existing message dispatch sites.
+  private swarmHooks: {
+    onConnect?: (peerId: string) => void;
+    onDisconnect?: (peerId: string) => void;
+    onMessage?: (peerId: string, msg: any) => void;
+  } | null = null;
+
   constructor(
     nodeDB: NodeDB,
     messageDB: RelayDB,
@@ -104,6 +113,45 @@ export class PeerManager {
     this.reconnectTimer = setInterval(() => this.connectToKnownPeers(), RECONNECT_INTERVAL);
 
     console.log(`[peer] Peer manager started. Known peers: ${this.nodeDB.getPeerCount()}`);
+  }
+
+  /**
+   * R25 — Phase 5. Register swarm-layer callbacks. peerManager will:
+   *   - call `onConnect(peerId)` on each successful handshake (in/out)
+   *   - call `onDisconnect(peerId)` on close
+   *   - call `onMessage(peerId, msg)` for any frame whose `type === 'SWARM'`
+   */
+  setSwarmHooks(hooks: {
+    onConnect?: (peerId: string) => void;
+    onDisconnect?: (peerId: string) => void;
+    onMessage?: (peerId: string, msg: any) => void;
+  }): void {
+    this.swarmHooks = hooks;
+  }
+
+  /**
+   * R25 — Phase 5. Send a JSON message to a peer by node id. Tries the
+   * outbound connection first, then the inbound one. Returns false if
+   * neither is open.
+   */
+  sendToPeer(peerId: string, msg: unknown): boolean {
+    const out = this.peers.get(peerId);
+    if (out && out.ws.readyState === WebSocket.OPEN) {
+      try { out.ws.send(JSON.stringify(msg)); return true; } catch { /* fall through */ }
+    }
+    const inb = this.inboundPeers.get(peerId);
+    if (inb && inb.ws.readyState === WebSocket.OPEN) {
+      try { inb.ws.send(JSON.stringify(msg)); return true; } catch { /* ignore */ }
+    }
+    return false;
+  }
+
+  /** R25 — Phase 5. Connected peer node ids (in + out, deduplicated). */
+  getConnectedPeerIds(): string[] {
+    const ids = new Set<string>();
+    for (const [id, c] of this.peers) if (c.connected) ids.add(id);
+    for (const id of this.inboundPeers.keys()) ids.add(id);
+    return [...ids];
   }
 
   /** Stop the peer manager and close all connections. */
@@ -165,6 +213,11 @@ export class PeerManager {
       ws.on('message', (data) => {
         try {
           const msg = JSON.parse(data.toString());
+          // R25 — Phase 5. Swarm frames bypass community-replication routing.
+          if (msg && msg.type === 'SWARM') {
+            this.swarmHooks?.onMessage?.(conn.nodeId, msg);
+            return;
+          }
           this.handlePeerMessage(conn, msg);
         } catch { /* ignore parse errors */ }
       });
@@ -172,7 +225,9 @@ export class PeerManager {
       ws.on('close', () => {
         console.log(`[peer] Disconnected from peer: ${name}`);
         conn.connected = false;
-        this.peers.delete(nodeId);
+        // R25 — Phase 5. Notify swarm before dropping the connection.
+        try { this.swarmHooks?.onDisconnect?.(conn.nodeId); } catch { /* ignore */ }
+        this.peers.delete(conn.nodeId);
       });
 
       ws.on('error', (err) => {
@@ -221,7 +276,11 @@ export class PeerManager {
     // Sync communities in common
     this.syncWithPeer(nodeId, communityIds || []);
 
+    // R25 — Phase 5. Notify swarm layer of new inbound peer.
+    try { this.swarmHooks?.onConnect?.(nodeId); } catch { /* ignore */ }
+
     ws.on('close', () => {
+      try { this.swarmHooks?.onDisconnect?.(nodeId); } catch { /* ignore */ }
       this.inboundPeers.delete(nodeId);
     });
 
@@ -229,6 +288,11 @@ export class PeerManager {
     ws.on('message', (data) => {
       try {
         const peerMsg = JSON.parse(data.toString());
+        // R25 — Phase 5. Route SWARM frames to swarm layer first.
+        if (peerMsg.type === 'SWARM') {
+          this.swarmHooks?.onMessage?.(nodeId, peerMsg);
+          return;
+        }
         // Route peer messages
         if (peerMsg.type === 'PEX_SHARE') this.handlePexShare(peerMsg);
         if (peerMsg.type === 'NODE_SYNC_REQUEST') this.handleSyncRequest(ws, peerMsg);
@@ -293,6 +357,10 @@ export class PeerManager {
 
     // Sync communities in common
     this.syncWithPeer(nodeId, communityIds || []);
+
+    // R25 — Phase 5. Tell swarm layer about the new peer so it can
+    // send a fresh HAVE_ANNOUNCE and start tracking want budgets.
+    try { this.swarmHooks?.onConnect?.(nodeId); } catch { /* ignore */ }
   }
 
   // =================================================================

@@ -71,3 +71,5 @@ export * from './envelope.js';
 export * from './manifest.js';
 // R25 — Phase 3: causal op log
 export * from './op.js';
+// R25 — Phase 5: BitSwap-lite swarm
+export * from './swarm.js';

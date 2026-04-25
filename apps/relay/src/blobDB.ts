@@ -160,6 +160,13 @@ export class BlobDB {
     return freed;
   }
 
+  /** R25 — Phase 5. Enumerate every piece id we currently hold. Used by
+   *  the swarm layer to populate HAVE_ANNOUNCE on peer connect. */
+  allPieceIds(): Buffer[] {
+    return (this.db.prepare('SELECT pieceId FROM pieces').all() as { pieceId: Buffer }[])
+      .map((r) => r.pieceId);
+  }
+
   stats(): { blobCount: number; pieceCount: number; totalBytes: number } {
     const blobs = (this.db.prepare('SELECT COUNT(*) AS n FROM blobs').get() as { n: number }).n;
     const pieces = this.db.prepare('SELECT COUNT(*) AS n, COALESCE(SUM(size), 0) AS b FROM pieces').get() as { n: number; b: number };
