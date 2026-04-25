@@ -60,6 +60,10 @@ import { SwarmManager } from './swarmHandler';
 // R25 — Phase 6: Kademlia DHT over WS
 import { DhtManager } from './dhtHandler';
 import { deriveContentKey } from '@muster/dht';
+// R25 — Phase 7: Proof-of-Storage challenges + per-peer reputation
+import { RepDB } from './repDB';
+import { ReputationManager } from './reputation';
+import { PosManager } from './posHandler';
 
 
 const PORT = parseInt(process.env.MUSTER_WS_PORT || '4002', 10);
@@ -99,6 +103,15 @@ const pieceEvictor = TWO_LAYER_ENABLED && envelopeDB && blobDB
 const swarmManager = TWO_LAYER_ENABLED && blobDB && opLogDB
   ? new SwarmManager(peerManager, blobDB, opLogDB, nodeDB.getNodeId())
   : null;
+// R25 — Phase 7: per-peer reputation + Proof-of-Storage. Local-only — never
+// gossiped (POS.md §Reputation). Wired into swarmManager so blacklisted
+// peers are skipped during provider selection.
+const repDB = TWO_LAYER_ENABLED ? new RepDB(messageDB.getDatabase()) : null;
+const reputation = repDB ? new ReputationManager(repDB) : null;
+const posManager = TWO_LAYER_ENABLED && blobDB && reputation
+  ? new PosManager(peerManager, blobDB, reputation)
+  : null;
+if (swarmManager && reputation && posManager) swarmManager.setReputation(reputation, posManager);
 // R25 — Phase 6: Kademlia DHT manager. Created lazily after we resolve the
 // node's persistent Ed25519 keypair from nodeDB (see boot block below).
 let dhtManager: DhtManager | null = null;
@@ -118,6 +131,10 @@ if (TWO_LAYER_ENABLED) {
   if (swarmManager) {
     swarmManager.start();
     console.log('[relay]   swarm: BitSwap-lite ENABLED');
+  }
+  if (posManager) {
+    posManager.start();
+    console.log('[relay]   pos: Proof-of-Storage + reputation ENABLED');
   }
   try {
     const r = runTwoLayerMigration(messageDB.getDatabase());
@@ -447,6 +464,44 @@ setInterval(() => {
   const accDel = userDB.deleteExpiredAccounts(); if (accDel > 0) console.log(`[relay] Cleanup: ${accDel} expired accounts`);
   const frDel = friendDB.cleanupExpiredRequests(); if (frDel > 0) console.log(`[relay] Cleanup: ${frDel} expired friend requests`);
 }, 6 * 60 * 60 * 1000);
+
+// R25 — Phase 7. Daily reputation decay (POS.md §Reputation: ±1 toward 0
+// every 24 h). Drives the curve back to neutral so a cold peer doesn't
+// stay forever blacklisted on a single bad streak.
+if (reputation) {
+  setInterval(() => {
+    const touched = reputation.decayDaily();
+    if (touched > 0) console.log(`[relay] reputation: decayed ${touched} peers toward 0`);
+  }, 24 * 60 * 60 * 1000);
+}
+
+// R25 — Phase 7. Periodic POS sweep. Every 10 minutes, pick one local
+// piece a random known peer claims to HAVE and challenge them. Cheap,
+// honest peers absorb it as POS_OK; lying peers leak rep until they hit
+// the blacklist (POS.md §Issuance cadence).
+const POS_SWEEP_INTERVAL_MS = 10 * 60 * 1000;
+if (TWO_LAYER_ENABLED && posManager && swarmManager && blobDB) {
+  setInterval(() => {
+    try {
+      const peers = swarmManager.listKnownPeers();
+      if (peers.length === 0) return;
+      const localPieces = blobDB.allPieceIds();
+      if (localPieces.length === 0) return;
+      const peerId = peers[Math.floor(Math.random() * peers.length)]!;
+      const candidate = localPieces[Math.floor(Math.random() * localPieces.length)]!;
+      const idHex = candidate.toString('hex');
+      // Only challenge if the peer actually announced HAVE for it —
+      // otherwise we'd punish a peer for not holding something they
+      // never claimed.
+      if (!swarmManager.providersOf(idHex).includes(peerId)) return;
+      void posManager.challenge(peerId, 'piece', new Uint8Array(candidate));
+    } catch (err) {
+      if (process.env.MUSTER_TWO_LAYER_DEBUG) {
+        console.warn('[pos] sweep error:', (err as Error).message);
+      }
+    }
+  }, POS_SWEEP_INTERVAL_MS);
+}
 
 function shutdown(): void { dhtManager?.stop(); swarmManager?.stop(); pieceEvictor?.stop(); peerManager.stop(); for (const [ws] of clients) ws.close(1001); wss.close(() => { messageDB.close(); process.exit(0); }); setTimeout(() => process.exit(0), 5000); }
 process.on('SIGTERM', shutdown); process.on('SIGINT', shutdown);

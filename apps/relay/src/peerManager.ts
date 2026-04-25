@@ -87,6 +87,14 @@ export class PeerManager {
   // R25 — Phase 6: this relay's own dht advertisement, set before start().
   private dhtIdentity: { pubkeyHex: string; url: string } | null = null;
 
+  // R25 — Phase 7: POS (proof-of-storage) layer hook. Receives any frame
+  // whose `type === 'POS'` plus disconnect notifications so the PosManager
+  // can drop pending challenges for the dropped peer.
+  private posHooks: {
+    onMessage?: (peerId: string, msg: any) => void;
+    onDisconnect?: (peerId: string) => void;
+  } | null = null;
+
   constructor(
     nodeDB: NodeDB,
     messageDB: RelayDB,
@@ -183,6 +191,18 @@ export class PeerManager {
     this.dhtIdentity = { pubkeyHex, url };
   }
 
+  /**
+   * R25 — Phase 7. Register POS-layer callbacks. peerManager will:
+   *   - call `onMessage(peerId, msg)` for any frame whose `type === 'POS'`
+   *   - call `onDisconnect(peerId)` on close
+   */
+  setPosHooks(hooks: {
+    onMessage?: (peerId: string, msg: any) => void;
+    onDisconnect?: (peerId: string) => void;
+  }): void {
+    this.posHooks = hooks;
+  }
+
   /** R25 — Phase 6. (peerStringId, dhtPubkey, dhtUrl) snapshot for DHT bootstrap. */
   getDhtPeers(): Array<{ peerId: string; dhtPubkeyHex: string; dhtUrl: string }> {
     const out: Array<{ peerId: string; dhtPubkeyHex: string; dhtUrl: string }> = [];
@@ -277,6 +297,10 @@ export class PeerManager {
             this.dhtHooks?.onMessage?.(conn.nodeId, msg);
             return;
           }
+          if (msg && msg.type === 'POS') {
+            this.posHooks?.onMessage?.(conn.nodeId, msg);
+            return;
+          }
           this.handlePeerMessage(conn, msg);
         } catch { /* ignore parse errors */ }
       });
@@ -284,9 +308,10 @@ export class PeerManager {
       ws.on('close', () => {
         console.log(`[peer] Disconnected from peer: ${name}`);
         conn.connected = false;
-        // R25 — Phase 5/6. Notify swarm + DHT before dropping the connection.
+        // R25 — Phase 5/6/7. Notify swarm + DHT + POS before dropping the connection.
         try { this.swarmHooks?.onDisconnect?.(conn.nodeId); } catch { /* ignore */ }
         try { this.dhtHooks?.onDisconnect?.(conn.nodeId); } catch { /* ignore */ }
+        try { this.posHooks?.onDisconnect?.(conn.nodeId); } catch { /* ignore */ }
         this.peers.delete(conn.nodeId);
       });
 
@@ -359,6 +384,7 @@ export class PeerManager {
     ws.on('close', () => {
       try { this.swarmHooks?.onDisconnect?.(nodeId); } catch { /* ignore */ }
       try { this.dhtHooks?.onDisconnect?.(nodeId); } catch { /* ignore */ }
+      try { this.posHooks?.onDisconnect?.(nodeId); } catch { /* ignore */ }
       this.inboundPeers.delete(nodeId);
     });
 
@@ -373,6 +399,10 @@ export class PeerManager {
         }
         if (peerMsg.type === 'DHT') {
           this.dhtHooks?.onMessage?.(nodeId, peerMsg);
+          return;
+        }
+        if (peerMsg.type === 'POS') {
+          this.posHooks?.onMessage?.(nodeId, peerMsg);
           return;
         }
         // Route peer messages

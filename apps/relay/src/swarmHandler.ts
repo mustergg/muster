@@ -37,6 +37,7 @@ import {
   SWARM_MAX_HAVE_BATCH,
   SWARM_MAX_WANTS_PER_REQUEST,
   SWARM_MAX_RESPONSE_BYTES,
+  SWARM_MAX_CONCURRENT_PER_PEER,
   SWARM_RESPONSE_TIMEOUT_MS,
   type WantItem,
   type WantResponseItem,
@@ -47,6 +48,8 @@ import type { BlobDB } from './blobDB';
 import type { OpLogDB } from './opLogDB';
 import type { PeerManager } from './peerManager';
 import { SwarmDB, type InFlightWant } from './swarmDB';
+import type { ReputationManager } from './reputation';
+import type { PosManager } from './posHandler';
 
 const TIMEOUT_SWEEP_INTERVAL_MS = 1_000;
 const HAVE_BROADCAST_DEBOUNCE_MS = 500;
@@ -67,11 +70,23 @@ export class SwarmManager {
   private pendingRemoves: Buffer[] = [];
   private haveDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
+  // R25 — Phase 7: Proof-of-Storage + reputation. Optional — when null
+  // the swarm runs with the Phase-5 trust-everyone behaviour.
+  private reputation: ReputationManager | null = null;
+  private pos: PosManager | null = null;
+
   constructor(peerManager: PeerManager, blobDB: BlobDB, opLogDB: OpLogDB, nodeIdString: string) {
     this.peerManager = peerManager;
     this.blobDB = blobDB;
     this.opLogDB = opLogDB;
     this.nodeIdBytes = sha256(new TextEncoder().encode(nodeIdString));
+  }
+
+  /** R25 — Phase 7. Wire reputation + POS so wantPiece skips blacklisted
+   *  peers and rewards/punishes honest/dishonest serves. */
+  setReputation(reputation: ReputationManager, pos: PosManager): void {
+    this.reputation = reputation;
+    this.pos = pos;
   }
 
   // ── Lifecycle ────────────────────────────────────────────────────────────
@@ -99,6 +114,11 @@ export class SwarmManager {
   stats(): { peerCount: number; totalHaveEntries: number; totalInFlight: number } {
     return this.db.stats();
   }
+
+  /** Phase-7 helpers: surfaced so the periodic POS sweep in index.ts can
+   *  pick targets without poking SwarmDB directly. */
+  providersOf(idHex: string): string[] { return this.db.providersOf(idHex); }
+  listKnownPeers(): string[] { return this.db.listPeers(); }
 
   // ── Peer lifecycle ───────────────────────────────────────────────────────
 
@@ -228,9 +248,11 @@ export class SwarmManager {
 
   // ── Outbound API ─────────────────────────────────────────────────────────
 
-  /** Issue a WANT for a single piece. Picks any peer that announced HAVE. */
+  /** Issue a WANT for a single piece. Picks any peer that announced HAVE
+   *  (filtering blacklisted ones when reputation is wired). On success,
+   *  recomputes sha256(bytes) and rewards/punishes the provider. */
   async wantPiece(pieceIdHex: string, opts: { withProof?: boolean } = {}): Promise<Uint8Array | null> {
-    const peerId = this.db.pickProvider(pieceIdHex);
+    const peerId = this.pickProviderRespectingReputation(pieceIdHex);
     if (!peerId) return null;
     const want: WantItem = {
       id: hexToBytes(pieceIdHex),
@@ -241,7 +263,36 @@ export class SwarmManager {
     if (!items || items.length === 0) return null;
     const first = items[0];
     if (!first || first.outcome !== 'bytes' || !first.bytes) return null;
+
+    // R25 — Phase 7. Verify the bytes hash to the requested piece id. A
+    // mismatch is a malformed WANT_RESPONSE (POS.md event table -1).
+    const got = sha256(first.bytes);
+    if (toHex(got) !== pieceIdHex) {
+      this.reputation?.applyEvent(peerId, 'WANT_HASH_MISMATCH');
+      return null;
+    }
+    this.reputation?.addServedMB(peerId, first.bytes.length / (1024 * 1024));
     return first.bytes;
+  }
+
+  /** Phase-7 wrapper around SwarmDB.pickProvider that filters blacklisted
+   *  peers when a ReputationManager is wired. Falls back to the raw
+   *  Phase-5 picker when reputation is absent. */
+  private pickProviderRespectingReputation(idHex: string): string | null {
+    if (!this.reputation) return this.db.pickProvider(idHex);
+    const candidates = this.db.providersOf(idHex);
+    if (candidates.length === 0) return null;
+    let preferred: string | null = null;
+    let normal: string | null = null;
+    let depri: string | null = null;
+    for (const p of candidates) {
+      if (this.reputation.isBlacklisted(p)) continue;
+      if (this.db.inFlightCount(p) >= SWARM_MAX_CONCURRENT_PER_PEER) continue;
+      if (this.reputation.isPreferred(p)) { preferred = p; break; }
+      if (this.reputation.isDeprioritised(p)) { depri ??= p; }
+      else { normal ??= p; }
+    }
+    return preferred ?? normal ?? depri;
   }
 
   /** Broadcast a HAVE delta to all connected peers (debounced). */

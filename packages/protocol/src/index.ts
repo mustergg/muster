@@ -73,3 +73,5 @@ export * from './manifest.js';
 export * from './op.js';
 // R25 — Phase 5: BitSwap-lite swarm
 export * from './swarm.js';
+// R25 — Phase 7: Proof-of-Storage challenges + reputation
+export * from './pos.js';
