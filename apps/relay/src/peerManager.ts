@@ -41,6 +41,10 @@ interface PeerConnection {
   communityIds: string[];
   connected: boolean;
   version: string;
+  /** R25 — Phase 6. Ed25519 pubkey of the peer's DHT identity, hex. */
+  dhtPubkey?: string;
+  /** R25 — Phase 6. ws URL the peer advertises in DHT records. */
+  dhtUrl?: string;
 }
 
 export class PeerManager {
@@ -56,7 +60,7 @@ export class PeerManager {
   private peers = new Map<string, PeerConnection>();
 
   /** Inbound peer connections (peers that connected to us). Keyed by nodeId. */
-  private inboundPeers = new Map<string, { nodeId: string; ws: WebSocket; communityIds: string[]; version: string }>();
+  private inboundPeers = new Map<string, { nodeId: string; ws: WebSocket; communityIds: string[]; version: string; dhtPubkey?: string; dhtUrl?: string }>();
 
   private pexTimer: ReturnType<typeof setInterval> | null = null;
   private reconnectTimer: ReturnType<typeof setInterval> | null = null;
@@ -69,6 +73,19 @@ export class PeerManager {
     onDisconnect?: (peerId: string) => void;
     onMessage?: (peerId: string, msg: any) => void;
   } | null = null;
+
+  // R25 — Phase 6: parallel hooks for the DHT layer. Includes the peer's
+  // dht pubkey/url so the DHT can build a Contact for routing-table
+  // bookkeeping. onConnect fires only once we've actually learned the
+  // peer's dht identity from its handshake.
+  private dhtHooks: {
+    onConnect?: (peerId: string, dhtPubkeyHex: string, dhtUrl: string) => void;
+    onDisconnect?: (peerId: string) => void;
+    onMessage?: (peerId: string, msg: any) => void;
+  } | null = null;
+
+  // R25 — Phase 6: this relay's own dht advertisement, set before start().
+  private dhtIdentity: { pubkeyHex: string; url: string } | null = null;
 
   constructor(
     nodeDB: NodeDB,
@@ -146,6 +163,38 @@ export class PeerManager {
     return false;
   }
 
+  /**
+   * R25 — Phase 6. Register DHT-layer callbacks. peerManager will:
+   *   - call `onConnect(peerId, dhtPubkey, dhtUrl)` once the inbound
+   *     handshake reveals a dht identity
+   *   - call `onDisconnect(peerId)` on close
+   *   - call `onMessage(peerId, msg)` for any frame whose `type === 'DHT'`
+   */
+  setDhtHooks(hooks: {
+    onConnect?: (peerId: string, dhtPubkeyHex: string, dhtUrl: string) => void;
+    onDisconnect?: (peerId: string) => void;
+    onMessage?: (peerId: string, msg: any) => void;
+  }): void {
+    this.dhtHooks = hooks;
+  }
+
+  /** R25 — Phase 6. Set this relay's DHT identity. MUST be called before start(). */
+  setDhtIdentity(pubkeyHex: string, url: string): void {
+    this.dhtIdentity = { pubkeyHex, url };
+  }
+
+  /** R25 — Phase 6. (peerStringId, dhtPubkey, dhtUrl) snapshot for DHT bootstrap. */
+  getDhtPeers(): Array<{ peerId: string; dhtPubkeyHex: string; dhtUrl: string }> {
+    const out: Array<{ peerId: string; dhtPubkeyHex: string; dhtUrl: string }> = [];
+    for (const [id, c] of this.peers) {
+      if (c.connected && c.dhtPubkey && c.dhtUrl) out.push({ peerId: id, dhtPubkeyHex: c.dhtPubkey, dhtUrl: c.dhtUrl });
+    }
+    for (const [id, c] of this.inboundPeers) {
+      if (c.dhtPubkey && c.dhtUrl) out.push({ peerId: id, dhtPubkeyHex: c.dhtPubkey, dhtUrl: c.dhtUrl });
+    }
+    return out;
+  }
+
   /** R25 — Phase 5. Connected peer node ids (in + out, deduplicated). */
   getConnectedPeerIds(): string[] {
     const ids = new Set<string>();
@@ -197,15 +246,21 @@ export class PeerManager {
 
         // Send handshake
         const myCommunities = this.communityDB.getAllCommunityIds();
+        const payload: Record<string, unknown> = {
+          nodeId: this.nodeId,
+          url: this.nodeUrl,
+          name: this.nodeName,
+          communityIds: myCommunities,
+          version: getCurrentVersion(),
+        };
+        // R25 — Phase 6. Advertise DHT identity if known.
+        if (this.dhtIdentity) {
+          payload.dhtPubkey = this.dhtIdentity.pubkeyHex;
+          payload.dhtUrl = this.dhtIdentity.url;
+        }
         ws.send(JSON.stringify({
           type: 'NODE_HANDSHAKE',
-          payload: {
-            nodeId: this.nodeId,
-            url: this.nodeUrl,
-            name: this.nodeName,
-            communityIds: myCommunities,
-            version: getCurrentVersion(),
-          },
+          payload,
           timestamp: Date.now(),
         }));
       });
@@ -213,9 +268,13 @@ export class PeerManager {
       ws.on('message', (data) => {
         try {
           const msg = JSON.parse(data.toString());
-          // R25 — Phase 5. Swarm frames bypass community-replication routing.
+          // R25 — Phase 5/6. Swarm + DHT frames bypass community routing.
           if (msg && msg.type === 'SWARM') {
             this.swarmHooks?.onMessage?.(conn.nodeId, msg);
+            return;
+          }
+          if (msg && msg.type === 'DHT') {
+            this.dhtHooks?.onMessage?.(conn.nodeId, msg);
             return;
           }
           this.handlePeerMessage(conn, msg);
@@ -225,8 +284,9 @@ export class PeerManager {
       ws.on('close', () => {
         console.log(`[peer] Disconnected from peer: ${name}`);
         conn.connected = false;
-        // R25 — Phase 5. Notify swarm before dropping the connection.
+        // R25 — Phase 5/6. Notify swarm + DHT before dropping the connection.
         try { this.swarmHooks?.onDisconnect?.(conn.nodeId); } catch { /* ignore */ }
+        try { this.dhtHooks?.onDisconnect?.(conn.nodeId); } catch { /* ignore */ }
         this.peers.delete(conn.nodeId);
       });
 
@@ -245,28 +305,41 @@ export class PeerManager {
 
   /** Called from index.ts when a WS client sends NODE_HANDSHAKE. */
   handleInboundHandshake(ws: WebSocket, msg: any): void {
-    const { nodeId, url, name, communityIds, version } = msg.payload || {};
+    const { nodeId, url, name, communityIds, version, dhtPubkey, dhtUrl } = msg.payload || {};
     if (!nodeId || !url) return;
 
     console.log(`[peer] Inbound peer: ${name || nodeId.slice(0, 16)} (${url}) v${version}`);
 
     // Store the inbound connection
-    this.inboundPeers.set(nodeId, { nodeId, ws, communityIds: communityIds || [], version: version || '' });
+    const entry: { nodeId: string; ws: WebSocket; communityIds: string[]; version: string; dhtPubkey?: string; dhtUrl?: string } = {
+      nodeId,
+      ws,
+      communityIds: communityIds || [],
+      version: version || '',
+    };
+    if (typeof dhtPubkey === 'string') entry.dhtPubkey = dhtPubkey;
+    if (typeof dhtUrl === 'string') entry.dhtUrl = dhtUrl;
+    this.inboundPeers.set(nodeId, entry);
 
     // Update our known peers DB
     this.nodeDB.addOrUpdatePeer(nodeId, url, name || '', communityIds || []);
 
     // Send handshake ack
     const myCommunities = this.communityDB.getAllCommunityIds();
+    const ackPayload: Record<string, unknown> = {
+      nodeId: this.nodeId,
+      url: this.nodeUrl,
+      name: this.nodeName,
+      communityIds: myCommunities,
+      version: getCurrentVersion(),
+    };
+    if (this.dhtIdentity) {
+      ackPayload.dhtPubkey = this.dhtIdentity.pubkeyHex;
+      ackPayload.dhtUrl = this.dhtIdentity.url;
+    }
     ws.send(JSON.stringify({
       type: 'NODE_HANDSHAKE_ACK',
-      payload: {
-        nodeId: this.nodeId,
-        url: this.nodeUrl,
-        name: this.nodeName,
-        communityIds: myCommunities,
-        version: getCurrentVersion(),
-      },
+      payload: ackPayload,
       timestamp: Date.now(),
     }));
 
@@ -278,9 +351,14 @@ export class PeerManager {
 
     // R25 — Phase 5. Notify swarm layer of new inbound peer.
     try { this.swarmHooks?.onConnect?.(nodeId); } catch { /* ignore */ }
+    // R25 — Phase 6. DHT learns the inbound peer if its identity is on the wire.
+    if (entry.dhtPubkey && entry.dhtUrl) {
+      try { this.dhtHooks?.onConnect?.(nodeId, entry.dhtPubkey, entry.dhtUrl); } catch { /* ignore */ }
+    }
 
     ws.on('close', () => {
       try { this.swarmHooks?.onDisconnect?.(nodeId); } catch { /* ignore */ }
+      try { this.dhtHooks?.onDisconnect?.(nodeId); } catch { /* ignore */ }
       this.inboundPeers.delete(nodeId);
     });
 
@@ -288,9 +366,13 @@ export class PeerManager {
     ws.on('message', (data) => {
       try {
         const peerMsg = JSON.parse(data.toString());
-        // R25 — Phase 5. Route SWARM frames to swarm layer first.
+        // R25 — Phase 5/6. Route SWARM/DHT frames to their layers first.
         if (peerMsg.type === 'SWARM') {
           this.swarmHooks?.onMessage?.(nodeId, peerMsg);
+          return;
+        }
+        if (peerMsg.type === 'DHT') {
+          this.dhtHooks?.onMessage?.(nodeId, peerMsg);
           return;
         }
         // Route peer messages
@@ -337,7 +419,7 @@ export class PeerManager {
   }
 
   private handleHandshakeAck(conn: PeerConnection, msg: any): void {
-    const { nodeId, url, name, communityIds, version } = msg.payload || {};
+    const { nodeId, url, name, communityIds, version, dhtPubkey, dhtUrl } = msg.payload || {};
     // Update the connection with the real nodeId from the peer
     if (nodeId && nodeId !== conn.nodeId) {
       this.peers.delete(conn.nodeId);
@@ -346,6 +428,8 @@ export class PeerManager {
     }
     conn.communityIds = communityIds || [];
     conn.version = version || '';
+    if (typeof dhtPubkey === 'string') conn.dhtPubkey = dhtPubkey;
+    if (typeof dhtUrl === 'string') conn.dhtUrl = dhtUrl;
 
     // Update DB
     this.nodeDB.addOrUpdatePeer(nodeId, url || conn.url, name || conn.name, communityIds || []);
@@ -361,6 +445,10 @@ export class PeerManager {
     // R25 — Phase 5. Tell swarm layer about the new peer so it can
     // send a fresh HAVE_ANNOUNCE and start tracking want budgets.
     try { this.swarmHooks?.onConnect?.(nodeId); } catch { /* ignore */ }
+    // R25 — Phase 6. DHT learns the new peer if its identity is on the wire.
+    if (conn.dhtPubkey && conn.dhtUrl) {
+      try { this.dhtHooks?.onConnect?.(nodeId, conn.dhtPubkey, conn.dhtUrl); } catch { /* ignore */ }
+    }
   }
 
   // =================================================================

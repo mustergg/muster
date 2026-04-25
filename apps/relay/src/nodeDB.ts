@@ -61,6 +61,26 @@ export class NodeDB {
     return nodeId;
   }
 
+  /**
+   * R25 — Phase 6. Get or generate the relay's persistent Ed25519 keypair
+   * (used as the DHT node identity). Returned hex-encoded so it round-trips
+   * through the existing `node_config` text column.
+   */
+  async getOrCreateNodeKeypair(): Promise<{ publicKeyHex: string; privateKeyHex: string }> {
+    const pub = this.db.prepare("SELECT value FROM node_config WHERE key = 'nodePubkey'").get() as { value: string } | undefined;
+    const priv = this.db.prepare("SELECT value FROM node_config WHERE key = 'nodePrivkey'").get() as { value: string } | undefined;
+    if (pub && priv) return { publicKeyHex: pub.value, privateKeyHex: priv.value };
+
+    const { generateKeyPair, toHex } = await import('@muster/crypto');
+    const kp = await generateKeyPair();
+    const publicKeyHex = toHex(kp.publicKey);
+    const privateKeyHex = toHex(kp.privateKey);
+    this.db.prepare("INSERT OR REPLACE INTO node_config (key, value) VALUES ('nodePubkey', ?)").run(publicKeyHex);
+    this.db.prepare("INSERT OR REPLACE INTO node_config (key, value) VALUES ('nodePrivkey', ?)").run(privateKeyHex);
+    console.log(`[node-db] Generated Ed25519 node keypair: ${publicKeyHex.slice(0, 16)}...`);
+    return { publicKeyHex, privateKeyHex };
+  }
+
   /** Get or set the node's display name. */
   getNodeName(): string {
     const row = this.db.prepare("SELECT value FROM node_config WHERE key = 'nodeName'").get() as { value: string } | undefined;

@@ -57,6 +57,9 @@ import { handleOpMessage } from './opHandler';
 import { PieceEvictor, formatBytes } from './pieceEviction';
 // R25 — Phase 5: BitSwap-lite swarm
 import { SwarmManager } from './swarmHandler';
+// R25 — Phase 6: Kademlia DHT over WS
+import { DhtManager } from './dhtHandler';
+import { deriveContentKey } from '@muster/dht';
 
 
 const PORT = parseInt(process.env.MUSTER_WS_PORT || '4002', 10);
@@ -96,6 +99,9 @@ const pieceEvictor = TWO_LAYER_ENABLED && envelopeDB && blobDB
 const swarmManager = TWO_LAYER_ENABLED && blobDB && opLogDB
   ? new SwarmManager(peerManager, blobDB, opLogDB, nodeDB.getNodeId())
   : null;
+// R25 — Phase 6: Kademlia DHT manager. Created lazily after we resolve the
+// node's persistent Ed25519 keypair from nodeDB (see boot block below).
+let dhtManager: DhtManager | null = null;
 if (TWO_LAYER_ENABLED) {
   console.log('[relay] Two-layer envelope+blob model ENABLED (MUSTER_TWO_LAYER=1)');
   console.log(`[relay]   manifests on file: ${manifestDB?.count() ?? 0}`);
@@ -156,8 +162,28 @@ console.log(`[relay]  Users: ${userCounts.total} (${userCounts.verified} verifie
 console.log(`[relay]  Known peers: ${nodeDB.getPeerCount()}`);
 console.log(`[relay] ====================================`);
 
-// Start peer-to-peer connections
-peerManager.start();
+// Start peer-to-peer connections. R25 — Phase 6: resolve our persistent
+// Ed25519 keypair first, advertise it via peerManager handshakes, and then
+// stand up the DHT manager so it can pick up peers as they connect.
+(async () => {
+  if (TWO_LAYER_ENABLED) {
+    try {
+      const kp = await nodeDB.getOrCreateNodeKeypair();
+      peerManager.setDhtIdentity(kp.publicKeyHex, NODE_URL);
+      dhtManager = new DhtManager(peerManager, {
+        pubkeyHex: kp.publicKeyHex,
+        privkeyHex: kp.privateKeyHex,
+        wsUrl: NODE_URL,
+      });
+      console.log('[relay]   dht: Kademlia ENABLED');
+    } catch (err) {
+      console.error('[relay] dht: init FAILED:', (err as Error).message);
+    }
+  }
+  // Register DHT hooks BEFORE peerManager.start so no handshake races past us.
+  if (dhtManager) dhtManager.start();
+  peerManager.start();
+})();
 
 wss.on('connection', (ws) => {
   const challenge = randomBytes(32).toString('hex');
@@ -202,6 +228,11 @@ function handleMessage(client: RelayClient, msg: any): void {
 
   // Client requests list of known nodes
   if (msg.type === 'GET_NODES') { sendToClient(client, { type: 'NODE_LIST', payload: {tier: tierManager.getTier(), nodes: peerManager.getNodeList() }, timestamp: Date.now() }); return; }
+
+  // R25 — Phase 6. Browser asks the relay to look up provider records in the
+  // DHT. Browsers do not join the DHT themselves; the relay does the
+  // iterative FIND_VALUE on their behalf.
+  if (msg.type === 'DHT_QUERY') { handleDhtQuery(client, msg); return; }
   if (msg.type === 'GET_NODE_INFO' || msg.type === 'GET_NODE_PEERS') {
     handleNodeInfoRequest(client, msg, nodeDB, sendToClient);
     
@@ -326,6 +357,71 @@ async function handlePublish(client: RelayClient, msg: any): Promise<void> {
   } catch { /* ignore forwarding errors */ }
 }
 
+/**
+ * R25 — Phase 6. Browser → relay DHT lookup bridge.
+ *
+ * Request : { type:'DHT_QUERY',          payload:{ kind, id } }
+ *   kind = 'piece_providers' | 'community_peers' | 'inbox_route'
+ *   id   = hex of the 32-byte content id (pieceId / communityId / inboxHash)
+ * Response: { type:'DHT_QUERY_RESPONSE', payload:{ records:[{providerPubkey, wsUrl, ts, ttlMs, kind}, ...] } }
+ */
+async function handleDhtQuery(client: RelayClient, msg: any): Promise<void> {
+  const { kind, id } = msg.payload || {};
+  if (!dhtManager) {
+    sendToClient(client, { type: 'DHT_QUERY_RESPONSE', payload: { records: [], error: 'dht_disabled' }, timestamp: Date.now() });
+    return;
+  }
+  if (kind !== 'piece_providers' && kind !== 'community_peers' && kind !== 'inbox_route') {
+    sendToClient(client, { type: 'DHT_QUERY_RESPONSE', payload: { records: [], error: 'bad_kind' }, timestamp: Date.now() });
+    return;
+  }
+  if (typeof id !== 'string' || !/^[0-9a-fA-F]+$/.test(id)) {
+    sendToClient(client, { type: 'DHT_QUERY_RESPONSE', payload: { records: [], error: 'bad_id' }, timestamp: Date.now() });
+    return;
+  }
+  let idBytes: Uint8Array;
+  try {
+    idBytes = hexToBytes(id);
+    if (idBytes.length !== 32) throw new Error('bad length');
+  } catch {
+    sendToClient(client, { type: 'DHT_QUERY_RESPONSE', payload: { records: [], error: 'bad_id_length' }, timestamp: Date.now() });
+    return;
+  }
+  const prefix = kind === 'piece_providers' ? 'piece' : kind === 'community_peers' ? 'community' : 'inbox';
+  const key = deriveContentKey(prefix as 'piece' | 'community' | 'inbox', idBytes);
+  try {
+    const records = await dhtManager.findRecords(key);
+    sendToClient(client, {
+      type: 'DHT_QUERY_RESPONSE',
+      payload: {
+        records: records.map((r) => ({
+          providerPubkey: bytesToHex(r.providerPubkey),
+          wsUrl: r.wsUrl,
+          ts: r.ts,
+          ttlMs: r.ttlMs,
+          kind: r.kind,
+        })),
+      },
+      timestamp: Date.now(),
+    });
+  } catch (err) {
+    sendToClient(client, { type: 'DHT_QUERY_RESPONSE', payload: { records: [], error: (err as Error).message }, timestamp: Date.now() });
+  }
+}
+
+function hexToBytes(hex: string): Uint8Array {
+  if (hex.length % 2 !== 0) throw new Error('odd hex length');
+  const out = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < out.length; i++) out[i] = parseInt(hex.substr(i * 2, 2), 16);
+  return out;
+}
+
+function bytesToHex(b: Uint8Array): string {
+  let s = '';
+  for (let i = 0; i < b.length; i++) s += (b[i]! < 16 ? '0' : '') + b[i]!.toString(16);
+  return s;
+}
+
 function handleSyncRequest(client: RelayClient, msg: any): void {
   const { channel, since } = msg.payload || {};
   if (!channel) return;
@@ -352,7 +448,7 @@ setInterval(() => {
   const frDel = friendDB.cleanupExpiredRequests(); if (frDel > 0) console.log(`[relay] Cleanup: ${frDel} expired friend requests`);
 }, 6 * 60 * 60 * 1000);
 
-function shutdown(): void { swarmManager?.stop(); pieceEvictor?.stop(); peerManager.stop(); for (const [ws] of clients) ws.close(1001); wss.close(() => { messageDB.close(); process.exit(0); }); setTimeout(() => process.exit(0), 5000); }
+function shutdown(): void { dhtManager?.stop(); swarmManager?.stop(); pieceEvictor?.stop(); peerManager.stop(); for (const [ws] of clients) ws.close(1001); wss.close(() => { messageDB.close(); process.exit(0); }); setTimeout(() => process.exit(0), 5000); }
 process.on('SIGTERM', shutdown); process.on('SIGINT', shutdown);
 
 setInterval(() => {

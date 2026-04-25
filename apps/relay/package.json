@@ -14,7 +14,8 @@
     "ws": "^8.16.0",
     "better-sqlite3": "^12.9.0",
     "@muster/crypto": "workspace:*",
-    "@muster/protocol": "workspace:*"
+    "@muster/protocol": "workspace:*",
+    "@muster/dht": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.4.0",

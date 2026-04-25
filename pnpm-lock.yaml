@@ -60,6 +60,9 @@ importers:
       '@muster/crypto':
         specifier: workspace:*
         version: link:../../packages/crypto
+      '@muster/dht':
+        specifier: workspace:*
+        version: link:../../packages/dht
       '@muster/protocol':
         specifier: workspace:*
         version: link:../../packages/protocol
@@ -183,6 +186,19 @@ importers:
     devDependencies:
       typescript:
         specifier: ^5.4.0
+        version: 5.9.3
+
+  packages/dht:
+    dependencies:
+      '@muster/crypto':
+        specifier: workspace:*
+        version: link:../crypto
+    devDependencies:
+      '@types/node':
+        specifier: ^20.14.0
+        version: 20.19.37
+      typescript:
+        specifier: ^5.4.5
         version: 5.9.3
 
   packages/i18n:
