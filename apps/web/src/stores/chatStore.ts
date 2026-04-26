@@ -23,7 +23,9 @@ import { fromCborMap } from '@muster/protocol';
 const encoder = new TextEncoder();
 const FILE_PREFIX = '__FILE__';
 
-const TWO_LAYER_ENABLED = (import.meta as any).env?.VITE_TWO_LAYER === '1';
+// R25 — Phase 10. Envelope dual-write is always-on now. The
+// VITE_TWO_LAYER flag was retired with Phase 10.
+const TWO_LAYER_ENABLED = true;
 
 async function signPayload(payload: string, privateKey: Uint8Array): Promise<string> {
   const sigBytes = await ed25519Sign(encoder.encode(payload), privateKey);

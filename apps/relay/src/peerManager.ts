@@ -30,8 +30,11 @@ const PEX_INTERVAL = 5 * 60 * 1000; // 5 minutes
 /** How often to retry failed peer connections (ms). */
 const RECONNECT_INTERVAL = 60 * 1000; // 1 minute
 
-/** Max age for community message sync (ms). 60 days. */
-const SYNC_MAX_AGE = 60 * 24 * 60 * 60 * 1000;
+// R25 — Phase 10. NODE_SYNC_REQUEST/RESPONSE were the bulk-fetch path
+// before BitSwap-lite landed (Phase 5). They're gone now: the swarm
+// announces HAVE on connect and pulls deltas via WANT_REQUEST. Anything
+// that still uses them gets a one-shot PROTOCOL_DEPRECATED reply asking
+// the operator to upgrade.
 
 interface PeerConnection {
   nodeId: string;
@@ -417,8 +420,8 @@ export class PeerManager {
     // Share our peer list
     this.sendPexTo(ws);
 
-    // Sync communities in common
-    this.syncWithPeer(nodeId, communityIds || []);
+    // R25 — Phase 10. Bulk NODE_SYNC_REQUEST is gone — Phase-5 swarm
+    // already announces HAVE on connect and pulls deltas via WANT.
 
     // R25 — Phase 5. Notify swarm layer of new inbound peer.
     try { this.swarmHooks?.onConnect?.(nodeId); } catch { /* ignore */ }
@@ -458,8 +461,10 @@ export class PeerManager {
         }
         // Route peer messages
         if (peerMsg.type === 'PEX_SHARE') this.handlePexShare(peerMsg);
-        if (peerMsg.type === 'NODE_SYNC_REQUEST') this.handleSyncRequest(ws, peerMsg);
-        if (peerMsg.type === 'NODE_SYNC_RESPONSE') this.handleSyncResponse(peerMsg);
+        if (peerMsg.type === 'NODE_SYNC_REQUEST' || peerMsg.type === 'NODE_SYNC_RESPONSE') {
+          this.replyDeprecated(ws, peerMsg.type);
+          return;
+        }
         if (peerMsg.type === 'MESSAGE_FORWARD') this.handleMessageForward(peerMsg);
         if (peerMsg.type === 'DM_FORWARD') this.handleDMForward(peerMsg);
       } catch { /* ignore */ }
@@ -485,8 +490,11 @@ export class PeerManager {
         this.handlePexShare(msg);
         break;
 
+      case 'NODE_SYNC_REQUEST':
       case 'NODE_SYNC_RESPONSE':
-        this.handleSyncResponse(msg);
+        // R25 — Phase 10. Legacy bulk-sync path is gone. If a peer still
+        // talks it, tell them once per connection that they need to upgrade.
+        this.replyDeprecated(conn.ws, msg.type);
         break;
 
       case 'MESSAGE_FORWARD':
@@ -520,8 +528,8 @@ export class PeerManager {
     // Share our peer list
     this.sendPexTo(conn.ws);
 
-    // Sync communities in common
-    this.syncWithPeer(nodeId, communityIds || []);
+    // R25 — Phase 10. Bulk NODE_SYNC_REQUEST is gone — Phase-5 swarm
+    // already announces HAVE on connect and pulls deltas via WANT.
 
     // R25 — Phase 5. Tell swarm layer about the new peer so it can
     // send a fresh HAVE_ANNOUNCE and start tracking want budgets.
@@ -598,94 +606,36 @@ export class PeerManager {
   }
 
   // =================================================================
-  // Community Replication / Sync
+  // R25 — Phase 10. Legacy compatibility shim.
+  //
+  // NODE_SYNC_REQUEST/RESPONSE were the bulk-fetch path before BitSwap-lite
+  // landed in Phase 5. Peers running an older relay still try them; rather
+  // than going silent we send back PROTOCOL_DEPRECATED once per connection
+  // so the operator sees what's wrong.
   // =================================================================
 
-  /** Request sync for communities we have in common with a peer. */
-  private syncWithPeer(peerNodeId: string, peerCommunityIds: string[]): void {
-    const myCommunities = this.communityDB.getAllCommunityIds();
-    const common = myCommunities.filter((id) => peerCommunityIds.includes(id));
+  /** Per-connection memo of which deprecated message types we've nagged
+   *  about, so we don't spam the same peer. */
+  private deprecatedSent = new WeakMap<WebSocket, Set<string>>();
 
-    if (common.length === 0) return;
-
-    console.log(`[peer] Syncing ${common.length} communities with ${peerNodeId.slice(0, 16)}`);
-
-    const since = Date.now() - SYNC_MAX_AGE;
-
-    for (const communityId of common) {
-      const ws = this.getPeerWs(peerNodeId);
-      if (!ws) continue;
-
+  private replyDeprecated(ws: WebSocket, what: string): void {
+    let seen = this.deprecatedSent.get(ws);
+    if (!seen) { seen = new Set(); this.deprecatedSent.set(ws, seen); }
+    if (seen.has(what)) return;
+    seen.add(what);
+    if (ws.readyState !== WebSocket.OPEN) return;
+    try {
       ws.send(JSON.stringify({
-        type: 'NODE_SYNC_REQUEST',
-        payload: { communityId, since, requestingNodeId: this.nodeId },
-        timestamp: Date.now(),
-      }));
-    }
-  }
-
-  /** Handle a sync request from a peer — send our messages. */
-  private handleSyncRequest(ws: WebSocket, msg: any): void {
-    const { communityId, since } = msg.payload || {};
-    if (!communityId) return;
-
-    const messages = this.messageDB.getMessagesSince(communityId, since || 0);
-    // Send in batches of 100
-    const BATCH = 100;
-    for (let i = 0; i < messages.length; i += BATCH) {
-      const batch = messages.slice(i, i + BATCH);
-      ws.send(JSON.stringify({
-        type: 'NODE_SYNC_RESPONSE',
+        type: 'PROTOCOL_DEPRECATED',
         payload: {
-          communityId,
-          messages: batch.map((m) => ({
-            messageId: m.messageId,
-            channel: m.channel,
-            content: m.content,
-            senderPublicKey: m.senderPublicKey,
-            senderUsername: m.senderUsername,
-            timestamp: m.timestamp,
-            signature: m.signature || '',
-          })),
-          hasMore: i + BATCH < messages.length,
+          messageType: what,
+          minVersion: getCurrentVersion(),
+          reason: `${what} was removed in R25 Phase 10. Update your relay — content syncs via BitSwap-lite (HAVE/WANT) now.`,
         },
         timestamp: Date.now(),
       }));
-    }
-
-    if (messages.length === 0) {
-      ws.send(JSON.stringify({
-        type: 'NODE_SYNC_RESPONSE',
-        payload: { communityId, messages: [], hasMore: false },
-        timestamp: Date.now(),
-      }));
-    }
-  }
-
-  /** Handle incoming synced messages from a peer. */
-  private handleSyncResponse(msg: any): void {
-    const { communityId, messages } = msg.payload || {};
-    if (!messages || messages.length === 0) return;
-
-    let stored = 0;
-    for (const m of messages) {
-      try {
-        this.messageDB.storeMessage({
-          messageId: m.messageId,
-          channel: m.channel,
-          content: m.content,
-          senderPublicKey: m.senderPublicKey,
-          senderUsername: m.senderUsername,
-          timestamp: m.timestamp,
-          signature: m.signature || '',
-        });
-        stored++;
-      } catch { /* duplicate messageId — already have it */ }
-    }
-
-    if (stored > 0) {
-      console.log(`[peer] Sync: stored ${stored} messages for community ${communityId?.slice(0, 8)}`);
-    }
+    } catch { /* peer hung up */ }
+    console.warn(`[peer] PROTOCOL_DEPRECATED → peer (${what}); legacy node, please update`);
   }
 
   // =================================================================

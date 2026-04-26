@@ -42,7 +42,7 @@ import { handleTierMessage } from './tierHandler';
 import { GroupKeyDB } from './groupKeyDB';
 import { handleGroupKeyMessage } from './groupKeyHandler';
 import { registerProxiedNode, handlePortCheck, getProxyStats } from './wsRelay';
-// R25 — Phase 1: two-layer envelope + blob model (gated by MUSTER_TWO_LAYER=1)
+// R25 — Phase 1: two-layer envelope + blob model (always-on since Phase 10)
 import { EnvelopeDB } from './envelopeDB';
 import { BlobDB } from './blobDB';
 import { handleEnvelopeMessage } from './envelopeHandler';
@@ -95,62 +95,51 @@ tierManager.startPurgeScheduler(messageDB, dmDB);
 initNodeInfo(nodeDB);
 const peerManager = new PeerManager(nodeDB, messageDB, communityDB, dmDB, NODE_URL);
 
-// R25 — Phase 1: two-layer envelope/blob storage. Disabled by default;
-// flip MUSTER_TWO_LAYER=1 to enable the new path alongside the legacy one.
-const TWO_LAYER_ENABLED = process.env.MUSTER_TWO_LAYER === '1';
-const envelopeDB = TWO_LAYER_ENABLED ? new EnvelopeDB(messageDB.getDatabase()) : null;
-const blobDB = TWO_LAYER_ENABLED ? new BlobDB(messageDB.getDatabase()) : null;
-const manifestDB = TWO_LAYER_ENABLED ? new ManifestDB(messageDB.getDatabase()) : null;
-const opLogDB = TWO_LAYER_ENABLED ? new OpLogDB(messageDB.getDatabase()) : null;
-const pieceEvictor = TWO_LAYER_ENABLED && envelopeDB && blobDB
-  ? new PieceEvictor(messageDB.getDatabase(), blobDB, envelopeDB, tierManager)
-  : null;
-const swarmManager = TWO_LAYER_ENABLED && blobDB && opLogDB
-  ? new SwarmManager(peerManager, blobDB, opLogDB, nodeDB.getNodeId())
-  : null;
+// R25 — Phase 10. The full two-layer stack (envelope/blob/manifest/oplog
+// + swarm + DHT + POS + DM routing + bandwidth monitor) is the only
+// supported path now. The MUSTER_TWO_LAYER feature flag was retired with
+// Phase 10 — every relay runs the R25 stack unconditionally.
+const envelopeDB = new EnvelopeDB(messageDB.getDatabase());
+const blobDB = new BlobDB(messageDB.getDatabase());
+const manifestDB = new ManifestDB(messageDB.getDatabase());
+const opLogDB = new OpLogDB(messageDB.getDatabase());
+const pieceEvictor = new PieceEvictor(messageDB.getDatabase(), blobDB, envelopeDB, tierManager);
+const swarmManager = new SwarmManager(peerManager, blobDB, opLogDB, nodeDB.getNodeId());
 // R25 — Phase 7: per-peer reputation + Proof-of-Storage. Local-only — never
 // gossiped (POS.md §Reputation). Wired into swarmManager so blacklisted
 // peers are skipped during provider selection.
-const repDB = TWO_LAYER_ENABLED ? new RepDB(messageDB.getDatabase()) : null;
-const reputation = repDB ? new ReputationManager(repDB) : null;
-const posManager = TWO_LAYER_ENABLED && blobDB && reputation
-  ? new PosManager(peerManager, blobDB, reputation)
-  : null;
-if (swarmManager && reputation && posManager) swarmManager.setReputation(reputation, posManager);
+const repDB = new RepDB(messageDB.getDatabase());
+const reputation = new ReputationManager(repDB);
+const posManager = new PosManager(peerManager, blobDB, reputation);
+swarmManager.setReputation(reputation, posManager);
 // R25 — Phase 9. Bandwidth monitor — meters swarm outbound + RTT, exposes
 // adaptive in-flight cap. Wired into swarmManager so the per-peer
 // concurrency cap halves under congestion.
-const bandwidthMonitor = TWO_LAYER_ENABLED ? new BandwidthMonitor(messageDB.getDatabase()) : null;
-if (swarmManager && bandwidthMonitor) swarmManager.setBandwidthMonitor(bandwidthMonitor);
+const bandwidthMonitor = new BandwidthMonitor(messageDB.getDatabase());
+swarmManager.setBandwidthMonitor(bandwidthMonitor);
 // R25 — Phase 8: sealed-sender DM routing tables. The handler is created
 // after the DHT manager (it needs to advertise inbox hashes into the DHT).
-const dmRoutingDB = TWO_LAYER_ENABLED ? new DmRoutingDB(messageDB.getDatabase()) : null;
+const dmRoutingDB = new DmRoutingDB(messageDB.getDatabase());
 let dmRouting: DmRoutingHandler | null = null;
 // R25 — Phase 6: Kademlia DHT manager. Created lazily after we resolve the
 // node's persistent Ed25519 keypair from nodeDB (see boot block below).
 let dhtManager: DhtManager | null = null;
-if (TWO_LAYER_ENABLED) {
-  console.log('[relay] Two-layer envelope+blob model ENABLED (MUSTER_TWO_LAYER=1)');
-  console.log(`[relay]   manifests on file: ${manifestDB?.count() ?? 0}`);
-  console.log(`[relay]   admin ops on file: ${opLogDB?.count() ?? 0}`);
-  if (pieceEvictor) {
-    try {
-      const s = pieceEvictor.stats();
-      console.log(`[relay]   piece usage: ${formatBytes(s.totalBytes)} total, ${formatBytes(s.pinnedBytes)} pinned, ${formatBytes(s.cacheBytes)} cache (caps ${formatBytes(s.pinnedCap)}/${formatBytes(s.cacheCap)})`);
-    } catch (err) {
-      console.warn('[relay]   piece stats unavailable:', (err as Error).message);
-    }
-    pieceEvictor.start();
+{
+  console.log('[relay] R25 stack ENABLED (envelope+blob+manifest+oplog+swarm+dht+pos+dm)');
+  console.log(`[relay]   manifests on file: ${manifestDB.count()}`);
+  console.log(`[relay]   admin ops on file: ${opLogDB.count()}`);
+  try {
+    const s = pieceEvictor.stats();
+    console.log(`[relay]   piece usage: ${formatBytes(s.totalBytes)} total, ${formatBytes(s.pinnedBytes)} pinned, ${formatBytes(s.cacheBytes)} cache (caps ${formatBytes(s.pinnedCap)}/${formatBytes(s.cacheCap)})`);
+  } catch (err) {
+    console.warn('[relay]   piece stats unavailable:', (err as Error).message);
   }
-  if (swarmManager) {
-    swarmManager.start();
-    console.log('[relay]   swarm: BitSwap-lite ENABLED');
-  }
-  if (posManager) {
-    posManager.start();
-    console.log('[relay]   pos: Proof-of-Storage + reputation ENABLED');
-  }
-  if (bandwidthMonitor) {
+  pieceEvictor.start();
+  swarmManager.start();
+  console.log('[relay]   swarm: BitSwap-lite ENABLED');
+  posManager.start();
+  console.log('[relay]   pos: Proof-of-Storage + reputation ENABLED');
+  {
     const s = bandwidthMonitor.snapshot();
     console.log(`[relay]   bw: BandwidthMonitor ENABLED cap=${Math.round(s.capBps / 1024)}KB/s ${s.measuring ? '(measuring)' : `measured=${Math.round(s.measuredUploadBps / 1024)}KB/s`}`);
   }
@@ -201,33 +190,29 @@ console.log(`[relay] ====================================`);
 // Ed25519 keypair first, advertise it via peerManager handshakes, and then
 // stand up the DHT manager so it can pick up peers as they connect.
 (async () => {
-  if (TWO_LAYER_ENABLED) {
-    try {
-      const kp = await nodeDB.getOrCreateNodeKeypair();
-      peerManager.setDhtIdentity(kp.publicKeyHex, NODE_URL);
-      dhtManager = new DhtManager(peerManager, {
-        pubkeyHex: kp.publicKeyHex,
-        privkeyHex: kp.privateKeyHex,
-        wsUrl: NODE_URL,
-      });
-      console.log('[relay]   dht: Kademlia ENABLED');
-    } catch (err) {
-      console.error('[relay] dht: init FAILED:', (err as Error).message);
-    }
+  try {
+    const kp = await nodeDB.getOrCreateNodeKeypair();
+    peerManager.setDhtIdentity(kp.publicKeyHex, NODE_URL);
+    dhtManager = new DhtManager(peerManager, {
+      pubkeyHex: kp.publicKeyHex,
+      privkeyHex: kp.privateKeyHex,
+      wsUrl: NODE_URL,
+    });
+    console.log('[relay]   dht: Kademlia ENABLED');
+  } catch (err) {
+    console.error('[relay] dht: init FAILED:', (err as Error).message);
   }
   // Register DHT hooks BEFORE peerManager.start so no handshake races past us.
   if (dhtManager) dhtManager.start();
   // R25 — Phase 8. Sealed-sender DM routing — wired AFTER the DHT manager
   // exists so it can advertise inbox subscriptions in the DHT.
-  if (TWO_LAYER_ENABLED && dmRoutingDB) {
-    dmRouting = new DmRoutingHandler(peerManager, dmRoutingDB, dhtManager, reputation);
-    peerManager.setDmHooks({
-      onMessage: (peerId, msg) => { dmRouting?.handlePeerMessage(peerId, msg); },
-      onDisconnect: (_peerId) => { /* no-op: peer subscriptions are not stored */ },
-    });
-    dmRouting.start();
-    console.log('[relay]   dm-route: sealed-sender DM routing ENABLED');
-  }
+  dmRouting = new DmRoutingHandler(peerManager, dmRoutingDB, dhtManager, reputation);
+  peerManager.setDmHooks({
+    onMessage: (peerId, msg) => { dmRouting?.handlePeerMessage(peerId, msg); },
+    onDisconnect: (_peerId) => { /* no-op: peer subscriptions are not stored */ },
+  });
+  dmRouting.start();
+  console.log('[relay]   dm-route: sealed-sender DM routing ENABLED');
   peerManager.start();
 })();
 
@@ -265,27 +250,36 @@ function handleMessage(client: RelayClient, msg: any): void {
   if (msg.type === 'AUTH_RESPONSE') { handleAuth(client, msg); return; }
   if (!requireAuth(client)) return;
 
-  // R25 — two-layer dispatch (gated). Falls through to legacy when disabled.
-  if (TWO_LAYER_ENABLED && envelopeDB && blobDB && manifestDB && opLogDB) {
-    if (handleManifestMessage(client, msg, manifestDB, sendToClient, clients)) return;
-    if (handleOpMessage(client, msg, opLogDB, manifestDB, sendToClient, clients)) return;
-    if (handleEnvelopeMessage(client, msg, envelopeDB, blobDB, manifestDB, sendToClient, channels, clients)) return;
-  }
+  // R25 — two-layer dispatch. Always-on since Phase 10.
+  if (handleManifestMessage(client, msg, manifestDB, sendToClient, clients)) return;
+  if (handleOpMessage(client, msg, opLogDB, manifestDB, sendToClient, clients)) return;
+  if (handleEnvelopeMessage(client, msg, envelopeDB, blobDB, manifestDB, sendToClient, channels, clients)) return;
 
   // R25 — Phase 8: sealed-sender DM routing. Browser clients SUBSCRIBE
   // to their own inbox hashes, then publish DM_FRAME envelopes. The
   // handler does NOT consult plaintext recipient ids.
-  if (TWO_LAYER_ENABLED && dmRouting) {
+  if (dmRouting) {
     if (dmRouting.handleClientMessage({ ws: client.ws, clientKey: client.publicKey }, msg)) return;
   }
 
   // R25 — Phase 9. Desktop UI / web client requests live bandwidth stats.
   if (msg.type === 'BANDWIDTH_STATS_REQUEST') {
-    const snap = bandwidthMonitor?.snapshot() ?? {
-      outboundBps: 0, capBps: 0, measuredUploadBps: 0, measuring: false,
-      ewmaRttMs: 0, baselineRttMs: 0, congested: false, inFlightCap: 0,
-    };
-    sendToClient(client, { type: 'BANDWIDTH_STATS', payload: snap, timestamp: Date.now() });
+    sendToClient(client, { type: 'BANDWIDTH_STATS', payload: bandwidthMonitor.snapshot(), timestamp: Date.now() });
+    return;
+  }
+
+  // R25 — Phase 10. Older clients sending bulk-sync / monolithic-only
+  // requests get a one-shot upgrade nudge.
+  if (msg.type === 'NODE_SYNC_REQUEST' || msg.type === 'SYNC_REQUEST_LEGACY') {
+    sendToClient(client, {
+      type: 'PROTOCOL_DEPRECATED',
+      payload: {
+        messageType: msg.type,
+        minVersion: getCurrentVersion(),
+        reason: `${msg.type} was removed in R25 Phase 10. Update your client — content syncs via the envelope/swarm path now.`,
+      },
+      timestamp: Date.now(),
+    });
     return;
   }
 
@@ -526,7 +520,7 @@ if (reputation) {
 // honest peers absorb it as POS_OK; lying peers leak rep until they hit
 // the blacklist (POS.md §Issuance cadence).
 const POS_SWEEP_INTERVAL_MS = 10 * 60 * 1000;
-if (TWO_LAYER_ENABLED && posManager && swarmManager && blobDB) {
+{
   setInterval(() => {
     try {
       const peers = swarmManager.listKnownPeers();

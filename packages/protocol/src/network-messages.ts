@@ -140,6 +140,25 @@ export interface MessageForwardMsg {
 }
 
 // =================================================================
+// R25 — Phase 10: legacy-removal nudge (Relay → Peer / Client)
+// =================================================================
+
+/** Sent in response to a removed-in-R25 message type. The receiver should
+ *  surface this to the operator and stop emitting `messageType`. */
+export interface ProtocolDeprecatedMsg {
+  type: 'PROTOCOL_DEPRECATED';
+  payload: {
+    /** The deprecated message type the recipient just sent. */
+    messageType: string;
+    /** Minimum relay/client version that no longer uses it. */
+    minVersion: string;
+    /** Plain-English explanation. */
+    reason: string;
+  };
+  timestamp: number;
+}
+
+// =================================================================
 // R25 — Phase 9: bandwidth monitor stats (Client → Relay → Client)
 // =================================================================
 
