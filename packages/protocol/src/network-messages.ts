@@ -139,6 +139,41 @@ export interface MessageForwardMsg {
   timestamp: number;
 }
 
+// =================================================================
+// R25 — Phase 9: bandwidth monitor stats (Client → Relay → Client)
+// =================================================================
+
+/** Browser/desktop UI asks the relay for current swarm bandwidth usage. */
+export interface BandwidthStatsRequestMsg {
+  type: 'BANDWIDTH_STATS_REQUEST';
+  payload: Record<string, never>;
+  timestamp: number;
+}
+
+/** Snapshot of the relay's bandwidth monitor. All bps figures are bytes/sec. */
+export interface BandwidthStatsMsg {
+  type: 'BANDWIDTH_STATS';
+  payload: {
+    /** Outbound swarm throughput over the rolling 60 s window. */
+    outboundBps: number;
+    /** Currently enforced soft cap on swarm outbound. */
+    capBps: number;
+    /** Peak observed during the one-shot measurement window. 0 if pending. */
+    measuredUploadBps: number;
+    /** True while the initial 5-min measurement window is open. */
+    measuring: boolean;
+    /** EWMA RTT of swarm WANT round-trips. ms. */
+    ewmaRttMs: number;
+    /** Baseline RTT locked after MIN_RTT_SAMPLES samples. */
+    baselineRttMs: number;
+    /** True when ewmaRtt > 2× baseline — concurrency is currently halved. */
+    congested: boolean;
+    /** Effective per-peer concurrent WANT cap (halved while congested). */
+    inFlightCap: number;
+  };
+  timestamp: number;
+}
+
 /** Forward a new DM to peer nodes for replication. */
 export interface DMForwardMsg {
   type: 'DM_FORWARD';

@@ -67,6 +67,8 @@ import { PosManager } from './posHandler';
 // R25 — Phase 8: sealed-sender DM routing (rotating inbox hashes)
 import { DmRoutingDB } from './dmRoutingDB';
 import { DmRoutingHandler } from './dmRoutingHandler';
+// R25 — Phase 9: adaptive bandwidth monitor + cap
+import { BandwidthMonitor } from './bandwidthMonitor';
 
 
 const PORT = parseInt(process.env.MUSTER_WS_PORT || '4002', 10);
@@ -115,6 +117,11 @@ const posManager = TWO_LAYER_ENABLED && blobDB && reputation
   ? new PosManager(peerManager, blobDB, reputation)
   : null;
 if (swarmManager && reputation && posManager) swarmManager.setReputation(reputation, posManager);
+// R25 — Phase 9. Bandwidth monitor — meters swarm outbound + RTT, exposes
+// adaptive in-flight cap. Wired into swarmManager so the per-peer
+// concurrency cap halves under congestion.
+const bandwidthMonitor = TWO_LAYER_ENABLED ? new BandwidthMonitor(messageDB.getDatabase()) : null;
+if (swarmManager && bandwidthMonitor) swarmManager.setBandwidthMonitor(bandwidthMonitor);
 // R25 — Phase 8: sealed-sender DM routing tables. The handler is created
 // after the DHT manager (it needs to advertise inbox hashes into the DHT).
 const dmRoutingDB = TWO_LAYER_ENABLED ? new DmRoutingDB(messageDB.getDatabase()) : null;
@@ -142,6 +149,10 @@ if (TWO_LAYER_ENABLED) {
   if (posManager) {
     posManager.start();
     console.log('[relay]   pos: Proof-of-Storage + reputation ENABLED');
+  }
+  if (bandwidthMonitor) {
+    const s = bandwidthMonitor.snapshot();
+    console.log(`[relay]   bw: BandwidthMonitor ENABLED cap=${Math.round(s.capBps / 1024)}KB/s ${s.measuring ? '(measuring)' : `measured=${Math.round(s.measuredUploadBps / 1024)}KB/s`}`);
   }
   try {
     const r = runTwoLayerMigration(messageDB.getDatabase());
@@ -266,6 +277,16 @@ function handleMessage(client: RelayClient, msg: any): void {
   // handler does NOT consult plaintext recipient ids.
   if (TWO_LAYER_ENABLED && dmRouting) {
     if (dmRouting.handleClientMessage({ ws: client.ws, clientKey: client.publicKey }, msg)) return;
+  }
+
+  // R25 — Phase 9. Desktop UI / web client requests live bandwidth stats.
+  if (msg.type === 'BANDWIDTH_STATS_REQUEST') {
+    const snap = bandwidthMonitor?.snapshot() ?? {
+      outboundBps: 0, capBps: 0, measuredUploadBps: 0, measuring: false,
+      ewmaRttMs: 0, baselineRttMs: 0, congested: false, inFlightCap: 0,
+    };
+    sendToClient(client, { type: 'BANDWIDTH_STATS', payload: snap, timestamp: Date.now() });
+    return;
   }
 
   // Client requests list of known nodes

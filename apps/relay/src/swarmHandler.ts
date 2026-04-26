@@ -50,6 +50,7 @@ import type { PeerManager } from './peerManager';
 import { SwarmDB, type InFlightWant } from './swarmDB';
 import type { ReputationManager } from './reputation';
 import type { PosManager } from './posHandler';
+import type { BandwidthMonitor } from './bandwidthMonitor';
 
 const TIMEOUT_SWEEP_INTERVAL_MS = 1_000;
 const HAVE_BROADCAST_DEBOUNCE_MS = 500;
@@ -75,6 +76,12 @@ export class SwarmManager {
   private reputation: ReputationManager | null = null;
   private pos: PosManager | null = null;
 
+  // R25 — Phase 9: bandwidth monitor. Optional. When wired, every outbound
+  // SWARM frame is metered, every WANT round-trip feeds an RTT sample, and
+  // the per-peer in-flight cap is taken from the monitor (so it can halve
+  // under congestion).
+  private bw: BandwidthMonitor | null = null;
+
   constructor(peerManager: PeerManager, blobDB: BlobDB, opLogDB: OpLogDB, nodeIdString: string) {
     this.peerManager = peerManager;
     this.blobDB = blobDB;
@@ -87,6 +94,11 @@ export class SwarmManager {
   setReputation(reputation: ReputationManager, pos: PosManager): void {
     this.reputation = reputation;
     this.pos = pos;
+  }
+
+  /** R25 — Phase 9. Wire the bandwidth monitor for metering + adaptive cap. */
+  setBandwidthMonitor(bw: BandwidthMonitor): void {
+    this.bw = bw;
   }
 
   // ── Lifecycle ────────────────────────────────────────────────────────────
@@ -243,6 +255,8 @@ export class SwarmManager {
     let bytesIn = 0;
     for (const it of items) if (it.bytes) bytesIn += it.bytes.length;
     this.db.recordReceived(peerId, bytesIn);
+    // R25 — Phase 9. RTT sample = response arrival - request issue.
+    if (this.bw) this.bw.recordRttSample(Date.now() - inFlight.startedAt);
     try { inFlight.resolve(items); } catch { /* ignore */ }
   }
 
@@ -287,7 +301,8 @@ export class SwarmManager {
     let depri: string | null = null;
     for (const p of candidates) {
       if (this.reputation.isBlacklisted(p)) continue;
-      if (this.db.inFlightCount(p) >= SWARM_MAX_CONCURRENT_PER_PEER) continue;
+      const ifCap = this.bw ? this.bw.getInFlightCap() : SWARM_MAX_CONCURRENT_PER_PEER;
+      if (this.db.inFlightCount(p) >= ifCap) continue;
       if (this.reputation.isPreferred(p)) { preferred = p; break; }
       if (this.reputation.isDeprioritised(p)) { depri ??= p; }
       else { normal ??= p; }
@@ -307,6 +322,13 @@ export class SwarmManager {
 
   private flushPendingHave(): void {
     this.haveDebounceTimer = null;
+    // R25 — Phase 9. If we're already over the per-second cap, defer the
+    // HAVE flush by another debounce window. HAVE deltas are not
+    // latency-critical — a few extra hundred ms is fine.
+    if (this.bw?.isOverCap()) {
+      this.haveDebounceTimer = setTimeout(() => this.flushPendingHave(), HAVE_BROADCAST_DEBOUNCE_MS);
+      return;
+    }
     const adds = this.pendingAdds;
     const rems = this.pendingRemoves;
     this.pendingAdds = [];
@@ -382,11 +404,15 @@ export class SwarmManager {
     const map = swarmMessageToCborMap(msg);
     const bytes = encodeCanonical(map as CborValue);
     const cbor = Buffer.from(bytes).toString('base64');
-    return this.peerManager.sendToPeer(peerId, {
+    const sent = this.peerManager.sendToPeer(peerId, {
       type: 'SWARM',
       payload: { cbor },
       timestamp: Date.now(),
     });
+    // R25 — Phase 9. Meter outbound (raw frame size; wrapper JSON overhead
+    // is negligible compared to the cbor blob).
+    if (sent && this.bw) this.bw.recordOutBytes(bytes.length);
+    return sent;
   }
 }
 
