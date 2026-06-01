@@ -50,6 +50,12 @@ interface SquadState {
   loading: boolean;
 
   loadSquads: (communityId: string) => void;
+  /** Personal-squad space id for the current user (personal:<pubkey>). */
+  personalSpaceId: () => string;
+  /** Load personal squads + squads for all known communities. */
+  loadMySquads: () => void;
+  /** Flat list of every squad the user is in (across communities + personal). */
+  allMySquads: () => Squad[];
   createSquad: (communityId: string, name: string) => void;
   deleteSquad: (squadId: string) => void;
   inviteMember: (squadId: string, username: string) => void;
@@ -80,6 +86,33 @@ export const useSquadStore = create<SquadState>((set, get) => ({
     const { transport } = useNetworkStore.getState();
     if (!transport?.isConnected) return;
     transport.send({ type: 'GET_SQUADS', payload: { communityId }, timestamp: Date.now() });
+  },
+
+  personalSpaceId: () => {
+    const pk = useNetworkStore.getState().publicKey;
+    return `personal:${pk}`;
+  },
+
+  loadMySquads: () => {
+    const { transport, publicKey } = useNetworkStore.getState();
+    if (!transport?.isConnected || !publicKey) return;
+    transport.send({ type: 'GET_SQUADS', payload: { communityId: `personal:${publicKey}` }, timestamp: Date.now() });
+    // Community squads — query each known community.
+    try {
+      const communities = (window as any).__community?.getState?.().communities || {};
+      for (const cid of Object.keys(communities)) {
+        transport.send({ type: 'GET_SQUADS', payload: { communityId: cid }, timestamp: Date.now() });
+      }
+    } catch { /* ignore */ }
+  },
+
+  allMySquads: () => {
+    const out: Squad[] = [];
+    const seen = new Set<string>();
+    for (const list of Object.values(get().squads)) {
+      for (const sq of list) { if (!seen.has(sq.id)) { seen.add(sq.id); out.push(sq); } }
+    }
+    return out;
   },
 
   createSquad: (communityId: string, name: string) => {

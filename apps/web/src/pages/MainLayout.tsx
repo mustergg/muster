@@ -36,11 +36,12 @@ export interface ActiveLocation {
   channelName: string;
 }
 
-type ViewMode = 'community' | 'dm' | 'friends' | 'settings';
+type ViewMode = 'community' | 'dm' | 'friends' | 'settings' | 'squad';
 
 export default function MainLayout(): React.JSX.Element {
   const [viewMode, setViewMode] = useState<ViewMode>('community');
   const [active, setActive]                       = useState<ActiveLocation | null>(null);
+  const [activeSquad, setActiveSquad]             = useState<string | null>(null);
   const [activeCommunityId, setActiveCommunityId] = useState<string | null>(null);
   const [activeDMPartner, setActiveDMPartner]     = useState<string | null>(null);
   const { connect, status }   = useNetworkStore();
@@ -84,6 +85,8 @@ export default function MainLayout(): React.JSX.Element {
       const c12 = bandwidthInit();
       const c13 = reputationInit();
       loadCommunities();
+      // Load top-level squads (personal + community) for the guild bar.
+      setTimeout(() => useSquadStore.getState().loadMySquads(), 400);
       return () => { c1(); c2(); c3(); c4(); c5(); c6(); c7(); c8(); c9(); c10(); c11(); c12(); c13(); };
     }
     return undefined;
@@ -98,11 +101,12 @@ export default function MainLayout(): React.JSX.Element {
     return () => usePieceCacheStore.getState().shutdown();
   }, []);
 
-  const handleOpenDM = (publicKey: string) => { setViewMode('dm'); setActiveDMPartner(publicKey); };
-  const handleSelectDM = () => { setViewMode('dm'); setActiveCommunityId(null); setActive(null); };
-  const handleSelectFriends = () => { setViewMode('friends'); setActiveCommunityId(null); setActive(null); setActiveDMPartner(null); };
-  const handleSelectCommunity = (id: string) => { setViewMode('community'); setActiveCommunityId(id); setActiveDMPartner(null); };
-  const handleSelectSettings = () => { setViewMode('settings'); setActiveCommunityId(null); setActive(null); setActiveDMPartner(null); };
+  const handleOpenDM = (publicKey: string) => { setViewMode('dm'); setActiveDMPartner(publicKey); setActiveSquad(null); };
+  const handleSelectDM = () => { setViewMode('dm'); setActiveCommunityId(null); setActive(null); setActiveSquad(null); };
+  const handleSelectFriends = () => { setViewMode('friends'); setActiveCommunityId(null); setActive(null); setActiveDMPartner(null); setActiveSquad(null); };
+  const handleSelectCommunity = (id: string) => { setViewMode('community'); setActiveCommunityId(id); setActiveDMPartner(null); setActiveSquad(null); };
+  const handleSelectSettings = () => { setViewMode('settings'); setActiveCommunityId(null); setActive(null); setActiveDMPartner(null); setActiveSquad(null); };
+  const handleSelectSquad = (squadId: string) => { setViewMode('squad'); setActiveSquad(squadId); setActiveCommunityId(null); setActive(null); setActiveDMPartner(null); useSquadStore.getState().openSquad(squadId); };
 
   // Determine what's active in the main area
   const isFeedActive = active?.channelId === '__feed__';
@@ -133,10 +137,16 @@ export default function MainLayout(): React.JSX.Element {
           onSelectFriends={handleSelectFriends}
           settingsActive={viewMode === 'settings'}
           onSelectSettings={handleSelectSettings}
+          activeSquadId={viewMode === 'squad' ? activeSquad : null}
+          onSelectSquad={handleSelectSquad}
         />
 
         {viewMode === 'settings' ? (
           <SettingsPanel />
+        ) : viewMode === 'squad' && activeSquad ? (
+          <div style={styles.main}>
+            <SquadChatArea squadId={activeSquad} mode="text" />
+          </div>
         ) : viewMode === 'friends' ? (
           <div style={styles.main}>
             <FriendsPanel onOpenDM={handleOpenDM} />

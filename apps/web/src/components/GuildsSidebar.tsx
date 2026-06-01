@@ -12,8 +12,10 @@ import { useCommunityStore } from '../stores/communityStore.js';
 import { useDMStore } from '../stores/dmStore.js';
 import { useFriendStore } from '../stores/friendStore.js';
 import { useNetworkStore } from '../stores/networkStore.js';
+import { useSquadStore } from '../stores/squadStore.js';
 import CreateCommunityModal from '../pages/CreateCommunityModal.js';
 import JoinCommunityModal from '../pages/JoinCommunityModal.js';
+import CreateSquadGlobalModal from '../pages/CreateSquadGlobalModal.js';
 import TransferOwnershipModal from '../pages/TransferOwnershipModal.js';
 import ContextMenu from './ContextMenu.js';
 
@@ -26,6 +28,12 @@ interface Props {
   onSelectFriends?: () => void;
   settingsActive?: boolean;
   onSelectSettings?: () => void;
+  activeSquadId?: string | null;
+  onSelectSquad?: (squadId: string) => void;
+}
+
+function squadInitials(name: string): string {
+  return name.split(/\s+/).map((w) => w[0] ?? '').join('').toUpperCase().slice(0, 2) || 'SQ';
 }
 
 function communityInitials(name: string): string {
@@ -37,12 +45,14 @@ function communityColor(id: string): { color: string; bg: string } {
   return { color: `hsl(${hue},60%,65%)`, bg: `hsl(${hue},40%,18%)` };
 }
 
-export default function GuildsSidebar({ activeCommunityId, onSelectCommunity, dmActive, onSelectDM, friendsActive, onSelectFriends, settingsActive, onSelectSettings }: Props): React.JSX.Element {
+export default function GuildsSidebar({ activeCommunityId, onSelectCommunity, dmActive, onSelectDM, friendsActive, onSelectFriends, settingsActive, onSelectSettings, activeSquadId, onSelectSquad }: Props): React.JSX.Element {
   const { t } = useTranslation();
   const { communities, loadCommunities, leaveCommunity, myRoles, communityOrder, setCommunityOrder } = useCommunityStore();
   const { conversations } = useDMStore();
   const { publicKey: myKey } = useNetworkStore();
+  const mySquads = useSquadStore((s) => s.allMySquads());
   const [dragCommunityId, setDragCommunityId] = useState<string | null>(null);
+  const [showCreateSquad, setShowCreateSquad] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
   const [showJoin,   setShowJoin]   = useState(false);
   const [showMenu,   setShowMenu]   = useState(false);
@@ -123,6 +133,23 @@ export default function GuildsSidebar({ activeCommunityId, onSelectCommunity, dm
   return (
     <>
       <div style={styles.sidebar}>
+        {/* Friends button */}
+        <button
+          title="Friends"
+          onClick={() => onSelectFriends?.()}
+          style={{
+            ...styles.icon,
+            background: friendsActive ? 'var(--color-accent)' : 'var(--color-bg-hover)',
+            color: friendsActive ? '#fff' : 'var(--color-text-secondary)',
+            borderRadius: friendsActive ? '14px' : '50%',
+            border: friendsActive ? '2px solid var(--color-accent)' : '2px solid transparent',
+            fontSize: '16px', fontWeight: 400, position: 'relative' as const,
+          }}
+        >
+          &#x263A;
+          {pendingFriends > 0 && <span style={styles.badge}>{pendingFriends > 9 ? '9+' : pendingFriends}</span>}
+        </button>
+
         {/* DM button */}
         <button
           title="Direct Messages"
@@ -140,22 +167,32 @@ export default function GuildsSidebar({ activeCommunityId, onSelectCommunity, dm
           {unreadDMs > 0 && <span style={styles.badge}>{unreadDMs > 9 ? '9+' : unreadDMs}</span>}
         </button>
 
-        {/* Friends button */}
-        <button
-          title="Friends"
-          onClick={() => onSelectFriends?.()}
-          style={{
-            ...styles.icon,
-            background: friendsActive ? 'var(--color-accent)' : 'var(--color-bg-hover)',
-            color: friendsActive ? '#fff' : 'var(--color-text-secondary)',
-            borderRadius: friendsActive ? '14px' : '50%',
-            border: friendsActive ? '2px solid var(--color-accent)' : '2px solid transparent',
-            fontSize: '16px', fontWeight: 400, position: 'relative' as const,
-          }}
-        >
-          &#x263A;
-          {pendingFriends > 0 && <span style={styles.badge}>{pendingFriends > 9 ? '9+' : pendingFriends}</span>}
-        </button>
+        {/* Squads (personal + community) */}
+        {mySquads.length > 0 && (
+          <>
+            <div style={styles.divider} />
+            {mySquads.map((sq) => {
+              const isActive = activeSquadId === sq.id;
+              const hue = parseInt((sq.id || '0000').slice(0, 4).replace(/[^0-9a-f]/gi, '0') || '0', 16) % 360;
+              return (
+                <button
+                  key={sq.id}
+                  title={sq.name}
+                  onClick={() => onSelectSquad?.(sq.id)}
+                  style={{
+                    ...styles.icon,
+                    background: `hsl(${hue},35%,20%)`, color: `hsl(${hue},60%,70%)`,
+                    borderRadius: isActive ? '14px' : '50%',
+                    border: isActive ? '2px solid var(--color-accent)' : '2px solid transparent',
+                    fontSize: '13px',
+                  }}
+                >
+                  {squadInitials(sq.name)}
+                </button>
+              );
+            })}
+          </>
+        )}
 
         <div style={styles.divider} />
 
@@ -238,6 +275,9 @@ export default function GuildsSidebar({ activeCommunityId, onSelectCommunity, dm
               <button style={styles.menuItem} onClick={() => { setShowCreate(true); setShowMenu(false); }}>
                 <span style={styles.menuIcon}>+</span> Create a community
               </button>
+              <button style={styles.menuItem} onClick={() => { setShowCreateSquad(true); setShowMenu(false); }}>
+                <span style={styles.menuIcon}>{'\u{1F465}'}</span> Create a squad
+              </button>
               <div style={styles.menuDivider} />
               <button style={styles.menuItem} onClick={() => { setShowJoin(true); setShowMenu(false); }}>
                 <span style={styles.menuIcon}>#</span> Join with invite link
@@ -266,6 +306,7 @@ export default function GuildsSidebar({ activeCommunityId, onSelectCommunity, dm
         </button>
       </div>
 
+      {showCreateSquad && <CreateSquadGlobalModal onClose={() => setShowCreateSquad(false)} />}
       {showCreate && <CreateCommunityModal onClose={() => setShowCreate(false)} onCreated={(id) => { onSelectCommunity(id); }} />}
       {showJoin && <JoinCommunityModal onClose={() => setShowJoin(false)} onJoined={(id) => { onSelectCommunity(id); }} prefillLink={new URLSearchParams(window.location.search).get('join') ? window.location.href : undefined} />}
       {transferCommunity && (

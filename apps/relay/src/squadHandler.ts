@@ -77,12 +77,23 @@ function handleCreate(
     return;
   }
 
-  // Must be a member of the community
-  const members = communityDB.getMembers(communityId);
-  const isMember = members.some((m) => m.publicKey === client.publicKey);
-  if (!isMember) {
-    sendToClient(client, { type: 'SQUAD_RESULT', payload: { action: 'CREATE_SQUAD', success: false, message: 'You must be a community member to create a squad.' }, timestamp: Date.now() });
-    return;
+  // Personal squads (friends groups not tied to a community) use the
+  // sentinel id `personal:<ownerPubkey>`. They skip the community-membership
+  // check, but the caller may only create within their own personal space.
+  const isPersonal = typeof communityId === 'string' && communityId.startsWith('personal:');
+  if (isPersonal) {
+    if (communityId !== `personal:${client.publicKey}`) {
+      sendToClient(client, { type: 'SQUAD_RESULT', payload: { action: 'CREATE_SQUAD', success: false, message: 'Invalid personal squad space.' }, timestamp: Date.now() });
+      return;
+    }
+  } else {
+    // Must be a member of the community
+    const members = communityDB.getMembers(communityId);
+    const isMember = members.some((m) => m.publicKey === client.publicKey);
+    if (!isMember) {
+      sendToClient(client, { type: 'SQUAD_RESULT', payload: { action: 'CREATE_SQUAD', success: false, message: 'You must be a community member to create a squad.' }, timestamp: Date.now() });
+      return;
+    }
   }
 
   if (name.trim().length > 50) {
