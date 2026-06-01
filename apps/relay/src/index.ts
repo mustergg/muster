@@ -317,7 +317,7 @@ function handleMessage(client: RelayClient, msg: any): void {
 
   if (COMMUNITY_TYPES.has(msg.type)) {
     if (msg.type === 'CREATE_COMMUNITY') { if (enforceTier(client, 'CREATE_COMMUNITY', userDB, sendToClient)) return; }
-    handleCommunityMessage(client, msg, communityDB, sendToClient, clients, channels, broadcastPresence, userDB);
+    handleCommunityMessage(client, msg, communityDB, sendToClient, clients, channels, broadcastPresence, userDB, manifestDB);
     return;
   }
 

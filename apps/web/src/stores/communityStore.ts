@@ -9,7 +9,25 @@
 
 import { create } from 'zustand';
 import { useNetworkStore } from './networkStore';
+import { useAuthStore } from './authStore';
+import { useManifestStore } from './manifestStore';
+import { buildGenesisManifest, publishManifest } from '../lib/manifest';
+import { toHex, sha256 } from '@muster/crypto';
+import type { ManifestChannel } from '@muster/protocol';
 import type { TransportMessage } from '@muster/transport';
+
+/** Random UUID v4 (community/channel ids). */
+function uuid(): string {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0; return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
+  });
+}
+
+/** 32-byte manifest channel id derived from a legacy channel uuid — matches
+ *  the derivation chatStore + governance modal use. */
+function channelManifestId(uuidStr: string): Uint8Array {
+  return sha256(new TextEncoder().encode(`channel:${uuidStr}`));
+}
 
 // =================================================================
 // Types (matching what UI components expect)
@@ -421,10 +439,56 @@ export const useCommunityStore = create<CommunityState>()((set, get) => {
         const { transport } = useNetworkStore.getState();
         if (!transport?.isConnected) { reject(new Error('Not connected to relay')); return; }
 
-        const requestId = Math.random().toString(36).slice(2);
-        pendingCreates.set(requestId, { resolve, reject });
-        transport.send({ type: 'CREATE_COMMUNITY', payload: { name, description }, timestamp: Date.now() });
-        setTimeout(() => { if (pendingCreates.has(requestId)) { pendingCreates.delete(requestId); reject(new Error('Create community timed out')); } }, 10000);
+        // R25 — manifest re-architecture. Build + publish a signed genesis
+        // manifest first; the relay adopts its derived id as the canonical
+        // community identity (community id = manifest id). The manifest is
+        // the source of truth for owner + admin roster + channels.
+        const defaultChannels = [
+          { id: uuid(), name: 'general', type: 'text', visibility: 'public', position: 0 },
+          { id: uuid(), name: 'announcements', type: 'text', visibility: 'readonly', position: 1 },
+        ];
+
+        const finish = (communityId?: string): void => {
+          const requestId = Math.random().toString(36).slice(2);
+          pendingCreates.set(requestId, { resolve, reject });
+          transport.send({
+            type: 'CREATE_COMMUNITY',
+            payload: { name, description, communityId, channels: defaultChannels },
+            timestamp: Date.now(),
+          });
+          setTimeout(() => { if (pendingCreates.has(requestId)) { pendingCreates.delete(requestId); reject(new Error('Create community timed out')); } }, 10000);
+        };
+
+        const kp = useAuthStore.getState()._keypair;
+        if (!kp) { finish(); return; } // no key → legacy UUID path
+
+        const manifestChannels: ManifestChannel[] = defaultChannels.map((c) => ({
+          id: channelManifestId(c.id),
+          name: c.name,
+          visibility: c.visibility === 'private' ? 'private' : 'public',
+          type: c.type === 'voice' ? 'voice' : 'text',
+        }));
+
+        void buildGenesisManifest({
+          ownerPubkey: kp.publicKey,
+          ownerPrivkey: kp.privateKey,
+          admins: [],
+          channels: manifestChannels,
+          memberPubkeys: [kp.publicKey],
+        }).then((built) => {
+          try {
+            publishManifest({ send: (m) => transport.send(m), isConnected: transport.isConnected }, built);
+            useManifestStore.getState().ingest(built);
+          } catch (err) {
+            console.warn('[community] manifest publish failed, using legacy id:', err);
+            finish();
+            return;
+          }
+          finish(toHex(built.manifest.communityId));
+        }).catch((err) => {
+          console.warn('[community] genesis manifest build failed, using legacy id:', err);
+          finish();
+        });
       });
     },
 

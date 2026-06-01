@@ -8,8 +8,10 @@
 
 import { WebSocket } from 'ws';
 import { randomUUID } from 'crypto';
+import { fromHex, toHex } from '@muster/crypto';
 import { CommunityDB } from './communityDB';
 import { UserDB } from './userDB';
+import type { ManifestDB } from './manifestDB';
 import type { RelayClient } from './types';
 
 function generateId(): string {
@@ -25,10 +27,11 @@ export function handleCommunityMessage(
   channels: Map<string, Set<WebSocket>>,
   broadcastPresence: (channelId: string) => void,
   userDB?: UserDB,
+  manifestDB?: ManifestDB | null,
 ): void {
   switch (msg.type) {
     case 'CREATE_COMMUNITY':
-      handleCreate(client, msg, communityDB, sendToClient, channels, broadcastPresence);
+      handleCreate(client, msg, communityDB, sendToClient, channels, broadcastPresence, manifestDB);
       break;
     case 'JOIN_COMMUNITY':
       handleJoin(client, msg, communityDB, sendToClient, clients, channels, broadcastPresence);
@@ -50,24 +53,61 @@ function handleCreate(
   sendToClient: (client: RelayClient, msg: Record<string, unknown>) => void,
   channels: Map<string, Set<WebSocket>>,
   broadcastPresence: (channelId: string) => void,
+  manifestDB?: ManifestDB | null,
 ): void {
   const { name, description } = msg.payload || {};
   if (!name || !name.trim()) {
     sendToClient(client, { type: 'ERROR', payload: { code: 'INVALID_NAME', message: 'Community name is required' }, timestamp: Date.now() });
     return;
   }
-  const communityId = generateId();
   const now = Date.now();
-  const defaultChannels = [
-    { id: generateId(), communityId, name: 'general', type: 'text', visibility: 'public', position: 0 },
-    { id: generateId(), communityId, name: 'announcements', type: 'text', visibility: 'readonly', position: 1 },
-  ];
+
+  // R25 — manifest re-architecture. When the client has already published a
+  // signed genesis manifest (MANIFEST_PUBLISH, verified by manifestHandler),
+  // it sends the manifest-derived communityId + its channel list. We adopt
+  // that id as the canonical community identity, provided the stored
+  // manifest names this client as owner. This makes the signed manifest the
+  // community's source of truth. Falls back to a legacy UUID otherwise.
+  let communityId = generateId();
+  let manifestBacked = false;
+  const reqId = typeof msg.payload?.communityId === 'string' ? msg.payload.communityId.toLowerCase() : null;
+  const reqChannels = Array.isArray(msg.payload?.channels) ? msg.payload.channels : null;
+  if (reqId && manifestDB && /^[0-9a-f]{64}$/.test(reqId)) {
+    try {
+      const stored = manifestDB.getLatest(Buffer.from(fromHex(reqId)));
+      if (stored && toHex(new Uint8Array(stored.owner)) === client.publicKey) {
+        if (communityDB.getCommunity(reqId)) {
+          sendToClient(client, { type: 'ERROR', payload: { code: 'EXISTS', message: 'Community already exists' }, timestamp: Date.now() });
+          return;
+        }
+        communityId = reqId;
+        manifestBacked = true;
+      }
+    } catch { /* fall through to legacy id */ }
+  }
+
+  let defaultChannels: Array<{ id: string; communityId: string; name: string; type: string; visibility: string; position: number }>;
+  if (manifestBacked && reqChannels && reqChannels.length > 0) {
+    defaultChannels = reqChannels.slice(0, 64).map((ch: any, i: number) => ({
+      id: typeof ch.id === 'string' && ch.id ? ch.id : generateId(),
+      communityId,
+      name: String(ch.name || `channel-${i}`).slice(0, 100),
+      type: ch.type === 'voice' ? 'voice' : 'text',
+      visibility: ['public', 'private', 'readonly', 'archived'].includes(ch.visibility) ? ch.visibility : 'public',
+      position: typeof ch.position === 'number' ? ch.position : i,
+    }));
+  } else {
+    defaultChannels = [
+      { id: generateId(), communityId, name: 'general', type: 'text', visibility: 'public', position: 0 },
+      { id: generateId(), communityId, name: 'announcements', type: 'text', visibility: 'readonly', position: 1 },
+    ];
+  }
   const owner = { communityId, publicKey: client.publicKey, username: client.username, role: 'owner', joinedAt: now };
   communityDB.createCommunity(
     { id: communityId, name: name.trim(), description: (description || '').trim(), type: 'public', ownerPublicKey: client.publicKey, createdAt: now },
     defaultChannels, owner,
   );
-  console.log(`[relay] Community created: "${name}" (${communityId.slice(0, 8)}...) by ${client.username}`);
+  console.log(`[relay] Community created: "${name}" (${communityId.slice(0, 8)}...) by ${client.username}${manifestBacked ? ' [manifest-backed]' : ''}`);
   for (const ch of defaultChannels) {
     client.channels.add(ch.id);
     if (!channels.has(ch.id)) channels.set(ch.id, new Set());

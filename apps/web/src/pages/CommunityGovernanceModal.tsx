@@ -55,7 +55,10 @@ export default function CommunityGovernanceModal({ communityId, onClose }: Props
   const communityMembers = members[communityId] || [];
 
   const [map, setMap] = useState<Record<string, string>>(loadMap);
-  const manifestIdHex = map[communityId];
+  // R25 — manifest re-architecture: new communities use their manifest id AS
+  // the community id, so try that directly first; fall back to the legacy map
+  // for older communities that enabled governance separately.
+  const manifestIdHex = manifestStore.getLatest(communityId) ? communityId : map[communityId];
   const entry = manifestIdHex ? manifestStore.getLatest(manifestIdHex) : undefined;
   const manifest = entry?.manifest;
 
@@ -68,9 +71,13 @@ export default function CommunityGovernanceModal({ communityId, onClose }: Props
   const isLegacyOwner = !!community && community.ownerPublicKey === myPubHex;
 
   useEffect(() => {
-    if (manifestIdHex) manifestStore.fetchLatest(manifestIdHex);
+    // Manifest-backed communities: id IS the manifest id. Also try the
+    // mapped id for legacy communities.
+    if (/^[0-9a-f]{64}$/i.test(communityId)) manifestStore.fetchLatest(communityId);
+    const mapped = map[communityId];
+    if (mapped && mapped !== communityId) manifestStore.fetchLatest(mapped);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [manifestIdHex]);
+  }, [communityId]);
 
   const channelsForManifest = useMemo<ManifestChannel[]>(() => {
     return (community?.channels || []).map((ch) => ({
