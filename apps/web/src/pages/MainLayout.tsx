@@ -168,7 +168,14 @@ export default function MainLayout(): React.JSX.Element {
               ) : isSquadVoice && activeSquadId ? (
                 <SquadChatArea squadId={activeSquadId} mode="voice" />
               ) : isCommunityVoice && active ? (
-                <VoicePanel channelId={active.channelId} channelName={active.channelName} />
+                <div style={styles.voiceStack}>
+                  <div style={styles.voiceRegion}>
+                    <VoicePanel channelId={active.channelId} channelName={active.channelName} />
+                  </div>
+                  <div style={styles.voiceTextRegion}>
+                    <ChatArea active={active} />
+                  </div>
+                </div>
               ) : (
                 <ChatArea active={active} />
               )}
@@ -187,4 +194,8 @@ const styles = {
   outerShell: { flex: 1, display: 'flex', flexDirection: 'column' as const, overflow: 'hidden', minHeight: 0 } as React.CSSProperties,
   shell: { flex: 1, display: 'flex', overflow: 'hidden', minHeight: 0 } as React.CSSProperties,
   main: { flex: 1, display: 'flex', flexDirection: 'column' as const, minWidth: 0, overflow: 'hidden' } as React.CSSProperties,
+  // Voice channel = voice panel (top) + its dedicated text chat (below).
+  voiceStack: { flex: 1, display: 'flex', flexDirection: 'column' as const, minHeight: 0, overflow: 'hidden' } as React.CSSProperties,
+  voiceRegion: { flex: '0 0 45%', minHeight: 0, borderBottom: '1px solid var(--color-border)', overflow: 'hidden' } as React.CSSProperties,
+  voiceTextRegion: { flex: '1 1 55%', minHeight: 0, display: 'flex', overflow: 'hidden' } as React.CSSProperties,
 } as const;
