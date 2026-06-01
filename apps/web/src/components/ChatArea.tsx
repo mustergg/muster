@@ -143,6 +143,7 @@ function FileAttachment({ fileId, fileName, mimeType, size }: {
 // ─── Blob attachment (R25 — Phase 4: content-addressed pieces) ──────────
 
 function BlobAttachment({ msg }: { msg: ChatMessage }): React.JSX.Element {
+  const { t } = useTranslation();
   const fetchAttachment = useChatStore((s) => s.fetchAttachment);
   const mime = msg.mimeType || '';
   const isImage = mime.startsWith('image/');
@@ -165,12 +166,12 @@ function BlobAttachment({ msg }: { msg: ChatMessage }): React.JSX.Element {
   };
 
   if (isImage) {
-    if (status === 'loading' || status === 'pending') return <div style={fileStyles.imagePlaceholder}>Loading image…</div>;
-    if (status === 'failed') return <div style={fileStyles.imagePlaceholder}>Failed to load image</div>;
+    if (status === 'loading' || status === 'pending') return <div style={fileStyles.imagePlaceholder}>{t('attachment.loadingImage')}</div>;
+    if (status === 'failed') return <div style={fileStyles.imagePlaceholder}>{t('attachment.failedImage')}</div>;
     if (url) {
       return (
         <div style={fileStyles.imageWrap}>
-          <img src={url} alt={name} style={fileStyles.image} onClick={download} title="Click to download" />
+          <img src={url} alt={name} style={fileStyles.image} onClick={download} title={t('common.copy')} />
           <span style={fileStyles.imageLabel}>{name} ({formatSize(size)})</span>
         </div>
       );
@@ -179,8 +180,8 @@ function BlobAttachment({ msg }: { msg: ChatMessage }): React.JSX.Element {
   }
 
   if (isAudio) {
-    if (status === 'loading' || status === 'pending') return <div style={fileStyles.imagePlaceholder}>{'\u{1F3A4}'} Loading voice note…</div>;
-    if (status === 'failed') return <div style={fileStyles.imagePlaceholder}>Failed to load voice note</div>;
+    if (status === 'loading' || status === 'pending') return <div style={fileStyles.imagePlaceholder}>{'\u{1F3A4}'} {t('attachment.loadingVoice')}</div>;
+    if (status === 'failed') return <div style={fileStyles.imagePlaceholder}>{t('attachment.failedVoice')}</div>;
     if (url) {
       return (
         <div style={fileStyles.imageWrap}>
@@ -197,9 +198,9 @@ function BlobAttachment({ msg }: { msg: ChatMessage }): React.JSX.Element {
       <div style={fileStyles.fileIcon}>&#x1F4CE;</div>
       <div style={fileStyles.fileMeta}>
         <span style={fileStyles.fileName}>{name}</span>
-        <span style={fileStyles.fileSize}>{formatSize(size)}{status === 'failed' ? ' · failed' : ''}</span>
+        <span style={fileStyles.fileSize}>{formatSize(size)}{status === 'failed' ? ` · ${t('attachment.failed')}` : ''}</span>
       </div>
-      <button onClick={download} style={fileStyles.downloadBtn} title={url ? 'Download' : 'Fetch'}>
+      <button onClick={download} style={fileStyles.downloadBtn} title={t('common.save')}>
         {status === 'loading' ? '…' : '⬇'}
       </button>
     </div>
@@ -296,7 +297,7 @@ export default function ChatArea({ active }: Props): React.JSX.Element {
   const uploadFile = useCallback(async (file: File) => {
     if (!active) return;
     if (file.size > MAX_FILE_SIZE) {
-      alert(`File too large. Maximum size is ${formatSize(MAX_FILE_SIZE)}.`);
+      alert(t('attachment.tooLarge', { size: formatSize(MAX_FILE_SIZE) }));
       return;
     }
 
@@ -304,7 +305,7 @@ export default function ChatArea({ active }: Props): React.JSX.Element {
     try {
       const { transport } = useNetworkStore.getState();
       if (!transport?.isConnected) {
-        alert('Not connected to relay.');
+        alert(t('attachment.notConnected'));
         return;
       }
       // R25 — Phase 4. Route through the content-addressed blob path:
@@ -314,11 +315,11 @@ export default function ChatArea({ active }: Props): React.JSX.Element {
       await sendFile(active.channelId, file);
     } catch (err) {
       console.error('[chat] Upload failed:', err);
-      alert('Failed to upload file.');
+      alert(t('attachment.uploadFailed'));
     } finally {
       setUploading(false);
     }
-  }, [active, draft, sendFile, sendMessage]);
+  }, [active, draft, sendFile, sendMessage, t]);
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -360,9 +361,9 @@ export default function ChatArea({ active }: Props): React.JSX.Element {
       setRecording(true);
     } catch (err) {
       console.error('[chat] mic access failed:', err);
-      alert('Microphone access denied or unavailable.');
+      alert(t('attachment.micDenied'));
     }
-  }, [recording, uploadFile]);
+  }, [recording, uploadFile, t]);
 
   if (!active) {
     return (
@@ -394,7 +395,7 @@ export default function ChatArea({ active }: Props): React.JSX.Element {
         <div style={styles.dragOverlay}>
           <div style={styles.dragContent}>
             <span style={styles.dragIcon}>&#x1F4CE;</span>
-            <span style={styles.dragText}>Drop file to upload</span>
+            <span style={styles.dragText}>{t('attachment.dropToUpload')}</span>
           </div>
         </div>
       )}
@@ -419,7 +420,7 @@ export default function ChatArea({ active }: Props): React.JSX.Element {
             onClick={() => fileInputRef.current?.click()}
             disabled={uploading || recording}
             style={styles.attachBtn}
-            title="Attach file"
+            title={t('attachment.attachFile')}
           >
             {uploading ? '\u231B' : '\u{1F4CE}'}
           </button>
@@ -427,7 +428,7 @@ export default function ChatArea({ active }: Props): React.JSX.Element {
             onClick={toggleRecord}
             disabled={uploading}
             style={{ ...styles.attachBtn, color: recording ? '#E24B4A' : undefined }}
-            title={recording ? 'Stop & send voice note' : 'Record voice note'}
+            title={recording ? t('attachment.stopVoice') : t('attachment.recordVoice')}
           >
             {recording ? '\u23F9' : '\u{1F3A4}'}
           </button>

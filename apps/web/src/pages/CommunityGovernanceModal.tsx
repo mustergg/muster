@@ -13,6 +13,7 @@
  */
 
 import React, { useEffect, useMemo, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { toHex, fromHex, sha256 } from '@muster/crypto';
 import type { ManifestAdmin, ManifestChannel, Permission } from '@muster/protocol';
 import { useManifestStore } from '../stores/manifestStore.js';
@@ -44,6 +45,7 @@ function channelIdBytes(id: string): Uint8Array {
 }
 
 export default function CommunityGovernanceModal({ communityId, onClose }: Props): React.JSX.Element {
+  const { t } = useTranslation();
   const { communities, members } = useCommunityStore();
   const manifestStore = useManifestStore();
   const keypair = useAuthStore((s) => s._keypair);
@@ -157,7 +159,7 @@ export default function CommunityGovernanceModal({ communityId, onClose }: Props
     <div style={s.overlay} onClick={onClose}>
       <div style={s.modal} onClick={(e) => e.stopPropagation()}>
         <div style={s.header}>
-          <span style={s.title}>{'\u{1F510}'} Governance — {community?.name || 'Community'}</span>
+          <span style={s.title}>{'\u{1F510}'} {t('governance.title')} — {community?.name || ''}</span>
           <button style={s.closeBtn} onClick={onClose}>✕</button>
         </div>
 
@@ -166,17 +168,13 @@ export default function CommunityGovernanceModal({ communityId, onClose }: Props
 
           {!manifest && (
             <div style={s.section}>
-              <p style={s.desc}>
-                This community has no signed manifest yet. The manifest is an
-                owner-signed record of admins and channels that the network
-                verifies — admin actions are authorised against it.
-              </p>
+              <p style={s.desc}>{t('governance.noManifest')}</p>
               {isLegacyOwner ? (
                 <button style={s.primaryBtn} disabled={busy} onClick={enableGovernance}>
-                  {busy ? 'Publishing…' : 'Enable signed governance'}
+                  {busy ? t('governance.publishing') : t('governance.enable')}
                 </button>
               ) : (
-                <div style={s.muted}>Only the community owner can enable governance.</div>
+                <div style={s.muted}>{t('governance.ownerOnly')}</div>
               )}
             </div>
           )}
@@ -185,25 +183,25 @@ export default function CommunityGovernanceModal({ communityId, onClose }: Props
             <>
               <div style={s.section}>
                 <div style={s.rowBetween}>
-                  <span style={s.sectionTitle}>Manifest</span>
+                  <span style={s.sectionTitle}>{t('governance.manifest')}</span>
                   <span style={s.version}>v{manifest.version}</span>
                 </div>
-                <div style={s.kv}><span style={s.k}>Owner</span><span style={s.v}>{nameFor(toHex(manifest.owner))}</span></div>
-                <div style={s.kv}><span style={s.k}>Community ID</span><span style={s.vMono}>{toHex(manifest.communityId).slice(0, 24)}…</span></div>
-                <div style={s.kv}><span style={s.k}>Channels</span><span style={s.v}>{manifest.channels.length}</span></div>
+                <div style={s.kv}><span style={s.k}>{t('governance.owner')}</span><span style={s.v}>{nameFor(toHex(manifest.owner))}</span></div>
+                <div style={s.kv}><span style={s.k}>{t('governance.communityId')}</span><span style={s.vMono}>{toHex(manifest.communityId).slice(0, 24)}…</span></div>
+                <div style={s.kv}><span style={s.k}>{t('governance.channels')}</span><span style={s.v}>{manifest.channels.length}</span></div>
               </div>
 
               <div style={s.section}>
-                <span style={s.sectionTitle}>Admins ({manifest.admins.length})</span>
-                {manifest.admins.length === 0 && <div style={s.muted}>No admins yet — owner has full authority.</div>}
+                <span style={s.sectionTitle}>{t('governance.admins', { count: manifest.admins.length })}</span>
+                {manifest.admins.length === 0 && <div style={s.muted}>{t('governance.noAdmins')}</div>}
                 {manifest.admins.map((a) => {
                   const hex = toHex(a.pubkey);
                   return (
                     <div key={hex} style={s.adminRow}>
                       <span style={s.adminName}>{nameFor(hex)}</span>
-                      <span style={s.adminPerms}>{a.permissions.length} perms</span>
+                      <span style={s.adminPerms}>{t('governance.perms', { count: a.permissions.length })}</span>
                       {isOwner && (
-                        <button style={s.removeBtn} disabled={busy} onClick={() => removeAdmin(hex)}>Remove</button>
+                        <button style={s.removeBtn} disabled={busy} onClick={() => removeAdmin(hex)}>{t('governance.remove')}</button>
                       )}
                     </div>
                   );
@@ -212,22 +210,22 @@ export default function CommunityGovernanceModal({ communityId, onClose }: Props
 
               {isOwner && (
                 <div style={s.section}>
-                  <span style={s.sectionTitle}>Add admin</span>
+                  <span style={s.sectionTitle}>{t('governance.addAdmin')}</span>
                   <div style={s.addRow}>
                     <select style={s.select} value={pickMember} onChange={(e) => setPickMember(e.target.value)}>
-                      <option value="">Select a member…</option>
+                      <option value="">{t('governance.selectMember')}</option>
                       {candidates.map((m) => (
                         <option key={m.publicKey} value={m.publicKey}>{m.username || m.publicKey.slice(0, 12)}</option>
                       ))}
                     </select>
-                    <button style={s.primaryBtn} disabled={busy || !pickMember} onClick={addAdmin}>Add</button>
+                    <button style={s.primaryBtn} disabled={busy || !pickMember} onClick={addAdmin}>{t('governance.add')}</button>
                   </div>
-                  {candidates.length === 0 && <div style={s.muted}>No eligible members to promote.</div>}
+                  {candidates.length === 0 && <div style={s.muted}>{t('governance.noEligible')}</div>}
                 </div>
               )}
 
               {!isOwner && (
-                <div style={s.muted}>Only the owner can change the admin roster.</div>
+                <div style={s.muted}>{t('governance.ownerOnlyRoster')}</div>
               )}
             </>
           )}

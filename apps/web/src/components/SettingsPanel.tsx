@@ -5,28 +5,32 @@
  */
 
 import React, { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import NodeSettings from './NodeSettings.js';
 import StorageSettings from './StorageSettings.js';
 import ClientNodeSettings from './ClientNodeSettings.js';
 import NatSettings from './NatSettings.js';
+import GeneralSettings from './GeneralSettings.js';
 
-type SettingsTab = 'nodes' | 'storage' | 'client-node' | 'network';
+type SettingsTab = 'general' | 'nodes' | 'storage' | 'client-node' | 'network';
 
-const TABS: Array<{ id: SettingsTab; icon: string; label: string }> = [
-  { id: 'nodes', icon: '\u{1F310}', label: 'Nodes' },
-  { id: 'storage', icon: '\u{1F4BE}', label: 'Storage' },
-  { id: 'client-node', icon: '\u{1F5A5}\u{FE0F}', label: 'Client Node' },
-  { id: 'network', icon: '\u{1F30D}', label: 'Network' },
+const TABS: Array<{ id: SettingsTab; icon: string; labelKey: string }> = [
+  { id: 'general', icon: '\u{1F310}', labelKey: 'settings.general' },
+  { id: 'nodes', icon: '\u{1F517}', labelKey: 'settings.nodes' },
+  { id: 'storage', icon: '\u{1F4BE}', labelKey: 'settings.storage' },
+  { id: 'client-node', icon: '\u{1F5A5}\u{FE0F}', labelKey: 'settings.clientNode' },
+  { id: 'network', icon: '\u{1F30D}', labelKey: 'settings.network' },
 ];
 
 export default function SettingsPanel(): React.JSX.Element {
-  const [activeTab, setActiveTab] = useState<SettingsTab>('nodes');
+  const { t } = useTranslation();
+  const [activeTab, setActiveTab] = useState<SettingsTab>('general');
 
   return (
     <div style={s.container}>
       {/* Sidebar with tabs */}
       <div style={s.sidebar}>
-        <div style={s.sidebarTitle}>Settings</div>
+        <div style={s.sidebarTitle}>{t('settings.title')}</div>
         {TABS.map((tab) => (
           <button
             key={tab.id}
@@ -38,13 +42,14 @@ export default function SettingsPanel(): React.JSX.Element {
             }}
           >
             <span style={s.tabIcon}>{tab.icon}</span>
-            <span>{tab.label}</span>
+            <span>{t(tab.labelKey)}</span>
           </button>
         ))}
       </div>
 
       {/* Content */}
       <div style={s.content}>
+        {activeTab === 'general' && <GeneralSettings />}
         {activeTab === 'nodes' && <NodeSettings />}
         {activeTab === 'storage' && <StorageSettings />}
         {activeTab === 'client-node' && <ClientNodeSettings />}

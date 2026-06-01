@@ -6,6 +6,7 @@
  */
 
 import React, { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useClientNodeStore, NodeMode } from '../stores/clientNodeStore.js';
 import { useCommunityStore } from '../stores/communityStore.js';
 import { useBandwidthStore, formatBps } from '../stores/bandwidthStore.js';
@@ -18,6 +19,7 @@ const MODE_INFO: Record<NodeMode, { icon: string; label: string; desc: string }>
 };
 
 export default function ClientNodeSettings(): React.JSX.Element {
+  const { t } = useTranslation();
   const { config, running, pid, logs, error, uptimeSeconds, start, stop, setMode, setPort, setMaxDisk, setMaxBandwidth, setAutoStart, setRelayPath, hostCommunity, unhostCommunity, clearLogs } = useClientNodeStore();
   const { communities } = useCommunityStore();
   const bw = useBandwidthStore((st) => st.snapshot);
@@ -77,12 +79,12 @@ export default function ClientNodeSettings(): React.JSX.Element {
           {bw && (
             <div style={s.bwCard}>
               <div style={s.bwHeadRow}>
-                <span style={s.bwTitle}>{'\u{1F4E1}'} Bandwidth</span>
-                {bw.congested && <span style={s.bwCongested}>CONGESTED</span>}
+                <span style={s.bwTitle}>{'\u{1F4E1}'} {t('bandwidth.title')}</span>
+                {bw.congested && <span style={s.bwCongested}>{t('bandwidth.congested')}</span>}
               </div>
               <div style={s.bwMain}>
                 <span style={s.bwNow}>{formatBps(bw.outboundBps)}</span>
-                <span style={s.bwCap}>/ cap {formatBps(bw.capBps)}</span>
+                <span style={s.bwCap}>{t('bandwidth.cap', { value: formatBps(bw.capBps) })}</span>
               </div>
               <div style={s.bwMeter}>
                 <div style={{
@@ -93,9 +95,9 @@ export default function ClientNodeSettings(): React.JSX.Element {
               </div>
               <div style={s.bwSub}>
                 {bw.measuring
-                  ? 'Measuring upload capacity…'
-                  : `Measured upload ${formatBps(bw.measuredUploadBps)}`}
-                {bw.ewmaRttMs > 0 && ` · RTT ${bw.ewmaRttMs}ms`}
+                  ? t('bandwidth.measuring')
+                  : t('bandwidth.measured', { value: formatBps(bw.measuredUploadBps) })}
+                {bw.ewmaRttMs > 0 && ` · ${t('bandwidth.rtt', { ms: bw.ewmaRttMs })}`}
               </div>
             </div>
           )}
@@ -229,10 +231,10 @@ export default function ClientNodeSettings(): React.JSX.Element {
         <div style={s.section}>
           <div style={s.sectionHeaderRow}>
             <button onClick={() => { const n = !showRep; setShowRep(n); if (n) repRequest(); }} style={s.toggleBtn}>
-              {showRep ? '\u{25BC}' : '\u{25B6}'} Peer Reputation{repStats ? ` (${repStats.tracked})` : ''}
+              {showRep ? '\u{25BC}' : '\u{25B6}'} {t('reputation.title')}{repStats ? ` (${repStats.tracked})` : ''}
             </button>
             {showRep && (
-              <button onClick={repRequest} style={s.clearBtn}>Refresh</button>
+              <button onClick={repRequest} style={s.clearBtn}>{t('reputation.refresh')}</button>
             )}
           </div>
           {showRep && (
@@ -240,15 +242,15 @@ export default function ClientNodeSettings(): React.JSX.Element {
               {repStats ? (
                 <>
                   <div style={s.repStatsRow}>
-                    <span style={s.repStat}>{repStats.preferred} preferred</span>
-                    <span style={s.repStat}>{repStats.deprioritised} low</span>
-                    <span style={{ ...s.repStat, color: '#E24B4A' }}>{repStats.blacklisted} blacklisted</span>
+                    <span style={s.repStat}>{t('reputation.preferred', { count: repStats.preferred })}</span>
+                    <span style={s.repStat}>{t('reputation.low', { count: repStats.deprioritised })}</span>
+                    <span style={{ ...s.repStat, color: '#E24B4A' }}>{t('reputation.blacklisted', { count: repStats.blacklisted })}</span>
                   </div>
                   <div style={s.repChallenge}>
-                    POS: {repStats.totalChallengesPassed} passed / {repStats.totalChallengesFailed} failed / {repStats.totalChallengesTimedOut} timeout
+                    {t('reputation.pos', { passed: repStats.totalChallengesPassed, failed: repStats.totalChallengesFailed, timeout: repStats.totalChallengesTimedOut })}
                   </div>
                   <div style={s.repList}>
-                    {repPeers.length === 0 && <div style={s.emptyText}>No peers scored yet.</div>}
+                    {repPeers.length === 0 && <div style={s.emptyText}>{t('reputation.noPeers')}</div>}
                     {repPeers.map((p) => {
                       const black = p.blacklistedUntil != null && p.blacklistedUntil > Date.now();
                       const color = black ? '#E24B4A' : p.score >= 10 ? '#43B581' : p.score < 0 ? '#F5A623' : 'var(--color-text-secondary)';
@@ -262,7 +264,7 @@ export default function ClientNodeSettings(): React.JSX.Element {
                   </div>
                 </>
               ) : (
-                <div style={s.emptyText}>No data yet — click Refresh.</div>
+                <div style={s.emptyText}>{t('reputation.noData')}</div>
               )}
             </div>
           )}

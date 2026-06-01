@@ -10,6 +10,19 @@ export const SUPPORTED_LOCALES: Record<SupportedLocale, string> = {
 
 export const DEFAULT_LOCALE: SupportedLocale = 'en';
 
+/** localStorage key for the user's chosen locale. */
+export const LOCALE_STORAGE_KEY = 'muster-locale';
+
+/** Read the persisted locale (browser only). Falls back to DEFAULT_LOCALE. */
+export function getStoredLocale(): SupportedLocale {
+  try {
+    const ls = (globalThis as { localStorage?: { getItem(k: string): string | null } }).localStorage;
+    const raw = ls ? ls.getItem(LOCALE_STORAGE_KEY) : null;
+    if (raw && raw in SUPPORTED_LOCALES) return raw as SupportedLocale;
+  } catch { /* private mode / no storage */ }
+  return DEFAULT_LOCALE;
+}
+
 // Inline the translations directly — avoids any import/require issues
 // in both browser and Node.js environments
 const enTranslation = {
@@ -83,6 +96,48 @@ const enTranslation = {
     title: "Settings", account: "Account", appearance: "Appearance",
     notifications: "Notifications", privacy: "Privacy & Security", network: "Network",
     language: "Language", voiceVideo: "Voice & Video", keybinds: "Keybinds", about: "About Muster",
+    general: "General", nodes: "Nodes", storage: "Storage", clientNode: "Client Node",
+    languageNote: "English is the source language; other languages are translations and may lag behind.",
+  },
+  // R25 — Phase 9: bandwidth monitor
+  bandwidth: {
+    title: "Bandwidth", congested: "CONGESTED", cap: "cap {{value}}",
+    measuring: "Measuring upload capacity…", measured: "Measured upload {{value}}",
+    rtt: "RTT {{ms}}ms",
+  },
+  // R25 — Phase 7: peer reputation
+  reputation: {
+    title: "Peer Reputation", refresh: "Refresh",
+    preferred: "{{count}} preferred", low: "{{count}} low", blacklisted: "{{count}} blacklisted",
+    pos: "POS: {{passed}} passed / {{failed}} failed / {{timeout}} timeout",
+    noPeers: "No peers scored yet.", noData: "No data yet — click Refresh.",
+  },
+  // R25 — Phase 2: signed manifest governance
+  governance: {
+    title: "Governance", manifest: "Manifest", owner: "Owner", communityId: "Community ID",
+    channels: "Channels", admins: "Admins ({{count}})", noAdmins: "No admins yet — owner has full authority.",
+    addAdmin: "Add admin", selectMember: "Select a member…", add: "Add", remove: "Remove",
+    noManifest: "This community has no signed manifest yet. The manifest is an owner-signed record of admins and channels that the network verifies — admin actions are authorised against it.",
+    enable: "Enable signed governance", publishing: "Publishing…",
+    ownerOnly: "Only the community owner can enable governance.",
+    ownerOnlyRoster: "Only the owner can change the admin roster.",
+    noEligible: "No eligible members to promote.", perms: "{{count}} perms",
+  },
+  // R25 — Phase 4: blob attachments + voice notes
+  attachment: {
+    loadingImage: "Loading image…", failedImage: "Failed to load image",
+    loadingVoice: "Loading voice note…", failedVoice: "Failed to load voice note",
+    failed: "failed", dropToUpload: "Drop file to upload",
+    attachFile: "Attach file", recordVoice: "Record voice note", stopVoice: "Stop & send voice note",
+    tooLarge: "File too large. Maximum size is {{size}}.",
+    micDenied: "Microphone access denied or unavailable.",
+    notConnected: "Not connected to relay.", uploadFailed: "Failed to upload file.",
+  },
+  // R25 — Client node live status
+  clientNode: {
+    status: "Status", running: "Running (PID {{pid}})", stopped: "Stopped",
+    uptime: "Uptime", port: "Port", mode: "Mode",
+    startNode: "Start Node", stopNode: "Stop Node",
   },
   errors: { generic: "Something went wrong. Please try again.", offline: "You are offline.", notFound: "Not found.", forbidden: "You do not have permission to do that." },
   common: {
@@ -163,6 +218,48 @@ const ptTranslation = {
     title: "Definições", account: "Conta", appearance: "Aparência",
     notifications: "Notificações", privacy: "Privacidade e Segurança", network: "Rede",
     language: "Idioma", voiceVideo: "Voz e Vídeo", keybinds: "Atalhos de teclado", about: "Sobre o Muster",
+    general: "Geral", nodes: "Nós", storage: "Armazenamento", clientNode: "Nó Cliente",
+    languageNote: "O inglês é o idioma de origem; os outros idiomas são traduções e podem estar desatualizados.",
+  },
+  // R25 — Phase 9: monitor de largura de banda
+  bandwidth: {
+    title: "Largura de banda", congested: "CONGESTIONADO", cap: "limite {{value}}",
+    measuring: "A medir capacidade de envio…", measured: "Envio medido {{value}}",
+    rtt: "RTT {{ms}}ms",
+  },
+  // R25 — Phase 7: reputação de pares
+  reputation: {
+    title: "Reputação de Pares", refresh: "Atualizar",
+    preferred: "{{count}} preferidos", low: "{{count}} baixos", blacklisted: "{{count}} bloqueados",
+    pos: "POS: {{passed}} ok / {{failed}} falhas / {{timeout}} timeout",
+    noPeers: "Ainda não há pares pontuados.", noData: "Sem dados — clica em Atualizar.",
+  },
+  // R25 — Phase 2: governança por manifesto assinado
+  governance: {
+    title: "Governança", manifest: "Manifesto", owner: "Dono", communityId: "ID da comunidade",
+    channels: "Canais", admins: "Administradores ({{count}})", noAdmins: "Ainda sem administradores — o dono tem autoridade total.",
+    addAdmin: "Adicionar administrador", selectMember: "Seleciona um membro…", add: "Adicionar", remove: "Remover",
+    noManifest: "Esta comunidade ainda não tem manifesto assinado. O manifesto é um registo, assinado pelo dono, de administradores e canais que a rede verifica — as ações de admin são autorizadas contra ele.",
+    enable: "Ativar governança assinada", publishing: "A publicar…",
+    ownerOnly: "Apenas o dono da comunidade pode ativar a governança.",
+    ownerOnlyRoster: "Apenas o dono pode alterar a lista de administradores.",
+    noEligible: "Sem membros elegíveis para promover.", perms: "{{count}} permissões",
+  },
+  // R25 — Phase 4: anexos blob + notas de voz
+  attachment: {
+    loadingImage: "A carregar imagem…", failedImage: "Falha ao carregar imagem",
+    loadingVoice: "A carregar nota de voz…", failedVoice: "Falha ao carregar nota de voz",
+    failed: "falhou", dropToUpload: "Larga o ficheiro para enviar",
+    attachFile: "Anexar ficheiro", recordVoice: "Gravar nota de voz", stopVoice: "Parar e enviar nota de voz",
+    tooLarge: "Ficheiro demasiado grande. O tamanho máximo é {{size}}.",
+    micDenied: "Acesso ao microfone negado ou indisponível.",
+    notConnected: "Sem ligação ao relay.", uploadFailed: "Falha ao enviar o ficheiro.",
+  },
+  // R25 — Estado ao vivo do nó cliente
+  clientNode: {
+    status: "Estado", running: "A correr (PID {{pid}})", stopped: "Parado",
+    uptime: "Tempo ativo", port: "Porta", mode: "Modo",
+    startNode: "Iniciar Nó", stopNode: "Parar Nó",
   },
   errors: { generic: "Algo correu mal. Tenta novamente.", offline: "Estás offline.", notFound: "Não encontrado.", forbidden: "Não tens permissão para fazer isso." },
   common: {
@@ -189,6 +286,10 @@ export async function initI18n(locale: SupportedLocale = DEFAULT_LOCALE): Promis
 
 export async function setLocale(locale: SupportedLocale): Promise<void> {
   await i18n.changeLanguage(locale);
+  try {
+    const ls = (globalThis as { localStorage?: { setItem(k: string, v: string): void } }).localStorage;
+    if (ls) ls.setItem(LOCALE_STORAGE_KEY, locale);
+  } catch { /* ignore */ }
 }
 
 export { i18n };
