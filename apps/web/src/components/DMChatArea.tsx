@@ -124,10 +124,12 @@ export default function DMChatArea({ partnerPublicKey }: Props): React.JSX.Eleme
   const [draft, setDraft] = useState('');
   const [uploading, setUploading] = useState(false);
   const [recording, setRecording] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const recordChunksRef = useRef<Blob[]>([]);
+  const dragDepthRef = useRef(0);
 
   const uploadFile = useCallback(async (file: File) => {
     if (!partnerPublicKey) return;
@@ -137,6 +139,12 @@ export default function DMChatArea({ partnerPublicKey }: Props): React.JSX.Eleme
     catch (err) { console.error('[dm] upload failed:', err); alert('Failed to send file.'); }
     finally { setUploading(false); }
   }, [partnerPublicKey, sendDMFile]);
+
+  const hasFiles = (e: React.DragEvent): boolean => Array.from(e.dataTransfer?.types || []).includes('Files');
+  const onDragEnter = useCallback((e: React.DragEvent) => { if (!hasFiles(e)) return; e.preventDefault(); dragDepthRef.current += 1; setDragOver(true); }, []);
+  const onDragOver = useCallback((e: React.DragEvent) => { if (!hasFiles(e)) return; e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; }, []);
+  const onDragLeave = useCallback((e: React.DragEvent) => { if (!hasFiles(e)) return; dragDepthRef.current = Math.max(0, dragDepthRef.current - 1); if (dragDepthRef.current === 0) setDragOver(false); }, []);
+  const onDrop = useCallback((e: React.DragEvent) => { e.preventDefault(); dragDepthRef.current = 0; setDragOver(false); const f = e.dataTransfer.files?.[0]; if (f) void uploadFile(f); }, [uploadFile]);
 
   const toggleRecord = useCallback(async () => {
     if (recording) { recorderRef.current?.stop(); return; }
@@ -210,7 +218,12 @@ export default function DMChatArea({ partnerPublicKey }: Props): React.JSX.Eleme
   const partnerHue = parseInt((partnerPublicKey || '0000').slice(0, 4), 16) % 360;
 
   return (
-    <div style={styles.container}>
+    <div style={styles.container} onDragEnter={onDragEnter} onDragOver={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop}>
+      {dragOver && (
+        <div style={styles.dragOverlay}>
+          <div style={styles.dragContent}><span style={{ fontSize: '32px' }}>&#x1F4CE;</span><span>Drop file to send</span></div>
+        </div>
+      )}
       {/* Header */}
       <div style={styles.header}>
         <div style={{ ...styles.headerAvatar, background: `hsl(${partnerHue},40%,20%)`, color: `hsl(${partnerHue},70%,65%)` }}>
@@ -276,7 +289,9 @@ export default function DMChatArea({ partnerPublicKey }: Props): React.JSX.Eleme
 }
 
 const styles = {
-  container: { flex: 1, display: 'flex', flexDirection: 'column' as const, overflow: 'hidden' } as React.CSSProperties,
+  container: { flex: 1, display: 'flex', flexDirection: 'column' as const, overflow: 'hidden', position: 'relative' as const } as React.CSSProperties,
+  dragOverlay: { position: 'absolute' as const, inset: 0, background: 'rgba(79,142,247,0.08)', border: '2px dashed var(--color-accent)', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10, pointerEvents: 'none' as const } as React.CSSProperties,
+  dragContent: { display: 'flex', flexDirection: 'column' as const, alignItems: 'center', gap: '8px', color: 'var(--color-accent)', fontSize: '14px', fontWeight: 600 } as React.CSSProperties,
   empty: { flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' } as React.CSSProperties,
   emptyContent: { display: 'flex', flexDirection: 'column' as const, alignItems: 'center', gap: '8px' } as React.CSSProperties,
   emptyIcon: { fontSize: '32px', color: 'var(--color-text-muted)', fontWeight: 700, opacity: 0.3 } as React.CSSProperties,

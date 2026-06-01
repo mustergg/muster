@@ -270,6 +270,9 @@ export default function ChatArea({ active }: Props): React.JSX.Element {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const recordChunksRef = useRef<Blob[]>([]);
+  // Drag depth counter — dragenter/dragleave fire for every child element, so
+  // a plain boolean flickers. Count enters vs leaves and only hide at zero.
+  const dragDepthRef = useRef(0);
 
   useEffect(() => {
     if (!active) return;
@@ -328,8 +331,31 @@ export default function ChatArea({ active }: Props): React.JSX.Element {
     e.target.value = ''; // Reset for re-selection
   };
 
+  const hasFiles = (e: React.DragEvent): boolean =>
+    Array.from(e.dataTransfer?.types || []).includes('Files');
+
+  const handleDragEnter = useCallback((e: React.DragEvent) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    dragDepthRef.current += 1;
+    setDragOver(true);
+  }, []);
+
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+  }, []);
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    if (!hasFiles(e)) return;
+    dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
+    if (dragDepthRef.current === 0) setDragOver(false);
+  }, []);
+
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
+    dragDepthRef.current = 0;
     setDragOver(false);
     const file = e.dataTransfer.files?.[0];
     if (file) uploadFile(file);
@@ -381,8 +407,9 @@ export default function ChatArea({ active }: Props): React.JSX.Element {
   return (
     <div
       style={styles.container}
-      onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
-      onDragLeave={() => setDragOver(false)}
+      onDragEnter={handleDragEnter}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
       {/* Header */}
@@ -482,7 +509,7 @@ const styles = {
   attachBtn: { width: '32px', height: '32px', borderRadius: '6px', background: 'transparent', border: 'none', color: 'var(--color-text-muted)', cursor: 'pointer', fontSize: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, transition: 'color 0.15s' } as React.CSSProperties,
   input: { flex: 1, background: 'transparent', border: 'none', color: 'var(--color-text-primary)', padding: '10px 8px', outline: 'none', fontSize: '13px', fontFamily: 'inherit' } as React.CSSProperties,
   sendBtn: { width: '30px', height: '30px', borderRadius: '6px', background: 'var(--color-accent)', border: 'none', color: '#fff', cursor: 'pointer', fontSize: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, opacity: 1, transition: 'opacity 0.15s' } as React.CSSProperties,
-  dragOverlay: { position: 'absolute' as const, inset: 0, background: 'rgba(79, 142, 247, 0.08)', border: '2px dashed var(--color-accent)', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10 } as React.CSSProperties,
+  dragOverlay: { position: 'absolute' as const, inset: 0, background: 'rgba(79, 142, 247, 0.08)', border: '2px dashed var(--color-accent)', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10, pointerEvents: 'none' as const } as React.CSSProperties,
   dragContent: { display: 'flex', flexDirection: 'column' as const, alignItems: 'center', gap: '8px' } as React.CSSProperties,
   dragIcon: { fontSize: '32px' } as React.CSSProperties,
   dragText: { fontSize: '14px', color: 'var(--color-accent)', fontWeight: 500 } as React.CSSProperties,
