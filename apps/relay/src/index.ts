@@ -268,6 +268,17 @@ function handleMessage(client: RelayClient, msg: any): void {
     return;
   }
 
+  // R25 — Phase 7. Admin/debug view of per-peer reputation. Local-only data
+  // (never gossiped) — surfaced to the operator's own UI on request.
+  if (msg.type === 'REPUTATION_STATS_REQUEST') {
+    sendToClient(client, {
+      type: 'REPUTATION_STATS',
+      payload: { stats: reputation.snapshot(), peers: reputation.perPeer().slice(0, 200) },
+      timestamp: Date.now(),
+    });
+    return;
+  }
+
   // R25 — Phase 10. Older clients sending bulk-sync / monolithic-only
   // requests get a one-shot upgrade nudge.
   if (msg.type === 'NODE_SYNC_REQUEST' || msg.type === 'SYNC_REQUEST_LEGACY') {

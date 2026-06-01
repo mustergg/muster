@@ -159,6 +159,36 @@ export interface ProtocolDeprecatedMsg {
 }
 
 // =================================================================
+// R25 — Phase 7: peer reputation admin view (Client → Relay → Client)
+// =================================================================
+
+/** Operator UI asks the relay for its local per-peer reputation table. */
+export interface ReputationStatsRequestMsg {
+  type: 'REPUTATION_STATS_REQUEST';
+  payload: Record<string, never>;
+  timestamp: number;
+}
+
+/** Snapshot of the relay's local (never-gossiped) reputation state. */
+export interface ReputationStatsMsg {
+  type: 'REPUTATION_STATS';
+  payload: {
+    stats: {
+      tracked: number;
+      preferred: number;
+      deprioritised: number;
+      blacklisted: number;
+      totalChallengesIssued: number;
+      totalChallengesPassed: number;
+      totalChallengesFailed: number;
+      totalChallengesTimedOut: number;
+    };
+    peers: Array<{ peerId: string; score: number; blacklistedUntil: number | null }>;
+  };
+  timestamp: number;
+}
+
+// =================================================================
 // R25 — Phase 9: bandwidth monitor stats (Client → Relay → Client)
 // =================================================================
 

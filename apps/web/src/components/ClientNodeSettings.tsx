@@ -9,6 +9,7 @@ import React, { useState } from 'react';
 import { useClientNodeStore, NodeMode } from '../stores/clientNodeStore.js';
 import { useCommunityStore } from '../stores/communityStore.js';
 import { useBandwidthStore, formatBps } from '../stores/bandwidthStore.js';
+import { useReputationStore } from '../stores/reputationStore.js';
 
 const MODE_INFO: Record<NodeMode, { icon: string; label: string; desc: string }> = {
   off: { icon: '\u{26AA}', label: 'Off', desc: 'No local relay. You connect to remote nodes only.' },
@@ -20,8 +21,12 @@ export default function ClientNodeSettings(): React.JSX.Element {
   const { config, running, pid, logs, error, uptimeSeconds, start, stop, setMode, setPort, setMaxDisk, setMaxBandwidth, setAutoStart, setRelayPath, hostCommunity, unhostCommunity, clearLogs } = useClientNodeStore();
   const { communities } = useCommunityStore();
   const bw = useBandwidthStore((st) => st.snapshot);
+  const repStats = useReputationStore((st) => st.stats);
+  const repPeers = useReputationStore((st) => st.peers);
+  const repRequest = useReputationStore((st) => st.requestNow);
   const [showLogs, setShowLogs] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [showRep, setShowRep] = useState(false);
 
   const communityList = Object.values(communities);
   const hostedSet = new Set(config.hostedCommunityIds);
@@ -220,6 +225,49 @@ export default function ClientNodeSettings(): React.JSX.Element {
           )}
         </div>
 
+        {/* R25 — Phase 7: peer reputation (local, debug). */}
+        <div style={s.section}>
+          <div style={s.sectionHeaderRow}>
+            <button onClick={() => { const n = !showRep; setShowRep(n); if (n) repRequest(); }} style={s.toggleBtn}>
+              {showRep ? '\u{25BC}' : '\u{25B6}'} Peer Reputation{repStats ? ` (${repStats.tracked})` : ''}
+            </button>
+            {showRep && (
+              <button onClick={repRequest} style={s.clearBtn}>Refresh</button>
+            )}
+          </div>
+          {showRep && (
+            <div style={s.advancedPanel}>
+              {repStats ? (
+                <>
+                  <div style={s.repStatsRow}>
+                    <span style={s.repStat}>{repStats.preferred} preferred</span>
+                    <span style={s.repStat}>{repStats.deprioritised} low</span>
+                    <span style={{ ...s.repStat, color: '#E24B4A' }}>{repStats.blacklisted} blacklisted</span>
+                  </div>
+                  <div style={s.repChallenge}>
+                    POS: {repStats.totalChallengesPassed} passed / {repStats.totalChallengesFailed} failed / {repStats.totalChallengesTimedOut} timeout
+                  </div>
+                  <div style={s.repList}>
+                    {repPeers.length === 0 && <div style={s.emptyText}>No peers scored yet.</div>}
+                    {repPeers.map((p) => {
+                      const black = p.blacklistedUntil != null && p.blacklistedUntil > Date.now();
+                      const color = black ? '#E24B4A' : p.score >= 10 ? '#43B581' : p.score < 0 ? '#F5A623' : 'var(--color-text-secondary)';
+                      return (
+                        <div key={p.peerId} style={s.repRow}>
+                          <span style={s.repPeer}>{p.peerId.slice(0, 18)}…</span>
+                          <span style={{ ...s.repScore, color }}>{p.score}{black ? ' ⛔' : ''}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </>
+              ) : (
+                <div style={s.emptyText}>No data yet — click Refresh.</div>
+              )}
+            </div>
+          )}
+        </div>
+
         {/* Logs */}
         <div style={s.section}>
           <div style={s.sectionHeaderRow}>
@@ -299,4 +347,11 @@ const s = {
   clearBtn: { padding: '2px 8px', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', background: 'transparent', color: 'var(--color-text-muted)', fontSize: '11px', cursor: 'pointer' } as React.CSSProperties,
   logPanel: { marginTop: '8px', maxHeight: '300px', overflow: 'auto', padding: '8px', background: '#1a1a2e', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', fontFamily: 'monospace' } as React.CSSProperties,
   logLine: { fontSize: '11px', color: '#a0a0c0', lineHeight: 1.6, wordBreak: 'break-all' as const } as React.CSSProperties,
+  repStatsRow: { display: 'flex', gap: '12px', marginBottom: '6px' } as React.CSSProperties,
+  repStat: { fontSize: '12px', fontWeight: 600, color: 'var(--color-text-secondary)' } as React.CSSProperties,
+  repChallenge: { fontSize: '11px', color: 'var(--color-text-muted)', marginBottom: '8px' } as React.CSSProperties,
+  repList: { maxHeight: '220px', overflow: 'auto', display: 'flex', flexDirection: 'column' as const, gap: '2px' } as React.CSSProperties,
+  repRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '12px', padding: '3px 0' } as React.CSSProperties,
+  repPeer: { fontFamily: 'var(--font-mono, monospace)', color: 'var(--color-text-muted)' } as React.CSSProperties,
+  repScore: { fontWeight: 700 } as React.CSSProperties,
 } as const;
