@@ -273,3 +273,29 @@ export function deriveSealedDmKey(
 ): Uint8Array {
   return hkdf(sha256, sharedSecret, inbox, DM_HKDF_INFO, 32);
 }
+
+/**
+ * Generate an ephemeral X25519 keypair — the sender side of a sealed-sender
+ * DM. The public half travels in the DmFrame; the private half is discarded
+ * after deriving the per-message key.
+ */
+export function randomX25519KeyPair(): { privateKey: Uint8Array; publicKey: Uint8Array } {
+  // x25519.getPublicKey clamps the scalar internally per RFC 7748, so a raw
+  // 32 random bytes is a valid private key.
+  const privateKey = randomBytes(32);
+  const publicKey = x25519.getPublicKey(privateKey);
+  return { privateKey, publicKey };
+}
+
+/** Seal raw bytes with AES-256-GCM. Returns the 12-byte nonce + ciphertext
+ *  (GCM tag appended). Used for the DmFrame body. */
+export function sealBytes(key: Uint8Array, plaintext: Uint8Array): { nonce: Uint8Array; ciphertext: Uint8Array } {
+  const nonce = randomBytes(IV_BYTES);
+  const ciphertext = gcm(key, nonce).encrypt(plaintext);
+  return { nonce, ciphertext };
+}
+
+/** Open AES-256-GCM bytes produced by sealBytes. Throws on auth failure. */
+export function openBytes(key: Uint8Array, nonce: Uint8Array, ciphertext: Uint8Array): Uint8Array {
+  return gcm(key, nonce).decrypt(ciphertext);
+}

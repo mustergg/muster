@@ -10,7 +10,8 @@ import { create } from 'zustand';
 import { useNetworkStore } from './networkStore';
 import { BrowserDB } from '@muster/db';
 import { sign as ed25519Sign, toHex, fromHex } from '@muster/crypto';
-import { encryptDM, decryptDM, isE2EEncrypted } from '@muster/crypto/e2e';
+import { encryptDM, decryptDM, isE2EEncrypted, currentInboxHashes } from '@muster/crypto/e2e';
+import { buildSealedDmFrame, openSealedDmFrame } from '../lib/sealedDm';
 import type { TransportMessage } from '@muster/transport';
 
 const encoder = new TextEncoder();
@@ -76,10 +77,26 @@ interface DMState {
   loadConversations: () => void;
   setActiveConversation: (publicKey: string | null) => void;
   clearConversation: (publicKey: string) => void;
+  /** R25 — Phase 8. (Re)subscribe to our rotating inbox hashes. */
+  subscribeInbox: () => void;
   init: () => () => void;
 }
 
 const dmDB = new BrowserDB();
+
+/** R25 — Phase 8. Send DM_SUBSCRIBE for our current/prev/next inbox hashes.
+ *  Called on init + every window so a DM near a rotation boundary lands. */
+function sendInboxSubscribe(): void {
+  const network = useNetworkStore.getState();
+  if (!network.transport?.isConnected || !network.publicKey) return;
+  try {
+    const { prev, current, next } = currentInboxHashes(fromHex(network.publicKey));
+    const inboxHashes = [toHex(prev), toHex(current), toHex(next)];
+    network.transport.send({ type: 'DM_SUBSCRIBE', payload: { inboxHashes }, timestamp: Date.now() });
+  } catch (err) {
+    console.warn('[dm] inbox subscribe failed:', err);
+  }
+}
 
 export const useDMStore = create<DMState>((set, get) => ({
   messages: {},
@@ -139,6 +156,25 @@ export const useDMStore = create<DMState>((set, get) => ({
     } else {
       network.transport!.send({ type: 'SEND_DM', payload, signature: '', senderPublicKey: network.publicKey, timestamp });
     }
+
+    // R25 — Phase 8. Also publish a sealed-sender frame addressed to the
+    // recipient's rotating inbox hash. The relay routes it without ever
+    // seeing the recipient pubkey; the legacy SEND_DM above stays as the
+    // durable history path. Same messageId → recipient dedups the two.
+    try {
+      const built = buildSealedDmFrame({
+        recipientEdPubHex: recipientPublicKey,
+        senderEdPubHex: network.publicKey,
+        messageId,
+        content,
+        nowMs: timestamp,
+      });
+      if (built) {
+        network.transport.send({ type: 'DM_FRAME', payload: { cbor: built.cborB64 }, timestamp });
+      }
+    } catch (err) {
+      console.warn('[dm] sealed frame send failed:', err);
+    }
   },
 
   openConversation: (publicKey) => {
@@ -179,9 +215,17 @@ export const useDMStore = create<DMState>((set, get) => ({
     dmDB.clearChannel(channelKey);
   },
 
+  subscribeInbox: () => sendInboxSubscribe(),
+
   init: () => {
     const network = useNetworkStore.getState();
     const myKey = network.publicKey;
+
+    // R25 — Phase 8. Subscribe to our rotating inbox hashes now and refresh
+    // every hour (windows are 6h; hourly keeps prev/current/next fresh and
+    // re-registers after any relay restart).
+    sendInboxSubscribe();
+    const inboxTimer = setInterval(sendInboxSubscribe, 60 * 60 * 1000);
 
     const unsubscribe = network.onMessage((msg: TransportMessage) => {
       switch (msg.type) {
@@ -272,10 +316,63 @@ export const useDMStore = create<DMState>((set, get) => ({
           set({ conversations: p.conversations || [] });
           break;
         }
+
+        // R25 — Phase 8. Sealed-sender delivery. Open the frame with our
+        // Ed25519 seed, reveal the sender + plaintext, render + dedup by
+        // messageId (shared with the legacy DM_MESSAGE path).
+        case 'DM_DELIVER': {
+          const p = msg.payload as any;
+          const frameB64: string | undefined = p?.frame;
+          if (typeof frameB64 !== 'string') break;
+          const kp = getKeypair();
+          if (!kp) break;
+          const opened = openSealedDmFrame(frameB64, kp.privateKey);
+          if (!opened) break; // not for us / corrupt
+          const otherKey = opened.senderPubkey === myKey ? undefined : opened.senderPubkey;
+          if (!otherKey) break; // our own echo — ignore (already optimistic)
+
+          const dmMsg: DMMessage = {
+            messageId: opened.messageId, content: opened.content,
+            senderPublicKey: opened.senderPubkey, senderUsername: opened.senderPubkey.slice(0, 8),
+            recipientPublicKey: myKey, timestamp: opened.ts,
+            isOwn: false, encrypted: true,
+          };
+
+          set((state) => {
+            const existing = state.messages[otherKey] || [];
+            if (existing.some((m) => m.messageId === dmMsg.messageId)) return state;
+            return { messages: { ...state.messages, [otherKey]: [...existing, dmMsg].sort((a, b) => a.timestamp - b.timestamp) } };
+          });
+
+          dmDB.addMessage({
+            messageId: opened.messageId,
+            channel: `dm:${[myKey, otherKey].sort().join(':')}`,
+            content: opened.content,
+            senderPublicKey: opened.senderPubkey,
+            senderUsername: opened.senderPubkey.slice(0, 8),
+            timestamp: opened.ts, signature: '',
+          });
+
+          set((state) => {
+            const convs = [...state.conversations];
+            const idx = convs.findIndex((c) => c.publicKey === otherKey);
+            const isActive = state.activeConversation === otherKey;
+            const preview = opened.content.length > 50 ? opened.content.slice(0, 50) + '...' : opened.content;
+            if (idx >= 0) {
+              const prev = convs[idx]!;
+              convs[idx] = { ...prev, lastMessage: preview, lastTimestamp: opened.ts, unreadCount: !isActive ? (prev.unreadCount || 0) + 1 : prev.unreadCount };
+            } else {
+              convs.unshift({ publicKey: otherKey, username: opened.senderPubkey.slice(0, 8), lastMessage: preview, lastTimestamp: opened.ts, unreadCount: !isActive ? 1 : 0 });
+            }
+            convs.sort((a, b) => b.lastTimestamp - a.lastTimestamp);
+            return { conversations: convs };
+          });
+          break;
+        }
       }
     });
 
-    return unsubscribe;
+    return () => { clearInterval(inboxTimer); unsubscribe(); };
   },
 }));
 
