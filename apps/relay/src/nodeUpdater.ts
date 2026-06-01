@@ -37,6 +37,20 @@ export function getCurrentVersion(): string {
   return '0.0.0';
 }
 
+/** Find a pnpm command that actually runs in the service's environment.
+ *  Tries `pnpm` (user install), then `corepack pnpm` (bundled with Node). */
+function resolvePnpmCmd(cwd: string): string {
+  const candidates = ['pnpm', 'corepack pnpm'];
+  for (const c of candidates) {
+    try {
+      execSync(`${c} --version`, { cwd, stdio: 'pipe', timeout: 20000 });
+      return c;
+    } catch { /* try next */ }
+  }
+  // Last resort — corepack is part of Node, so this is the safest default.
+  return 'corepack pnpm';
+}
+
 /** Read the monotonic build number from version.json (best-effort). The
  *  desktop UI is the authoritative display; this is for the relay boot log. */
 export function getBuildNumber(): number | string {
@@ -139,11 +153,18 @@ export function executeUpdate(nodeDB: NodeDB): Promise<{ success: boolean; log: 
     log.push(`Branch: ${branch}`);
     log.push('');
 
+    // Resolve a working pnpm invocation. The relay often runs under a
+    // service whose PATH lacks a user-installed pnpm (`/bin/sh: pnpm: not
+    // found`). corepack ships with Node and lives next to the node binary
+    // that's already on PATH, so `corepack pnpm` is the reliable fallback.
+    const pnpm = resolvePnpmCmd(gitRoot);
+    log.push(`Using pnpm: ${pnpm}`);
+
     const steps = [
       { name: 'git pull', cmd: `git pull origin ${branch}` },
-      { name: 'pnpm install', cmd: 'pnpm install --frozen-lockfile' },
-      { name: 'build packages', cmd: "pnpm --filter './packages/**' build" },
-      { name: 'build relay', cmd: 'pnpm --filter @muster/relay build' },
+      { name: 'pnpm install', cmd: `${pnpm} install --frozen-lockfile` },
+      { name: 'build packages', cmd: `${pnpm} --filter './packages/**' build` },
+      { name: 'build relay', cmd: `${pnpm} --filter @muster/relay build` },
     ];
 
     let stepIdx = 0;
