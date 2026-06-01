@@ -11,7 +11,8 @@ import { useNetworkStore } from './networkStore';
 import { BrowserDB } from '@muster/db';
 import { sign as ed25519Sign, toHex, fromHex } from '@muster/crypto';
 import { encryptDM, decryptDM, isE2EEncrypted, currentInboxHashes } from '@muster/crypto/e2e';
-import { buildSealedDmFrame, openSealedDmFrame } from '../lib/sealedDm';
+import { buildSealedDmFrame, openSealedDmFrame, type SealedDmAttachment } from '../lib/sealedDm';
+import { buildAndUploadBlob, fetchAndDecryptBlob } from '../lib/blobUpload';
 import type { TransportMessage } from '@muster/transport';
 
 const encoder = new TextEncoder();
@@ -62,6 +63,13 @@ export interface DMMessage {
   messageId: string; content: string; senderPublicKey: string; senderUsername: string;
   recipientPublicKey: string; timestamp: number; isOwn: boolean;
   encrypted?: boolean;
+  // R25: blob attachment (file / voice note) carried via sealed DM.
+  fileName?: string;
+  mimeType?: string;
+  fileSize?: number;
+  attachmentUrl?: string;
+  blobStatus?: 'pending' | 'loading' | 'ready' | 'failed';
+  _attachment?: SealedDmAttachment;
 }
 
 export interface DMConversation {
@@ -73,6 +81,10 @@ interface DMState {
   conversations: DMConversation[];
   activeConversation: string | null;
   sendDM: (recipientPublicKey: string, content: string) => void;
+  /** R25: send a file/voice attachment over a sealed DM. */
+  sendDMFile: (recipientPublicKey: string, file: File) => Promise<void>;
+  /** R25: fetch + decrypt a DM attachment, attach its object URL. */
+  fetchDMAttachment: (partnerPublicKey: string, messageId: string) => Promise<void>;
   openConversation: (publicKey: string) => void;
   loadConversations: () => void;
   setActiveConversation: (publicKey: string | null) => void;
@@ -174,6 +186,86 @@ export const useDMStore = create<DMState>((set, get) => ({
       }
     } catch (err) {
       console.warn('[dm] sealed frame send failed:', err);
+    }
+  },
+
+  sendDMFile: async (recipientPublicKey, file) => {
+    const network = useNetworkStore.getState();
+    if (!network.transport?.isConnected) return;
+    const kp = getKeypair();
+    if (!kp) { console.warn('[dm] sendDMFile: no keypair'); return; }
+
+    const messageId = uuid();
+    const timestamp = Date.now();
+    const mime = file.type || 'application/octet-stream';
+    const raw = new Uint8Array(await file.arrayBuffer());
+
+    // Upload encrypted blob (content-addressed). Key travels inside the
+    // sealed DM, which is itself E2E to the recipient.
+    let uploaded;
+    try {
+      uploaded = await buildAndUploadBlob(
+        { send: (m) => network.transport!.send(m), isConnected: network.transport.isConnected },
+        raw, mime,
+      );
+    } catch (err) {
+      console.warn('[dm] blob upload failed:', err);
+      return;
+    }
+    const attachment: SealedDmAttachment = {
+      root: uploaded.rootHex, size: uploaded.size, mime, name: file.name,
+      pieceCount: uploaded.pieceCount, key: uploaded.keyHex,
+    };
+
+    // Optimistic local render via a local object URL.
+    const localUrl = URL.createObjectURL(file);
+    const msg: DMMessage = {
+      messageId, content: '', senderPublicKey: network.publicKey,
+      senderUsername: network.username, recipientPublicKey, timestamp, isOwn: true, encrypted: true,
+      fileName: file.name, mimeType: mime, fileSize: file.size,
+      attachmentUrl: localUrl, blobStatus: 'ready', _attachment: attachment,
+    };
+    set((state) => ({
+      messages: { ...state.messages, [recipientPublicKey]: [...(state.messages[recipientPublicKey] || []), msg] },
+    }));
+
+    try {
+      const built = buildSealedDmFrame({
+        recipientEdPubHex: recipientPublicKey,
+        senderEdPubHex: network.publicKey,
+        messageId, content: '', attachment, nowMs: timestamp,
+      });
+      if (built) network.transport.send({ type: 'DM_FRAME', payload: { cbor: built.cborB64 }, timestamp });
+    } catch (err) {
+      console.warn('[dm] sealed file frame failed:', err);
+    }
+  },
+
+  fetchDMAttachment: async (partnerPublicKey, messageId) => {
+    const st = get();
+    const list = st.messages[partnerPublicKey] || [];
+    const msg = list.find((m) => m.messageId === messageId);
+    if (!msg || !msg._attachment) return;
+    if (msg.blobStatus === 'loading' || msg.blobStatus === 'ready') return;
+    const update = (p: Partial<DMMessage>) => set((state) => ({
+      messages: {
+        ...state.messages,
+        [partnerPublicKey]: (state.messages[partnerPublicKey] || []).map((m) => m.messageId === messageId ? { ...m, ...p } : m),
+      },
+    }));
+    update({ blobStatus: 'loading' });
+    try {
+      const network = useNetworkStore.getState();
+      const bytes = await fetchAndDecryptBlob(
+        { send: (m) => network.transport!.send(m), isConnected: !!network.transport?.isConnected, onMessage: network.onMessage },
+        { rootHex: msg._attachment.root, size: msg._attachment.size, mime: msg._attachment.mime, pieceCount: msg._attachment.pieceCount, keyHex: msg._attachment.key },
+      );
+      const ab = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+      const url = URL.createObjectURL(new Blob([ab], { type: msg._attachment.mime }));
+      update({ attachmentUrl: url, blobStatus: 'ready' });
+    } catch (err) {
+      console.warn('[dm] fetchDMAttachment failed:', err);
+      update({ blobStatus: 'failed' });
     }
   },
 
@@ -336,6 +428,13 @@ export const useDMStore = create<DMState>((set, get) => ({
             senderPublicKey: opened.senderPubkey, senderUsername: opened.senderPubkey.slice(0, 8),
             recipientPublicKey: myKey, timestamp: opened.ts,
             isOwn: false, encrypted: true,
+            ...(opened.attachment ? {
+              fileName: opened.attachment.name,
+              mimeType: opened.attachment.mime,
+              fileSize: opened.attachment.size,
+              blobStatus: 'pending' as const,
+              _attachment: opened.attachment,
+            } : {}),
           };
 
           set((state) => {
@@ -343,6 +442,12 @@ export const useDMStore = create<DMState>((set, get) => ({
             if (existing.some((m) => m.messageId === dmMsg.messageId)) return state;
             return { messages: { ...state.messages, [otherKey]: [...existing, dmMsg].sort((a, b) => a.timestamp - b.timestamp) } };
           });
+
+          // Auto-fetch the attachment (images/voice render inline; others
+          // still resolve so the download is ready).
+          if (opened.attachment) {
+            void get().fetchDMAttachment(otherKey, opened.messageId);
+          }
 
           dmDB.addMessage({
             messageId: opened.messageId,

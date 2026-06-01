@@ -12,6 +12,7 @@ import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useChatStore, type ChatMessage } from '../stores/chatStore.js';
 import { useNetworkStore } from '../stores/networkStore.js';
+import EmojiPicker from './EmojiPicker.js';
 import type { ActiveLocation } from '../pages/MainLayout.js';
 import type { TransportMessage } from '@muster/transport';
 
@@ -441,6 +442,7 @@ export default function ChatArea({ active }: Props): React.JSX.Element {
             placeholder={t('channel.textPlaceholder', { name: active.channelName })}
             disabled={uploading}
           />
+          <EmojiPicker onPick={(e) => setDraft((d) => d + e)} />
           <button
             onClick={handleSend}
             disabled={!draft.trim() || uploading}

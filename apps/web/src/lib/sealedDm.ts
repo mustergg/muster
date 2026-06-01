@@ -51,6 +51,18 @@ import {
   type DmFrame,
 } from '@muster/protocol';
 
+/** Attachment descriptor carried inside a sealed DM (E2E, so the raw blob
+ *  key travels here directly). The ciphertext lives in the content-addressed
+ *  piece store, fetched by root. */
+export interface SealedDmAttachment {
+  root: string;       // blob root, hex
+  size: number;       // ciphertext stream length
+  mime: string;
+  name: string;
+  pieceCount: number;
+  key: string;        // raw AES-256 key, hex
+}
+
 /** Sealed plaintext. Kept compact (single-letter keys) to fit small buckets. */
 interface SealedDmPayload {
   /** messageId (shared with the legacy SEND_DM path for dedup). */
@@ -61,6 +73,8 @@ interface SealedDmPayload {
   c: string;
   /** sender wall-clock ms. */
   t: number;
+  /** optional attachment descriptor. */
+  a?: SealedDmAttachment;
 }
 
 export interface BuiltDmFrame {
@@ -79,6 +93,7 @@ export function buildSealedDmFrame(args: {
   senderEdPubHex: string;
   messageId: string;
   content: string;
+  attachment?: SealedDmAttachment;
   nowMs?: number;
 }): BuiltDmFrame | null {
   const now = args.nowMs ?? Date.now();
@@ -91,6 +106,7 @@ export function buildSealedDmFrame(args: {
   const key = deriveSealedDmKey(shared, inbox);
 
   const payload: SealedDmPayload = { i: args.messageId, s: args.senderEdPubHex, c: args.content, t: now };
+  if (args.attachment) payload.a = args.attachment;
   const plaintext = encodeCanonical(payload as unknown as CborValue);
 
   const { nonce, ciphertext } = sealBytes(key, new Uint8Array(plaintext));
@@ -121,7 +137,7 @@ export function buildSealedDmFrame(args: {
 export function openSealedDmFrame(
   frameCborB64: string,
   myEdSeed: Uint8Array,
-): { messageId: string; senderPubkey: string; content: string; ts: number } | null {
+): { messageId: string; senderPubkey: string; content: string; ts: number; attachment?: SealedDmAttachment } | null {
   let frame: DmFrame;
   try {
     const bytes = b64ToBytes(frameCborB64);
@@ -136,7 +152,7 @@ export function openSealedDmFrame(
     const plain = openBytes(key, frame.nonce, frame.ciphertext);
     const payload = decodeCanonical(plain) as unknown as SealedDmPayload;
     if (!payload || typeof payload.c !== 'string' || typeof payload.s !== 'string') return null;
-    return { messageId: payload.i, senderPubkey: payload.s, content: payload.c, ts: payload.t };
+    return { messageId: payload.i, senderPubkey: payload.s, content: payload.c, ts: payload.t, attachment: payload.a };
   } catch {
     return null;
   }
