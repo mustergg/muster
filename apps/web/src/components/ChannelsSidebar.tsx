@@ -11,6 +11,8 @@ import { useTranslation } from 'react-i18next';
 import { useAuthStore } from '../stores/authStore.js';
 import { useNetworkStore } from '../stores/networkStore.js';
 import { useCommunityStore } from '../stores/communityStore.js';
+import { useManifestStore } from '../stores/manifestStore.js';
+import { toHex } from '@muster/crypto';
 import InviteLinkModal from '../pages/InviteLinkModal.js';
 import CreateChannelModal from '../pages/CreateChannelModal.js';
 import EditChannelModal from '../pages/EditChannelModal.js';
@@ -47,8 +49,20 @@ export default function ChannelsSidebar({ communityId, activeChannelId, onSelect
   const voiceChannels = channels.filter((c) => c.type === 'voice' || c.type === 'voice-temp');
   const memberCount   = communityId ? (onlineMembers[communityId]?.length ?? 0) : 0;
 
-  // Check if current user is admin+ in this community
-  const myRole = communityId ? (myRoles[communityId] || 'member') : 'member';
+  // R25 — manifest re-architecture (stage 2). Role authority comes from the
+  // signed manifest when one exists for this community; the legacy role table
+  // is only a fallback for communities without a manifest. Reading the
+  // manifest entry here keeps the admin gate reactive to manifest updates.
+  const myPubHex = useAuthStore((s) => s.publicKeyHex);
+  const manifestEntry = useManifestStore((st) => (communityId ? st.byCommunity[communityId] : undefined));
+  const manifestRole = (() => {
+    if (!manifestEntry || !myPubHex) return null;
+    if (toHex(manifestEntry.manifest.owner) === myPubHex) return 'owner';
+    if (manifestEntry.manifest.admins.some((a) => toHex(a.pubkey) === myPubHex)) return 'admin';
+    return 'member';
+  })();
+  const legacyRole = communityId ? (myRoles[communityId] || 'member') : 'member';
+  const myRole = manifestRole ?? legacyRole;
   const isAdmin = ADMIN_ROLES.has(myRole);
 
   useEffect(() => {
