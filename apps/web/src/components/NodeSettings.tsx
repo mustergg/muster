@@ -8,10 +8,12 @@
  */
 
 import React, { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useNodeDiscovery, KnownNode } from '../stores/nodeDiscovery.js';
 import { useNetworkStore } from '../stores/networkStore.js';
 
 export default function NodeSettings(): React.JSX.Element {
+  const { t } = useTranslation();
   const { nodes, addManualNode, removeNode } = useNodeDiscovery();
   const { status, connectedNodeUrl, fallbackActive, disconnect, connect } = useNetworkStore();
   const [newUrl, setNewUrl] = useState('');
@@ -37,45 +39,45 @@ export default function NodeSettings(): React.JSX.Element {
       {/* Header */}
       <div style={s.header}>
         <span style={s.headerIcon}>{'\u{1F310}'}</span>
-        <span style={s.headerTitle}>Node Settings</span>
+        <span style={s.headerTitle}>{t('nodes.title')}</span>
       </div>
 
       {/* Connection status */}
       <div style={s.statusBar}>
         <div style={s.statusRow}>
-          <span style={s.statusLabel}>Status:</span>
+          <span style={s.statusLabel}>{t('nodes.status')}:</span>
           <span style={{
             ...s.statusValue,
             color: status === 'connected' ? '#43B581' : status === 'connecting' ? '#EF9F27' : '#E24B4A',
           }}>
-            {status === 'connected' ? '\u{2705} Connected' :
-             status === 'connecting' ? '\u{23F3} Connecting...' :
-             status === 'authenticating' ? '\u{1F510} Authenticating...' :
-             '\u{274C} Disconnected'}
+            {status === 'connected' ? `\u{2705} ${t('nodes.connected')}` :
+             status === 'connecting' ? `\u{23F3} ${t('nodes.connecting')}` :
+             status === 'authenticating' ? `\u{1F510} ${t('nodes.authenticating')}` :
+             `\u{274C} ${t('nodes.disconnected')}`}
           </span>
         </div>
         {connectedNodeUrl && status === 'connected' && (
           <div style={s.statusRow}>
-            <span style={s.statusLabel}>Node:</span>
+            <span style={s.statusLabel}>{t('nodes.node')}:</span>
             <span style={s.statusValue}>{connectedNodeUrl}</span>
           </div>
         )}
         {fallbackActive && (
           <div style={s.fallbackBanner}>
-            {'\u{1F504}'} Trying alternative nodes...
+            {'\u{1F504}'} {t('nodes.tryingAlternatives')}
           </div>
         )}
         <button onClick={handleReconnect} style={s.reconnectBtn}>
-          {'\u{1F504}'} Reconnect
+          {'\u{1F504}'} {t('nodes.reconnect')}
         </button>
       </div>
 
       {/* Node list */}
       <div style={s.section}>
         <div style={s.sectionHeader}>
-          <span style={s.sectionTitle}>Known Nodes ({nodes.length})</span>
+          <span style={s.sectionTitle}>{t('nodes.known', { count: nodes.length })}</span>
           <button onClick={() => setShowAdd(!showAdd)} style={s.addBtn}>
-            {showAdd ? 'Cancel' : '+ Add Node'}
+            {showAdd ? t('nodes.cancel') : `+ ${t('nodes.addNode')}`}
           </button>
         </div>
 
@@ -84,7 +86,7 @@ export default function NodeSettings(): React.JSX.Element {
           <div style={s.addForm}>
             <input
               type="text"
-              placeholder="ws://hostname:port"
+              placeholder={t('nodes.urlPlaceholder')}
               value={newUrl}
               onChange={(e) => setNewUrl(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && handleAdd()}
@@ -93,14 +95,14 @@ export default function NodeSettings(): React.JSX.Element {
             />
             <input
               type="text"
-              placeholder="Name (optional)"
+              placeholder={t('nodes.namePlaceholder')}
               value={newName}
               onChange={(e) => setNewName(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && handleAdd()}
               style={s.input}
             />
             <button onClick={handleAdd} disabled={!newUrl.trim()} style={s.saveBtn}>
-              Add
+              {t('nodes.add')}
             </button>
           </div>
         )}
@@ -116,7 +118,7 @@ export default function NodeSettings(): React.JSX.Element {
             />
           ))}
           {nodes.length === 0 && (
-            <p style={s.emptyText}>No nodes configured. Add one above or check your seed-nodes.json.</p>
+            <p style={s.emptyText}>{t('nodes.empty')}</p>
           )}
         </div>
       </div>
@@ -129,7 +131,8 @@ export default function NodeSettings(): React.JSX.Element {
 // =================================================================
 
 function NodeRow({ node, isConnected, onRemove }: { node: KnownNode; isConnected: boolean; onRemove: () => void }): React.JSX.Element {
-  const lastSeen = node.lastConnected ? timeAgo(node.lastConnected) : 'never';
+  const { t } = useTranslation();
+  const lastSeen = node.lastConnected ? timeAgo(node.lastConnected, t) : t('nodes.never');
   const tags: string[] = [];
   if (node.seed) tags.push('SEED');
   if (node.manual) tags.push('MANUAL');
@@ -152,17 +155,17 @@ function NodeRow({ node, isConnected, onRemove }: { node: KnownNode; isConnected
             }}>{t}</span>
           ))}
           {node.uptimePercent > 0 && (
-            <span style={s.metaText}>Uptime: {node.uptimePercent.toFixed(0)}%</span>
+            <span style={s.metaText}>{t('nodes.uptime', { percent: node.uptimePercent.toFixed(0) })}</span>
           )}
           {node.activeDays > 0 && (
-            <span style={s.metaText}>{node.activeDays}d active</span>
+            <span style={s.metaText}>{t('nodes.daysActive', { count: node.activeDays })}</span>
           )}
-          <span style={s.metaText}>Last: {lastSeen}</span>
-          <span style={s.metaText}>{node.connectCount} ok / {node.failCount} fail</span>
+          <span style={s.metaText}>{t('nodes.last', { when: lastSeen })}</span>
+          <span style={s.metaText}>{t('nodes.okFail', { ok: node.connectCount, fail: node.failCount })}</span>
         </div>
       </div>
       {!node.seed && (
-        <button onClick={onRemove} style={s.removeBtn} title="Remove node">
+        <button onClick={onRemove} style={s.removeBtn} title={t('nodes.removeNode')}>
           {'\u{2716}'}
         </button>
       )}
@@ -170,12 +173,12 @@ function NodeRow({ node, isConnected, onRemove }: { node: KnownNode; isConnected
   );
 }
 
-function timeAgo(ts: number): string {
+function timeAgo(ts: number, t: (k: string, o?: any) => string): string {
   const diff = Date.now() - ts;
-  if (diff < 60000) return 'just now';
-  if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
-  if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`;
-  return `${Math.floor(diff / 86400000)}d ago`;
+  if (diff < 60000) return t('nodes.justNow');
+  if (diff < 3600000) return t('nodes.minutesAgo', { count: Math.floor(diff / 60000) });
+  if (diff < 86400000) return t('nodes.hoursAgo', { count: Math.floor(diff / 3600000) });
+  return t('nodes.daysAgo', { count: Math.floor(diff / 86400000) });
 }
 
 // =================================================================

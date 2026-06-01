@@ -6,18 +6,20 @@
  */
 
 import React, { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useNatStore, NatType, TurnServer } from '../stores/natStore.js';
 import { useClientNodeStore } from '../stores/clientNodeStore.js';
 
 const NAT_INFO: Record<NatType, { icon: string; label: string; color: string; desc: string }> = {
-  open: { icon: '\u{2705}', label: 'Open', color: '#43B581', desc: 'Direct connections work. Other users can connect to your node directly.' },
-  full_cone: { icon: '\u{1F7E1}', label: 'Full Cone NAT', color: '#EF9F27', desc: 'STUN works. Hole punching possible for most connections. Voice/P2P should work.' },
-  symmetric: { icon: '\u{1F7E0}', label: 'Symmetric NAT', color: '#E67E22', desc: 'STUN partially works. Voice needs TURN server. Node connections go through relay proxy.' },
-  restricted: { icon: '\u{1F534}', label: 'Restricted', color: '#E24B4A', desc: 'Behind strict firewall. All connections go through relay proxy. Add a TURN server for voice.' },
-  unknown: { icon: '\u{2753}', label: 'Unknown', color: 'var(--color-text-muted)', desc: 'NAT type not yet detected. Click "Detect" to check.' },
+  open: { icon: '\u{2705}', label: 'nat.open', color: '#43B581', desc: 'nat.openDesc' },
+  full_cone: { icon: '\u{1F7E1}', label: 'nat.fullCone', color: '#EF9F27', desc: 'nat.fullConeDesc' },
+  symmetric: { icon: '\u{1F7E0}', label: 'nat.symmetric', color: '#E67E22', desc: 'nat.symmetricDesc' },
+  restricted: { icon: '\u{1F534}', label: 'nat.restricted', color: '#E24B4A', desc: 'nat.restrictedDesc' },
+  unknown: { icon: '\u{2753}', label: 'nat.unknown', color: 'var(--color-text-muted)', desc: 'nat.unknownDesc' },
 };
 
 export default function NatSettings(): React.JSX.Element {
+  const { t } = useTranslation();
   const { natType, detecting, publicIp, localIp, relayProxyActive, proxyNodeUrl, turnServers, portReachable, detectNat, checkPortReachable, addTurnServer, removeTurnServer } = useNatStore();
   const { config: nodeConfig } = useClientNodeStore();
   const [showTurnForm, setShowTurnForm] = useState(false);
@@ -38,74 +40,72 @@ export default function NatSettings(): React.JSX.Element {
     <div style={s.container}>
       <div style={s.header}>
         <span style={s.headerIcon}>{'\u{1F30D}'}</span>
-        <span style={s.headerTitle}>Network & NAT</span>
+        <span style={s.headerTitle}>{t('nat.title')}</span>
       </div>
 
       <div style={s.scrollArea}>
         {/* NAT Detection */}
         <div style={s.section}>
-          <div style={s.sectionTitle}>NAT Type</div>
+          <div style={s.sectionTitle}>{t('nat.natType')}</div>
           <div style={{ ...s.natCard, borderColor: info.color }}>
             <div style={s.natHeader}>
               <span style={s.natIcon}>{info.icon}</span>
-              <span style={{ ...s.natLabel, color: info.color }}>{info.label}</span>
+              <span style={{ ...s.natLabel, color: info.color }}>{t(info.label)}</span>
             </div>
-            <div style={s.natDesc}>{info.desc}</div>
+            <div style={s.natDesc}>{t(info.desc)}</div>
             {publicIp && (
               <div style={s.ipRow}>
-                <span style={s.ipLabel}>Public IP:</span>
+                <span style={s.ipLabel}>{t('nat.publicIp')}</span>
                 <span style={s.ipValue}>{publicIp}</span>
               </div>
             )}
             {localIp && (
               <div style={s.ipRow}>
-                <span style={s.ipLabel}>Local IP:</span>
+                <span style={s.ipLabel}>{t('nat.localIp')}</span>
                 <span style={s.ipValue}>{localIp}</span>
               </div>
             )}
           </div>
           <button onClick={detectNat} disabled={detecting} style={s.detectBtn}>
-            {detecting ? '\u{23F3} Detecting...' : '\u{1F50D} Detect NAT Type'}
+            {detecting ? `\u{23F3} ${t('nat.detecting')}` : `\u{1F50D} ${t('nat.detect')}`}
           </button>
         </div>
 
         {/* Port Reachability */}
         <div style={s.section}>
-          <div style={s.sectionTitle}>Port Reachability</div>
+          <div style={s.sectionTitle}>{t('nat.portReachability')}</div>
           <div style={s.portRow}>
-            <span style={s.portLabel}>Port {nodeConfig.port}:</span>
+            <span style={s.portLabel}>{t('nat.port', { port: nodeConfig.port })}</span>
             <span style={{ ...s.portStatus, color: portReachable === true ? '#43B581' : portReachable === false ? '#E24B4A' : 'var(--color-text-muted)' }}>
-              {portReachable === true ? '\u{2705} Reachable' : portReachable === false ? '\u{274C} Not reachable' : '\u{2753} Not checked'}
+              {portReachable === true ? `\u{2705} ${t('nat.reachable')}` : portReachable === false ? `\u{274C} ${t('nat.notReachable')}` : `\u{2753} ${t('nat.notChecked')}`}
             </span>
-            <button onClick={() => checkPortReachable(nodeConfig.port)} style={s.checkBtn}>Check</button>
+            <button onClick={() => checkPortReachable(nodeConfig.port)} style={s.checkBtn}>{t('nat.check')}</button>
           </div>
           {portReachable === false && (
             <div style={s.helpText}>
-              To make your node directly accessible, forward port {nodeConfig.port} on your router to this PC. Without port forwarding, your node still works via relay proxy.
+              {t('nat.portHelp', { port: nodeConfig.port })}
             </div>
           )}
         </div>
 
         {/* Relay Proxy Status */}
         <div style={s.section}>
-          <div style={s.sectionTitle}>Relay Proxy</div>
+          <div style={s.sectionTitle}>{t('nat.relayProxy')}</div>
           <div style={s.proxyCard}>
             <div style={s.proxyRow}>
-              <span style={s.proxyLabel}>Status:</span>
+              <span style={s.proxyLabel}>{t('nodes.status')}:</span>
               <span style={{ color: relayProxyActive ? '#EF9F27' : '#43B581', fontWeight: 500, fontSize: '13px' }}>
-                {relayProxyActive ? '\u{1F504} Active (traffic via proxy)' : '\u{2705} Direct (no proxy needed)'}
+                {relayProxyActive ? `\u{1F504} ${t('nat.proxyActive')}` : `\u{2705} ${t('nat.proxyDirect')}`}
               </span>
             </div>
             {relayProxyActive && proxyNodeUrl && (
               <div style={s.proxyRow}>
-                <span style={s.proxyLabel}>Proxy:</span>
+                <span style={s.proxyLabel}>{t('nat.proxy')}</span>
                 <span style={{ fontSize: '12px', color: 'var(--color-text-muted)' }}>{proxyNodeUrl}</span>
               </div>
             )}
             <div style={s.proxyDesc}>
-              {relayProxyActive
-                ? 'Your connections are routed through a Main Node. Data is E2E encrypted \u2014 the proxy cannot read your messages.'
-                : 'You have direct connectivity. No proxy needed.'}
+              {relayProxyActive ? t('nat.proxyDescActive') : t('nat.proxyDescDirect')}
             </div>
           </div>
         </div>
@@ -113,21 +113,21 @@ export default function NatSettings(): React.JSX.Element {
         {/* TURN Servers */}
         <div style={s.section}>
           <div style={s.sectionHeaderRow}>
-            <div style={s.sectionTitle}>TURN Servers</div>
+            <div style={s.sectionTitle}>{t('nat.turnServers')}</div>
             <button onClick={() => setShowTurnForm(!showTurnForm)} style={s.addBtn}>
-              {showTurnForm ? 'Cancel' : '+ Add TURN'}
+              {showTurnForm ? t('nodes.cancel') : `+ ${t('nat.addTurn')}`}
             </button>
           </div>
           <div style={s.turnDesc}>
-            TURN servers relay voice/video when direct P2P fails (symmetric NAT). Without TURN, voice may not work for some users.
+            {t('nat.turnDesc')}
           </div>
 
           {showTurnForm && (
             <div style={s.turnForm}>
-              <input type="text" placeholder="turn:hostname:3478" value={turnUrl} onChange={(e) => setTurnUrl(e.target.value)} style={s.input} autoFocus />
-              <input type="text" placeholder="Username (optional)" value={turnUser} onChange={(e) => setTurnUser(e.target.value)} style={s.input} />
-              <input type="password" placeholder="Credential (optional)" value={turnCred} onChange={(e) => setTurnCred(e.target.value)} style={s.input} />
-              <button onClick={handleAddTurn} disabled={!turnUrl.trim()} style={s.saveBtn}>Add</button>
+              <input type="text" placeholder={t('nat.turnUrlPlaceholder')} value={turnUrl} onChange={(e) => setTurnUrl(e.target.value)} style={s.input} autoFocus />
+              <input type="text" placeholder={t('nat.turnUserPlaceholder')} value={turnUser} onChange={(e) => setTurnUser(e.target.value)} style={s.input} />
+              <input type="password" placeholder={t('nat.turnCredPlaceholder')} value={turnCred} onChange={(e) => setTurnCred(e.target.value)} style={s.input} />
+              <button onClick={handleAddTurn} disabled={!turnUrl.trim()} style={s.saveBtn}>{t('nodes.add')}</button>
             </div>
           )}
 
@@ -137,37 +137,37 @@ export default function NatSettings(): React.JSX.Element {
               <span style={s.serverIcon}>{'\u{1F7E2}'}</span>
               <div style={s.serverInfo}>
                 <div style={s.serverUrl}>stun:stun.l.google.com:19302</div>
-                <div style={s.serverTag}>STUN \u2022 Built-in</div>
+                <div style={s.serverTag}>STUN \u2022 {t('nat.builtIn')}</div>
               </div>
             </div>
 
-            {turnServers.map((t) => (
-              <div key={t.urls} style={s.serverRow}>
+            {turnServers.map((srv) => (
+              <div key={srv.urls} style={s.serverRow}>
                 <span style={s.serverIcon}>{'\u{1F535}'}</span>
                 <div style={s.serverInfo}>
-                  <div style={s.serverUrl}>{t.urls}</div>
-                  <div style={s.serverTag}>TURN {t.username ? `\u2022 ${t.username}` : ''}</div>
+                  <div style={s.serverUrl}>{srv.urls}</div>
+                  <div style={s.serverTag}>TURN {srv.username ? `\u2022 ${srv.username}` : ''}</div>
                 </div>
-                <button onClick={() => removeTurnServer(t.urls)} style={s.removeBtn}>{'\u{2716}'}</button>
+                <button onClick={() => removeTurnServer(srv.urls)} style={s.removeBtn}>{'\u{2716}'}</button>
               </div>
             ))}
           </div>
 
           {turnServers.length === 0 && (
             <div style={s.noTurnHint}>
-              No TURN servers configured. Voice will use STUN only (works for most NAT types). Add a TURN server if voice fails for some users.
+              {t('nat.noTurn')}
             </div>
           )}
         </div>
 
         {/* Quick guide */}
         <div style={s.section}>
-          <div style={s.sectionTitle}>Connectivity Guide</div>
+          <div style={s.sectionTitle}>{t('nat.guide')}</div>
           <div style={s.guideCard}>
-            <div style={s.guideRow}>{'\u{2705}'} <strong>Open / Full Cone:</strong> Everything works directly. Best experience.</div>
-            <div style={s.guideRow}>{'\u{1F7E1}'} <strong>Symmetric NAT:</strong> Text/DMs work via relay proxy. Voice needs TURN server.</div>
-            <div style={s.guideRow}>{'\u{1F534}'} <strong>Restricted:</strong> All traffic via proxy. Add TURN for voice. Consider port forwarding.</div>
-            <div style={s.guideRow}>{'\u{1F512}'} <strong>E2E encrypted:</strong> Proxy nodes never see your message content (R22 encryption).</div>
+            <div style={s.guideRow}>{'\u{2705}'} <strong>Open / Full Cone:</strong> {t('nat.openDesc')}</div>
+            <div style={s.guideRow}>{'\u{1F7E0}'} <strong>{t('nat.symmetric')}:</strong> {t('nat.symmetricDesc')}</div>
+            <div style={s.guideRow}>{'\u{1F534}'} <strong>{t('nat.restricted')}:</strong> {t('nat.restrictedDesc')}</div>
+            <div style={s.guideRow}>{'\u{1F512}'} <strong>E2E:</strong> {t('nat.proxyDescActive')}</div>
           </div>
         </div>
       </div>

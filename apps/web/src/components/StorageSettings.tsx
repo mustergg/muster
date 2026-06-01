@@ -6,31 +6,24 @@
  */
 
 import React, { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useStorageStore, RetentionMode, RetentionOverride } from '../stores/storageStore.js';
 import { useCommunityStore } from '../stores/communityStore.js';
 
-const MODE_LABELS: Record<RetentionMode, { label: string; desc: string }> = {
-  keep_all: {
-    label: 'Keep everything',
-    desc: 'All messages, files, and history are kept permanently on this device.',
-  },
-  auto_purge: {
-    label: 'Auto-clean',
-    desc: 'Automatically remove cached data older than the set period.',
-  },
-  viewed_only: {
-    label: 'Keep only viewed',
-    desc: 'Only retain data from communities and channels you\'ve opened. Unviewed content is cleaned automatically.',
-  },
+const MODE_KEYS: Record<RetentionMode, { label: string; desc: string }> = {
+  keep_all: { label: 'storage.keepAll', desc: 'storage.keepAllDesc' },
+  auto_purge: { label: 'storage.autoClean', desc: 'storage.autoCleanDesc' },
+  viewed_only: { label: 'storage.viewedOnly', desc: 'storage.viewedOnlyDesc' },
 };
 
-const TIER_LABELS: Record<string, { icon: string; label: string; desc: string }> = {
-  main: { icon: '\u{1F5A5}\u{FE0F}', label: 'Main Node', desc: 'Dedicated server — hosts communities permanently' },
-  client: { icon: '\u{1F4BB}', label: 'Client Node', desc: 'Contributing user — hosts selected communities + squads' },
-  temp: { icon: '\u{1F310}', label: 'Temp Node', desc: 'Regular user — 30-day retention, 10% passive network contribution' },
+const TIER_KEYS: Record<string, { icon: string; label: string; desc: string }> = {
+  main: { icon: '\u{1F5A5}\u{FE0F}', label: 'storage.tierMain', desc: 'storage.tierMainDesc' },
+  client: { icon: '\u{1F4BB}', label: 'storage.tierClient', desc: 'storage.tierClientDesc' },
+  temp: { icon: '\u{1F310}', label: 'storage.tierTemp', desc: 'storage.tierTempDesc' },
 };
 
 export default function StorageSettings(): React.JSX.Element {
+  const { t } = useTranslation();
   const { mode, purgeDays, overrides, stats, connectedNodeTier, setMode, setPurgeDays, addOverride, removeOverride, clearCache, requestStats } = useStorageStore();
   const { communities } = useCommunityStore();
   const [showOverrideForm, setShowOverrideForm] = useState(false);
@@ -38,26 +31,26 @@ export default function StorageSettings(): React.JSX.Element {
 
   useEffect(() => { requestStats(); }, []);
 
-  const tierInfo = TIER_LABELS[connectedNodeTier] || TIER_LABELS.temp;
+  const tierInfo = TIER_KEYS[connectedNodeTier] || TIER_KEYS.temp;
   const communityList = Object.values(communities);
 
   return (
     <div style={s.container}>
       <div style={s.header}>
         <span style={s.headerIcon}>{'\u{1F4BE}'}</span>
-        <span style={s.headerTitle}>Storage & Data</span>
+        <span style={s.headerTitle}>{t('storage.title')}</span>
       </div>
 
       <div style={s.scrollArea}>
         {/* Connected node tier */}
         {connectedNodeTier && (
           <div style={s.section}>
-            <div style={s.sectionTitle}>Connected Node</div>
+            <div style={s.sectionTitle}>{t('storage.connectedNode')}</div>
             <div style={s.tierCard}>
               <span style={s.tierIcon}>{tierInfo.icon}</span>
               <div style={s.tierInfo}>
-                <div style={s.tierLabel}>{tierInfo.label}</div>
-                <div style={s.tierDesc}>{tierInfo.desc}</div>
+                <div style={s.tierLabel}>{t(tierInfo.label)}</div>
+                <div style={s.tierDesc}>{t(tierInfo.desc)}</div>
               </div>
             </div>
           </div>
@@ -66,22 +59,22 @@ export default function StorageSettings(): React.JSX.Element {
         {/* Storage stats */}
         {stats && (
           <div style={s.section}>
-            <div style={s.sectionTitle}>Storage Usage</div>
+            <div style={s.sectionTitle}>{t('storage.usage')}</div>
             <div style={s.statsGrid}>
-              <StatBox label="Messages" value={formatNumber(stats.totalMessages)} />
-              <StatBox label="DMs" value={formatNumber(stats.totalDMs)} />
-              <StatBox label="Hosted" value={String(stats.hostedCommunities)} sub="communities" />
-              <StatBox label="Cached" value={String(stats.cachedCommunities)} sub="communities" />
-              <StatBox label="Retention" value={stats.retentionDays === 0 ? '\u221E' : `${stats.retentionDays}d`} />
+              <StatBox label={t('storage.messages')} value={formatNumber(stats.totalMessages)} />
+              <StatBox label={t('storage.dms')} value={formatNumber(stats.totalDMs)} />
+              <StatBox label={t('storage.hosted')} value={String(stats.hostedCommunities)} sub={t('storage.communities')} />
+              <StatBox label={t('storage.cached')} value={String(stats.cachedCommunities)} sub={t('storage.communities')} />
+              <StatBox label={t('storage.retention')} value={stats.retentionDays === 0 ? '\u221E' : `${stats.retentionDays}d`} />
             </div>
           </div>
         )}
 
         {/* Retention mode */}
         <div style={s.section}>
-          <div style={s.sectionTitle}>Data Retention</div>
+          <div style={s.sectionTitle}>{t('storage.dataRetention')}</div>
           <div style={s.modeList}>
-            {(Object.entries(MODE_LABELS) as [RetentionMode, { label: string; desc: string }][]).map(([key, info]) => (
+            {(Object.entries(MODE_KEYS) as [RetentionMode, { label: string; desc: string }][]).map(([key, info]) => (
               <button
                 key={key}
                 onClick={() => setMode(key)}
@@ -95,8 +88,8 @@ export default function StorageSettings(): React.JSX.Element {
                   <div style={{ ...s.modeRadioInner, background: mode === key ? 'var(--color-accent)' : 'transparent' }} />
                 </div>
                 <div>
-                  <div style={s.modeLabel}>{info.label}</div>
-                  <div style={s.modeDesc}>{info.desc}</div>
+                  <div style={s.modeLabel}>{t(info.label)}</div>
+                  <div style={s.modeDesc}>{t(info.desc)}</div>
                 </div>
               </button>
             ))}
@@ -104,7 +97,7 @@ export default function StorageSettings(): React.JSX.Element {
 
           {mode === 'auto_purge' && (
             <div style={s.purgeConfig}>
-              <label style={s.inputLabel}>Clean data older than:</label>
+              <label style={s.inputLabel}>{t('storage.cleanOlder')}</label>
               <div style={s.purgeRow}>
                 <input
                   type="number"
@@ -114,7 +107,7 @@ export default function StorageSettings(): React.JSX.Element {
                   onChange={(e) => setPurgeDays(Math.max(1, parseInt(e.target.value) || 30))}
                   style={s.input}
                 />
-                <span style={s.inputSuffix}>days</span>
+                <span style={s.inputSuffix}>{t('storage.days')}</span>
               </div>
             </div>
           )}
@@ -123,12 +116,12 @@ export default function StorageSettings(): React.JSX.Element {
         {/* Per-community overrides */}
         <div style={s.section}>
           <div style={s.sectionHeaderRow}>
-            <div style={s.sectionTitle}>Community Overrides</div>
+            <div style={s.sectionTitle}>{t('storage.overrides')}</div>
             <button onClick={() => setShowOverrideForm(!showOverrideForm)} style={s.addBtn}>
-              {showOverrideForm ? 'Cancel' : '+ Override'}
+              {showOverrideForm ? t('storage.cancel') : `+ ${t('storage.override')}`}
             </button>
           </div>
-          <div style={s.overrideDesc}>Set different retention rules for specific communities, squads, or DMs.</div>
+          <div style={s.overrideDesc}>{t('storage.overridesDesc')}</div>
 
           {showOverrideForm && (
             <div style={s.overrideForm}>
@@ -137,7 +130,7 @@ export default function StorageSettings(): React.JSX.Element {
                 onChange={(e) => setSelectedCommunity(e.target.value)}
                 style={s.select}
               >
-                <option value="">Select community...</option>
+                <option value="">{t('storage.selectCommunity')}</option>
                 {communityList.map((c) => (
                   <option key={c.id} value={c.id}>{c.name}</option>
                 ))}
@@ -152,7 +145,7 @@ export default function StorageSettings(): React.JSX.Element {
                       setSelectedCommunity('');
                     }}
                     style={{ ...s.overrideActionBtn, background: '#43B581' }}
-                  >Keep Forever</button>
+                  >{t('storage.keepForever')}</button>
                   <button
                     onClick={() => {
                       const c = communities[selectedCommunity];
@@ -161,7 +154,7 @@ export default function StorageSettings(): React.JSX.Element {
                       setSelectedCommunity('');
                     }}
                     style={{ ...s.overrideActionBtn, background: '#EF9F27' }}
-                  >Auto-purge 7d</button>
+                  >{t('storage.autoPurge7d')}</button>
                   <button
                     onClick={() => {
                       clearCache(selectedCommunity);
@@ -169,7 +162,7 @@ export default function StorageSettings(): React.JSX.Element {
                       setSelectedCommunity('');
                     }}
                     style={{ ...s.overrideActionBtn, background: '#E24B4A' }}
-                  >Delete Now</button>
+                  >{t('storage.deleteNow')}</button>
                 </div>
               )}
             </div>
@@ -181,7 +174,7 @@ export default function StorageSettings(): React.JSX.Element {
                 <div key={o.id} style={s.overrideRow}>
                   <div style={s.overrideName}>{o.name}</div>
                   <div style={s.overrideMode}>
-                    {o.mode === 'keep' ? '\u{2705} Keep forever' : o.mode === 'purge' ? `\u{1F504} Purge after ${o.purgeDays}d` : '\u{274C} Deleted'}
+                    {o.mode === 'keep' ? `\u{2705} ${t('storage.keepForeverTag')}` : o.mode === 'purge' ? `\u{1F504} ${t('storage.purgeAfter', { days: o.purgeDays })}` : `\u{274C} ${t('storage.deleted')}`}
                   </div>
                   <button onClick={() => removeOverride(o.id)} style={s.removeBtn}>{'\u{2716}'}</button>
                 </div>
@@ -192,16 +185,16 @@ export default function StorageSettings(): React.JSX.Element {
 
         {/* Danger zone */}
         <div style={s.section}>
-          <div style={s.sectionTitle}>Cache Management</div>
+          <div style={s.sectionTitle}>{t('storage.cacheManagement')}</div>
           <button onClick={() => {
-            if (confirm('Clear all cached data? This cannot be undone. Hosted community data is preserved.')) {
+            if (confirm(t('storage.clearConfirm'))) {
               clearCache();
             }
           }} style={s.dangerBtn}>
-            {'\u{1F5D1}\u{FE0F}'} Clear All Cache
+            {'\u{1F5D1}\u{FE0F}'} {t('storage.clearAll')}
           </button>
           <div style={s.dangerDesc}>
-            Removes cached data from non-hosted communities. Messages from hosted communities and DMs are preserved.
+            {t('storage.clearDesc')}
           </div>
         </div>
       </div>

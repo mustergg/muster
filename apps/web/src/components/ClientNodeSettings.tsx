@@ -13,9 +13,9 @@ import { useBandwidthStore, formatBps } from '../stores/bandwidthStore.js';
 import { useReputationStore } from '../stores/reputationStore.js';
 
 const MODE_INFO: Record<NodeMode, { icon: string; label: string; desc: string }> = {
-  off: { icon: '\u{26AA}', label: 'Off', desc: 'No local relay. You connect to remote nodes only.' },
-  temp: { icon: '\u{1F310}', label: 'Temp Node', desc: 'Contribute 10% passively while active. 30-day data retention. Helps the network without hosting communities.' },
-  client: { icon: '\u{1F4BB}', label: 'Client Node', desc: 'Host your communities permanently on this PC. Acts as a mini server for your squads and community groups.' },
+  off: { icon: '\u{26AA}', label: 'clientNode.modes.off', desc: 'clientNode.modes.offDesc' },
+  temp: { icon: '\u{1F310}', label: 'clientNode.modes.temp', desc: 'clientNode.modes.tempDesc' },
+  client: { icon: '\u{1F4BB}', label: 'clientNode.modes.client', desc: 'clientNode.modes.clientDesc' },
 };
 
 export default function ClientNodeSettings(): React.JSX.Element {
@@ -41,8 +41,8 @@ export default function ClientNodeSettings(): React.JSX.Element {
     <div style={s.container}>
       <div style={s.header}>
         <span style={s.headerIcon}>{'\u{1F5A5}\u{FE0F}'}</span>
-        <span style={s.headerTitle}>Client Node</span>
-        {running && <span style={s.runningBadge}>RUNNING</span>}
+        <span style={s.headerTitle}>{t('clientNode.title')}</span>
+        {running && <span style={s.runningBadge}>{t('clientNode.running')}</span>}
       </div>
 
       <div style={s.scrollArea}>
@@ -50,24 +50,24 @@ export default function ClientNodeSettings(): React.JSX.Element {
         <div style={s.section}>
           <div style={s.statusCard}>
             <div style={s.statusRow}>
-              <span style={s.statusLabel}>Status:</span>
+              <span style={s.statusLabel}>{t('clientNode.status')}:</span>
               <span style={{ ...s.statusValue, color: running ? '#43B581' : 'var(--color-text-muted)' }}>
-                {running ? `\u{2705} Running (PID ${pid})` : '\u{26AA} Stopped'}
+                {running ? `\u{2705} ${t('clientNode.runningPid', { pid })}` : `\u{26AA} ${t('clientNode.stopped')}`}
               </span>
             </div>
             {running && (
               <>
                 <div style={s.statusRow}>
-                  <span style={s.statusLabel}>Uptime:</span>
+                  <span style={s.statusLabel}>{t('clientNode.uptime')}:</span>
                   <span style={s.statusValue}>{uptimeStr}</span>
                 </div>
                 <div style={s.statusRow}>
-                  <span style={s.statusLabel}>Port:</span>
+                  <span style={s.statusLabel}>{t('clientNode.port')}:</span>
                   <span style={s.statusValue}>{config.port}</span>
                 </div>
                 <div style={s.statusRow}>
-                  <span style={s.statusLabel}>Mode:</span>
-                  <span style={s.statusValue}>{MODE_INFO[config.mode]?.label}</span>
+                  <span style={s.statusLabel}>{t('clientNode.mode')}:</span>
+                  <span style={s.statusValue}>{t(MODE_INFO[config.mode]?.label || '')}</span>
                 </div>
               </>
             )}
@@ -106,11 +106,11 @@ export default function ClientNodeSettings(): React.JSX.Element {
           <div style={s.btnRow}>
             {!running ? (
               <button onClick={start} disabled={config.mode === 'off'} style={{ ...s.startBtn, opacity: config.mode === 'off' ? 0.5 : 1 }}>
-                {'\u{25B6}\u{FE0F}'} Start Node
+                {'\u{25B6}\u{FE0F}'} {t('clientNode.startNode')}
               </button>
             ) : (
               <button onClick={stop} style={s.stopBtn}>
-                {'\u{23F9}\u{FE0F}'} Stop Node
+                {'\u{23F9}\u{FE0F}'} {t('clientNode.stopNode')}
               </button>
             )}
           </div>
@@ -118,7 +118,7 @@ export default function ClientNodeSettings(): React.JSX.Element {
 
         {/* Mode selection */}
         <div style={s.section}>
-          <div style={s.sectionTitle}>Node Mode</div>
+          <div style={s.sectionTitle}>{t('clientNode.nodeMode')}</div>
           <div style={s.modeList}>
             {(Object.entries(MODE_INFO) as [NodeMode, typeof MODE_INFO['off']][]).map(([mode, info]) => (
               <button
@@ -134,8 +134,8 @@ export default function ClientNodeSettings(): React.JSX.Element {
               >
                 <span style={s.modeIcon}>{info.icon}</span>
                 <div>
-                  <div style={s.modeLabel}>{info.label}</div>
-                  <div style={s.modeDesc}>{info.desc}</div>
+                  <div style={s.modeLabel}>{t(info.label)}</div>
+                  <div style={s.modeDesc}>{t(info.desc)}</div>
                 </div>
               </button>
             ))}
@@ -143,8 +143,8 @@ export default function ClientNodeSettings(): React.JSX.Element {
           {config.mode !== 'off' && (
             <div style={s.modeWarning}>
               {config.mode === 'client'
-                ? '\u{2139}\u{FE0F} Disabling Client Node keeps your communities active on the network, but content only persists 30 days without a host.'
-                : '\u{2139}\u{FE0F} Temp Node contributes passively while you use the app. No permanent hosting.'}
+                ? `\u{2139}\u{FE0F} ${t('clientNode.warnClient')}`
+                : `\u{2139}\u{FE0F} ${t('clientNode.warnTemp')}`}
             </div>
           )}
         </div>
@@ -152,9 +152,9 @@ export default function ClientNodeSettings(): React.JSX.Element {
         {/* Community hosting (client mode only) */}
         {config.mode === 'client' && (
           <div style={s.section}>
-            <div style={s.sectionTitle}>Hosted Communities</div>
+            <div style={s.sectionTitle}>{t('clientNode.hostedCommunities')}</div>
             <div style={s.hostDesc}>
-              Select which communities to permanently host on this node. Hosted communities retain data even when you're offline.
+              {t('clientNode.hostedDesc')}
             </div>
             <div style={s.communityList}>
               {communityList.map((c) => (
@@ -167,11 +167,11 @@ export default function ClientNodeSettings(): React.JSX.Element {
                     style={s.checkbox}
                   />
                   <span style={s.communityName}>{c.name}</span>
-                  {hostedSet.has(c.id) && <span style={s.hostedBadge}>HOSTED</span>}
+                  {hostedSet.has(c.id) && <span style={s.hostedBadge}>{t('clientNode.hosted')}</span>}
                 </label>
               ))}
               {communityList.length === 0 && (
-                <div style={s.emptyText}>No communities joined yet.</div>
+                <div style={s.emptyText}>{t('clientNode.noCommunities')}</div>
               )}
             </div>
           </div>
@@ -180,24 +180,24 @@ export default function ClientNodeSettings(): React.JSX.Element {
         {/* Resource limits */}
         {config.mode !== 'off' && (
           <div style={s.section}>
-            <div style={s.sectionTitle}>Resource Limits</div>
+            <div style={s.sectionTitle}>{t('clientNode.resourceLimits')}</div>
             <div style={s.limitRow}>
-              <span style={s.limitLabel}>Port:</span>
+              <span style={s.limitLabel}>{t('clientNode.port')}:</span>
               <input type="number" value={config.port} onChange={(e) => setPort(parseInt(e.target.value) || 4003)} disabled={running} style={s.limitInput} />
             </div>
             <div style={s.limitRow}>
-              <span style={s.limitLabel}>Max disk:</span>
+              <span style={s.limitLabel}>{t('clientNode.maxDisk')}:</span>
               <input type="number" value={config.maxDiskMB} onChange={(e) => setMaxDisk(parseInt(e.target.value) || 2048)} disabled={running} style={s.limitInput} />
               <span style={s.limitSuffix}>MB</span>
             </div>
             <div style={s.limitRow}>
-              <span style={s.limitLabel}>Max bandwidth:</span>
+              <span style={s.limitLabel}>{t('clientNode.maxBandwidth')}:</span>
               <input type="number" value={config.maxBandwidthMBPerDay} onChange={(e) => setMaxBandwidth(parseInt(e.target.value) || 512)} disabled={running} style={s.limitInput} />
               <span style={s.limitSuffix}>MB/day</span>
             </div>
             <label style={s.checkRow}>
               <input type="checkbox" checked={config.autoStart} onChange={(e) => setAutoStart(e.target.checked)} style={s.checkbox} />
-              <span>Auto-start on app launch</span>
+              <span>{t('clientNode.autoStart')}</span>
             </label>
           </div>
         )}
@@ -205,23 +205,23 @@ export default function ClientNodeSettings(): React.JSX.Element {
         {/* Advanced */}
         <div style={s.section}>
           <button onClick={() => setShowAdvanced(!showAdvanced)} style={s.toggleBtn}>
-            {showAdvanced ? '\u{25BC}' : '\u{25B6}'} Advanced
+            {showAdvanced ? '\u{25BC}' : '\u{25B6}'} {t('clientNode.advanced')}
           </button>
           {showAdvanced && (
             <div style={s.advancedPanel}>
               <div style={s.limitRow}>
-                <span style={s.limitLabel}>Relay path:</span>
+                <span style={s.limitLabel}>{t('clientNode.relayPath')}:</span>
                 <input
                   type="text"
                   value={config.relayPath}
                   onChange={(e) => setRelayPath(e.target.value)}
-                  placeholder="apps/relay/dist/index.js (auto)"
+                  placeholder={t('clientNode.relayPathPlaceholder')}
                   disabled={running}
                   style={{ ...s.limitInput, flex: 1 }}
                 />
               </div>
               <div style={s.advancedNote}>
-                Leave empty for auto-detection. Set manually if the relay is at a custom path.
+                {t('clientNode.relayPathNote')}
               </div>
             </div>
           )}
@@ -274,16 +274,16 @@ export default function ClientNodeSettings(): React.JSX.Element {
         <div style={s.section}>
           <div style={s.sectionHeaderRow}>
             <button onClick={() => setShowLogs(!showLogs)} style={s.toggleBtn}>
-              {showLogs ? '\u{25BC}' : '\u{25B6}'} Logs ({logs.length})
+              {showLogs ? '\u{25BC}' : '\u{25B6}'} {t('clientNode.logs')} ({logs.length})
             </button>
             {showLogs && logs.length > 0 && (
-              <button onClick={clearLogs} style={s.clearBtn}>Clear</button>
+              <button onClick={clearLogs} style={s.clearBtn}>{t('clientNode.clear')}</button>
             )}
           </div>
           {showLogs && (
             <div style={s.logPanel}>
               {logs.length === 0 ? (
-                <div style={s.emptyText}>No logs yet. Start the node to see output.</div>
+                <div style={s.emptyText}>{t('clientNode.noLogs')}</div>
               ) : (
                 logs.map((line, i) => (
                   <div key={i} style={s.logLine}>{line}</div>
