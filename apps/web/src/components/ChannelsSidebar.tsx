@@ -61,13 +61,20 @@ export default function ChannelsSidebar({ communityId, activeChannelId, onSelect
     if (manifestEntry.manifest.admins.some((a) => toHex(a.pubkey) === myPubHex)) return 'admin';
     return 'member';
   })();
+  // Owner detection from the community record itself — `ownerPublicKey` is
+  // present in COMMUNITY_LIST + localStorage, so it's reliable even before
+  // COMMUNITY_DATA (which populates myRoles) or a manifest has loaded.
+  const isOwner = !!community && !!myPubHex && community.ownerPublicKey === myPubHex;
   const legacyRole = communityId ? (myRoles[communityId] || 'member') : 'member';
-  const myRole = manifestRole ?? legacyRole;
-  const isAdmin = ADMIN_ROLES.has(myRole);
+  const myRole = isOwner ? 'owner' : (manifestRole ?? legacyRole);
+  const isAdmin = isOwner || ADMIN_ROLES.has(myRole);
 
   useEffect(() => {
     if (!communityId) return;
     console.log('[Sidebar] Setting up presence + requests for:', communityId);
+    // Pull fresh COMMUNITY_DATA so members + roles (admin detection) and the
+    // manifest are available for this community.
+    fetchCommunity(communityId);
     const unsubPresence  = subscribePresence(communityId);
     const unsubRequests  = serveCommunityRequests(communityId);
     loadSquadsAction(communityId);
@@ -219,9 +226,20 @@ export default function ChannelsSidebar({ communityId, activeChannelId, onSelect
             </div>
           )}
 
-          {voiceChannels.length > 0 && (
+          {(voiceChannels.length > 0 || (isAdmin && communityId)) && (
             <>
-              <div style={{ ...styles.sectionLabel, marginTop: '12px', paddingLeft: '14px' }}>Voice</div>
+              <div style={styles.sectionRow}>
+                <div style={styles.sectionLabel}>Voice</div>
+                {isAdmin && communityId && (
+                  <button
+                    title="Create voice channel"
+                    onClick={() => setShowCreateChannel(true)}
+                    style={styles.createChannelBtn}
+                  >
+                    +
+                  </button>
+                )}
+              </div>
               {voiceChannels.map((ch) => {
                 const menuItems = buildChannelContextMenu(ch);
                 const channelButton = (
