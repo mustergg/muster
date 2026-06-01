@@ -16,6 +16,7 @@ import CreateChannelModal from '../pages/CreateChannelModal.js';
 import EditChannelModal from '../pages/EditChannelModal.js';
 import EditProfileModal from '../pages/EditProfileModal.js';
 import CreateSquadModal from '../pages/CreateSquadModal.js';
+import CommunityGovernanceModal from '../pages/CommunityGovernanceModal.js';
 import { useSquadStore } from '../stores/squadStore.js';
 import ContextMenu from './ContextMenu.js';
 
@@ -31,8 +32,9 @@ export default function ChannelsSidebar({ communityId, activeChannelId, onSelect
   const { t } = useTranslation();
   const { username, logout }              = useAuthStore();
   const { status, peerCount, peerId, disconnect } = useNetworkStore();
-  const { communities, subscribePresence, onlineMembers, serveCommunityRequests, myRoles, deleteChannel } = useCommunityStore();
+  const { communities, subscribePresence, onlineMembers, serveCommunityRequests, myRoles, deleteChannel, fetchCommunity } = useCommunityStore();
   const [showInvite, setShowInvite] = useState(false);
+  const [showGovernance, setShowGovernance] = useState(false);
   const [showCreateChannel, setShowCreateChannel] = useState(false);
   const [editingChannel, setEditingChannel] = useState<{ id: string; name: string; visibility: string } | null>(null);
   const [showProfile, setShowProfile] = useState(false);
@@ -101,6 +103,15 @@ export default function ChannelsSidebar({ communityId, activeChannelId, onSelect
           </span>
           <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
             <span style={styles.peerBadge}>{peerCount} peers</span>
+            {community && isAdmin && (
+              <button
+                title="Governance (signed manifest)"
+                onClick={() => { if (communityId) fetchCommunity(communityId); setShowGovernance(true); }}
+                style={styles.inviteBtn}
+              >
+                {'\u{1F510}'}
+              </button>
+            )}
             {community && (
               <button
                 title="Invite members"
@@ -276,6 +287,13 @@ export default function ChannelsSidebar({ communityId, activeChannelId, onSelect
           communityId={community.id}
           communityName={community.name}
           onClose={() => setShowInvite(false)}
+        />
+      )}
+
+      {showGovernance && communityId && (
+        <CommunityGovernanceModal
+          communityId={communityId}
+          onClose={() => setShowGovernance(false)}
         />
       )}
 
