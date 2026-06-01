@@ -19,8 +19,9 @@ interface Props {
   active: ActiveLocation | null;
 }
 
-/** Max file size: 1MB */
-const MAX_FILE_SIZE = 1 * 1024 * 1024;
+/** Max file size. R25 — Phase 4: content-addressed blob path (256-KB pieces)
+ *  replaces the old 1-MB legacy cap. */
+const MAX_FILE_SIZE = 100 * 1024 * 1024;
 
 function formatTime(ts: number): string {
   return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -30,12 +31,6 @@ function formatSize(bytes: number): string {
   if (bytes < 1024) return bytes + 'B';
   if (bytes < 1024 * 1024) return Math.round(bytes / 1024) + 'KB';
   return (bytes / (1024 * 1024)).toFixed(1) + 'MB';
-}
-
-function uuid(): string {
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
-    const r = (Math.random() * 16) | 0; return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
-  });
 }
 
 // ─── File message component ────────────────────────────────────────────
@@ -145,6 +140,56 @@ function FileAttachment({ fileId, fileName, mimeType, size }: {
   );
 }
 
+// ─── Blob attachment (R25 — Phase 4: content-addressed pieces) ──────────
+
+function BlobAttachment({ msg }: { msg: ChatMessage }): React.JSX.Element {
+  const fetchAttachment = useChatStore((s) => s.fetchAttachment);
+  const isImage = (msg.mimeType || '').startsWith('image/');
+  const status = msg.blobStatus ?? 'pending';
+  const url = msg.attachmentUrl;
+  const name = msg.fileName || 'attachment';
+  const size = msg.fileSize || 0;
+
+  // Auto-fetch images so they render inline without a click.
+  useEffect(() => {
+    if (isImage && status === 'pending') void fetchAttachment(msg.channel, msg.messageId);
+  }, [isImage, status, msg.channel, msg.messageId]);
+
+  const download = () => {
+    if (!url) { void fetchAttachment(msg.channel, msg.messageId); return; }
+    const a = document.createElement('a');
+    a.href = url; a.download = name;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  };
+
+  if (isImage) {
+    if (status === 'loading' || status === 'pending') return <div style={fileStyles.imagePlaceholder}>Loading image…</div>;
+    if (status === 'failed') return <div style={fileStyles.imagePlaceholder}>Failed to load image</div>;
+    if (url) {
+      return (
+        <div style={fileStyles.imageWrap}>
+          <img src={url} alt={name} style={fileStyles.image} onClick={download} title="Click to download" />
+          <span style={fileStyles.imageLabel}>{name} ({formatSize(size)})</span>
+        </div>
+      );
+    }
+    return <></>;
+  }
+
+  return (
+    <div style={fileStyles.fileCard}>
+      <div style={fileStyles.fileIcon}>&#x1F4CE;</div>
+      <div style={fileStyles.fileMeta}>
+        <span style={fileStyles.fileName}>{name}</span>
+        <span style={fileStyles.fileSize}>{formatSize(size)}{status === 'failed' ? ' · failed' : ''}</span>
+      </div>
+      <button onClick={download} style={fileStyles.downloadBtn} title={url ? 'Download' : 'Fetch'}>
+        {status === 'loading' ? '…' : '⬇'}
+      </button>
+    </div>
+  );
+}
+
 const fileStyles = {
   imagePlaceholder: { padding: '12px', background: 'var(--color-bg-hover)', borderRadius: '8px', fontSize: '12px', color: 'var(--color-text-muted)', marginTop: '4px' } as React.CSSProperties,
   imageWrap: { marginTop: '6px', display: 'flex', flexDirection: 'column' as const, gap: '4px' } as React.CSSProperties,
@@ -165,6 +210,7 @@ function MessageRow({ msg }: { msg: ChatMessage }): React.JSX.Element {
   const hue = parseInt((msg.senderPublicKey || '0000').slice(0, 4), 16) % 360;
 
   const hasFile = !!(msg as any).fileId;
+  const hasBlob = !!msg.blobRoot;
 
   return (
     <div style={styles.msgGroup}>
@@ -179,7 +225,8 @@ function MessageRow({ msg }: { msg: ChatMessage }): React.JSX.Element {
           <span style={styles.time}>{formatTime(msg.timestamp)}</span>
         </div>
         {msg.content && <p style={styles.content}>{msg.content}</p>}
-        {hasFile && (
+        {hasBlob && <BlobAttachment msg={msg} />}
+        {!hasBlob && hasFile && (
           <FileAttachment
             fileId={(msg as any).fileId}
             fileName={(msg as any).fileName}
@@ -196,7 +243,7 @@ function MessageRow({ msg }: { msg: ChatMessage }): React.JSX.Element {
 
 export default function ChatArea({ active }: Props): React.JSX.Element {
   const { t } = useTranslation();
-  const { messages, subscribe, unsubscribe, sendMessage } = useChatStore();
+  const { messages, subscribe, unsubscribe, sendMessage, sendFile } = useChatStore();
   const [draft, setDraft] = useState('');
   const [uploading, setUploading] = useState(false);
   const [dragOver, setDragOver] = useState(false);
@@ -235,46 +282,24 @@ export default function ChatArea({ active }: Props): React.JSX.Element {
     }
 
     setUploading(true);
-
     try {
-      const reader = new FileReader();
-      const base64 = await new Promise<string>((resolve, reject) => {
-        reader.onload = () => {
-          const result = reader.result as string;
-          resolve(result.split(',')[1] || '');
-        };
-        reader.onerror = () => reject(new Error('Failed to read file'));
-        reader.readAsDataURL(file);
-      });
-
       const { transport } = useNetworkStore.getState();
       if (!transport?.isConnected) {
         alert('Not connected to relay.');
         return;
       }
-
-      transport.send({
-        type: 'UPLOAD_FILE',
-        payload: {
-          fileId: uuid(),
-          channel: active.channelId,
-          fileName: file.name,
-          mimeType: file.type || 'application/octet-stream',
-          size: file.size,
-          data: base64,
-          messageText: draft.trim() || undefined,
-        },
-        timestamp: Date.now(),
-      });
-
-      setDraft('');
+      // R25 — Phase 4. Route through the content-addressed blob path:
+      // encrypt → 256-KB pieces → upload → ENVELOPE reference.
+      const text = draft.trim();
+      if (text) { await sendMessage(active.channelId, text); setDraft(''); }
+      await sendFile(active.channelId, file);
     } catch (err) {
       console.error('[chat] Upload failed:', err);
       alert('Failed to upload file.');
     } finally {
       setUploading(false);
     }
-  }, [active, draft]);
+  }, [active, draft, sendFile, sendMessage]);
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];

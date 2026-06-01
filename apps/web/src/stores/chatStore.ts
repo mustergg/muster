@@ -13,15 +13,20 @@
 import { create } from 'zustand';
 import { useNetworkStore } from './networkStore';
 import { useGroupCryptoStore } from './groupCryptoStore';
+import { usePieceCacheStore } from './pieceCacheStore';
 import { BrowserDB, type DBMessage } from '@muster/db';
 import { sign as ed25519Sign, toHex, sha256, fromHex, decodeCanonical } from '@muster/crypto';
 import type { TransportMessage } from '@muster/transport';
-// R25 — Phase 1: two-layer envelope path (gated by VITE_TWO_LAYER=1).
+// R25 — Phase 1/4: two-layer envelope + blob path (always-on since Phase 10).
 import { buildEnvelope, sendBuiltEnvelope } from '../lib/envelope';
-import { fromCborMap } from '@muster/protocol';
+import { fetchBlob } from '../lib/pieceFetcher';
+import { fromCborMap, type BlobRef, type EnvelopeKind } from '@muster/protocol';
 
 const encoder = new TextEncoder();
 const FILE_PREFIX = '__FILE__';
+// R25 — Phase 4: blob-backed attachment marker for DB persistence. The real
+// bytes live in the piece store; this row just records how to re-fetch them.
+const BLOB_PREFIX = '__BLOB__';
 
 // R25 — Phase 10. Envelope dual-write is always-on now. The
 // VITE_TWO_LAYER flag was retired with Phase 10.
@@ -61,6 +66,20 @@ function decodeFileContent(content: string): { fileId: string; fileName: string;
   }
 }
 
+/** R25 — Phase 4. Encode a blob-attachment reference for DB persistence. */
+function encodeBlobContent(fileName: string, mimeType: string, fileSize: number, blobRoot: string, envelopeId: string): string {
+  return BLOB_PREFIX + JSON.stringify({ fileName, mimeType, fileSize, blobRoot, envelopeId });
+}
+
+function decodeBlobContent(content: string): { fileName: string; mimeType: string; fileSize: number; blobRoot: string; envelopeId: string } | null {
+  if (!content.startsWith(BLOB_PREFIX)) return null;
+  try {
+    return JSON.parse(content.slice(BLOB_PREFIX.length));
+  } catch {
+    return null;
+  }
+}
+
 export interface ChatMessage {
   messageId: string; channel: string; content: string;
   senderPublicKey: string; senderUsername: string; timestamp: number; isOwn: boolean;
@@ -68,6 +87,15 @@ export interface ChatMessage {
   fileName?: string;
   mimeType?: string;
   fileSize?: number;
+  // R25 — Phase 4: blob-backed attachment (envelope + content-addressed pieces).
+  /** hex(blobRef.root) — present for attachments delivered over the blob path. */
+  blobRoot?: string;
+  /** hex(envelopeId) of the carrying envelope (so we can re-fetch on demand). */
+  envelopeId?: string;
+  /** Object URL once the blob is fetched + decrypted, ready to render/download. */
+  attachmentUrl?: string;
+  /** Lifecycle of a blob attachment in the UI. */
+  blobStatus?: 'pending' | 'loading' | 'ready' | 'failed';
 }
 
 export interface PresenceUser { publicKey: string; username: string; status: string; }
@@ -79,16 +107,65 @@ interface ChatState {
   subscribe: (channels: string[]) => void;
   unsubscribe: (channels: string[]) => void;
   sendMessage: (channel: string, content: string) => void;
+  /** R25 — Phase 4. Send a file/image as an envelope + content-addressed blob. */
+  sendFile: (channel: string, file: File) => Promise<void>;
+  /** R25 — Phase 4. Fetch + decrypt a blob attachment and attach its object URL. */
+  fetchAttachment: (channel: string, messageId: string) => Promise<void>;
   deleteMessage: (channel: string, messageId: string) => void;
   setActiveChannel: (channelId: string | null) => void;
   clear: () => void;
   init: () => () => void;
 }
 
+/** R25 — Phase 4. Reverse index: hex(channelId) → channel string. Populated
+ *  on subscribe so incoming blob envelopes can be routed to the right
+ *  channel (channelId is a one-way hash of the channel string). */
+const channelIdIndex = new Map<string, string>();
+
+/** Prepend a 2-byte length-prefixed filename to the file bytes before
+ *  encryption, so the receiver recovers the original name from the
+ *  (otherwise opaque) blob. Layout: [u16be nameLen][name utf8][bytes]. */
+function packBlobPayload(fileName: string, bytes: Uint8Array): Uint8Array {
+  const nameBytes = new TextEncoder().encode(fileName);
+  if (nameBytes.length > 0xffff) throw new Error('filename too long');
+  const out = new Uint8Array(2 + nameBytes.length + bytes.length);
+  out[0] = (nameBytes.length >> 8) & 0xff;
+  out[1] = nameBytes.length & 0xff;
+  out.set(nameBytes, 2);
+  out.set(bytes, 2 + nameBytes.length);
+  return out;
+}
+
+function unpackBlobPayload(buf: Uint8Array): { fileName: string; bytes: Uint8Array } {
+  if (buf.length < 2) return { fileName: 'attachment', bytes: buf };
+  const nameLen = (buf[0]! << 8) | buf[1]!;
+  if (2 + nameLen > buf.length) return { fileName: 'attachment', bytes: buf };
+  const fileName = new TextDecoder().decode(buf.slice(2, 2 + nameLen));
+  return { fileName, bytes: buf.slice(2 + nameLen) };
+}
+
+/** Map an IANA mime to the envelope kind we tag the blob with. */
+function kindForMime(mime: string): EnvelopeKind {
+  if (mime.startsWith('image/')) return 'image';
+  if (mime.startsWith('audio/')) return 'voice';
+  return 'file';
+}
+
 const browserDB = new BrowserDB();
 
 /** Convert a DB message to a ChatMessage, detecting file messages. */
 function dbMsgToChatMsg(msg: DBMessage, myKey: string): ChatMessage {
+  const blobData = decodeBlobContent(msg.content);
+  if (blobData) {
+    return {
+      messageId: msg.messageId, channel: msg.channel, content: '',
+      senderPublicKey: msg.senderPublicKey, senderUsername: msg.senderUsername,
+      timestamp: msg.timestamp, isOwn: msg.senderPublicKey === myKey,
+      fileName: blobData.fileName, mimeType: blobData.mimeType, fileSize: blobData.fileSize,
+      blobRoot: blobData.blobRoot, envelopeId: blobData.envelopeId,
+      blobStatus: 'pending',
+    };
+  }
   const fileData = decodeFileContent(msg.content);
   if (fileData) {
     return {
@@ -182,6 +259,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     const myKey = useNetworkStore.getState().publicKey;
     for (const channelId of channelIds) {
+      // R25 — Phase 4. Index channelId hash → channel string so incoming
+      // blob envelopes can be routed back to this channel.
+      channelIdIndex.set(toHex(channelIdBytes(channelId)), channelId);
       browserDB.getMessages(channelId).then((dbMsgs) => {
         if (dbMsgs.length > 0) {
           set((state) => ({ messages: { ...state.messages, [channelId]: dbMsgs.map((m) => dbMsgToChatMsg(m, myKey)) } }));
@@ -234,6 +314,125 @@ export const useChatStore = create<ChatState>((set, get) => ({
       void sendAsEnvelope(channel, content, network.publicKey, privateKey).catch((err) => {
         console.warn('[chat] envelope dual-write failed:', err);
       });
+    }
+  },
+
+  // R25 — Phase 4. File/image attachments now ride the content-addressed
+  // blob path: the file is encrypted under a per-blob key (wrapped to the
+  // channel), split into 256-KB pieces, uploaded, and referenced by an
+  // ENVELOPE. Receivers pull pieces back via fetchAttachment. This replaces
+  // the legacy 1-MB UPLOAD_FILE flow.
+  sendFile: async (channel, file) => {
+    const network = useNetworkStore.getState();
+    if (!network.transport?.isConnected) return;
+    const privateKey = getPrivateKey();
+    if (!privateKey) { console.warn('[chat] sendFile: no private key'); return; }
+
+    const groupCrypto = useGroupCryptoStore.getState();
+    const epoch = groupCrypto.channels.get(channel)?.currentEpoch ?? 0;
+    const mime = file.type || 'application/octet-stream';
+    const kind = kindForMime(mime);
+
+    const raw = new Uint8Array(await file.arrayBuffer());
+    const packed = packBlobPayload(file.name, raw);
+
+    const built = await buildEnvelope({
+      communityId: communityIdBytesFromChannel(channel),
+      channelId: channelIdBytes(channel),
+      senderPubkey: fromHex(network.publicKey),
+      senderPrivkey: privateKey,
+      kind,
+      payload: packed,
+      mime,
+      epoch,
+      // Inline path is never taken for blobs; stub to satisfy the type.
+      encryptBody: async () => { throw new Error('unreachable: blob body'); },
+      wrapBlobKey: async (blobKey) => {
+        const { wrap, nonce } = await groupCrypto.wrapBlobKey(channel, blobKey);
+        return { wrap, nonce };
+      },
+    });
+
+    const messageId = uuid();
+    const timestamp = Date.now();
+    const blobRootHex = built.blob ? toHex(built.blob.root) : undefined;
+    const envelopeIdHex = toHex(built.envelopeId);
+    // Optimistic local render — sender sees the file instantly from a local
+    // object URL, no round-trip needed.
+    const localUrl = URL.createObjectURL(file);
+    const localMsg: ChatMessage = {
+      messageId, channel, content: '',
+      senderPublicKey: network.publicKey, senderUsername: network.username,
+      timestamp, isOwn: true,
+      fileName: file.name, mimeType: mime, fileSize: file.size,
+      blobRoot: blobRootHex, envelopeId: envelopeIdHex,
+      attachmentUrl: localUrl, blobStatus: 'ready',
+    };
+    set((state) => ({
+      messages: { ...state.messages, [channel]: [...(state.messages[channel] || []), localMsg] },
+    }));
+    // Persist a reference so the message survives reload (re-fetched lazily).
+    browserDB.addMessage({
+      messageId, channel,
+      content: encodeBlobContent(file.name, mime, file.size, blobRootHex ?? '', envelopeIdHex),
+      senderPublicKey: network.publicKey, senderUsername: network.username,
+      timestamp, signature: '',
+    });
+    browserDB.setLastSyncTimestamp(channel, timestamp);
+
+    await sendBuiltEnvelope({
+      send: (m) => network.transport!.send(m),
+      isConnected: network.transport.isConnected,
+    }, built);
+  },
+
+  fetchAttachment: async (channel, messageId) => {
+    const st = get();
+    const list = st.messages[channel] || [];
+    const msg = list.find((m) => m.messageId === messageId);
+    if (!msg || !msg.envelopeId || !msg.blobRoot) return;
+    if (msg.blobStatus === 'loading' || msg.blobStatus === 'ready') return;
+
+    const patch = (m: ChatMessage, p: Partial<ChatMessage>): ChatMessage => ({ ...m, ...p });
+    const update = (p: Partial<ChatMessage>) => set((state) => ({
+      messages: {
+        ...state.messages,
+        [channel]: (state.messages[channel] || []).map((m) => m.messageId === messageId ? patch(m, p) : m),
+      },
+    }));
+    update({ blobStatus: 'loading' });
+
+    try {
+      const env = await browserDB.getEnvelope(msg.envelopeId);
+      if (!env) throw new Error('envelope not cached');
+      const bin = Uint8Array.from(atob(env.cborB64), (c) => c.charCodeAt(0));
+      const decoded = fromCborMap(decodeCanonical(bin) as Record<string, unknown>);
+      if (decoded.body.inline) throw new Error('envelope has no blob');
+      const blobRef: BlobRef = decoded.body.blobRef;
+
+      const network = useNetworkStore.getState();
+      const groupCrypto = useGroupCryptoStore.getState();
+      const cache = usePieceCacheStore.getState();
+
+      const cipherPlain = await fetchBlob(
+        {
+          send: (m) => network.transport!.send(m),
+          isConnected: !!network.transport?.isConnected,
+          onMessage: network.onMessage,
+        },
+        blobRef,
+        (wrap, nonce, ep) => groupCrypto.unwrapBlobKey(channel, wrap, nonce, ep),
+        { cache: { getByIndex: cache.getByIndex, put: cache.put } },
+      );
+
+      const { fileName, bytes } = unpackBlobPayload(cipherPlain);
+      const ab = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+      const blob = new Blob([ab], { type: blobRef.mime });
+      const url = URL.createObjectURL(blob);
+      update({ attachmentUrl: url, fileName, fileSize: bytes.length, blobStatus: 'ready' });
+    } catch (err) {
+      console.warn('[chat] fetchAttachment failed:', err);
+      update({ blobStatus: 'failed' });
     }
   },
 
@@ -355,6 +554,42 @@ export const useChatStore = create<ChatState>((set, get) => ({
               receivedAt: Date.now(),
               blobStatus: env.body.inline ? 'ready' : 'pending',
             });
+
+            // R25 — Phase 4. A blob envelope of kind file/image/voice is an
+            // attachment from another member. Render a placeholder in the
+            // matching channel and auto-fetch it. Skip our own (we already
+            // rendered optimistically in sendFile).
+            if (!env.body.inline && (env.kind === 'file' || env.kind === 'image' || env.kind === 'voice')) {
+              const senderHex = toHex(env.senderPubkey);
+              if (senderHex !== myKey) {
+                const channel = channelIdIndex.get(toHex(env.channelId));
+                if (channel) {
+                  const blobRoot = toHex((env.body as any).blobRef.root);
+                  const mime = (env.body as any).blobRef.mime as string;
+                  const size = (env.body as any).blobRef.size as number;
+                  const envelopeIdHex = toHex(id);
+                  const placeholder: ChatMessage = {
+                    messageId: envelopeIdHex, channel, content: '',
+                    senderPublicKey: senderHex, senderUsername: senderHex.slice(0, 8),
+                    timestamp: env.ts, isOwn: false,
+                    fileName: 'attachment', mimeType: mime, fileSize: size,
+                    blobRoot, envelopeId: envelopeIdHex, blobStatus: 'pending',
+                  };
+                  browserDB.addMessage({
+                    messageId: envelopeIdHex, channel,
+                    content: encodeBlobContent('attachment', mime, size, blobRoot, envelopeIdHex),
+                    senderPublicKey: senderHex, senderUsername: senderHex.slice(0, 8),
+                    timestamp: env.ts, signature: '',
+                  });
+                  set((state) => {
+                    const existing = state.messages[channel] || [];
+                    if (existing.some((m) => m.messageId === envelopeIdHex)) return state;
+                    return { messages: { ...state.messages, [channel]: [...existing, placeholder].sort((a, b) => a.timestamp - b.timestamp) } };
+                  });
+                  void useChatStore.getState().fetchAttachment(channel, envelopeIdHex);
+                }
+              }
+            }
           } catch (err) {
             console.warn('[chat] envelope cache failed:', err);
           }

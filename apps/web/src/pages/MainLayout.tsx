@@ -23,6 +23,7 @@ import { useVoiceStore } from '../stores/voiceStore.js';
 import { useStorageStore } from '../stores/storageStore.js';
 import { useGroupCryptoStore } from '../stores/groupCryptoStore.js';
 import { useManifestStore } from '../stores/manifestStore.js';
+import { usePieceCacheStore } from '../stores/pieceCacheStore.js';
 // clientNodeStore is imported dynamically (only registers global, no init needed)
 import '../stores/clientNodeStore.js';
 import { useNatStore } from '../stores/natStore.js';
@@ -83,6 +84,13 @@ export default function MainLayout(): React.JSX.Element {
   }, [status]);
 
   useEffect(() => { loadCommunities(); }, []);
+
+  // R25 — Phase 4. Browser piece cache for blob attachments. Init once;
+  // shut down on unmount.
+  useEffect(() => {
+    usePieceCacheStore.getState().init();
+    return () => usePieceCacheStore.getState().shutdown();
+  }, []);
 
   const handleOpenDM = (publicKey: string) => { setViewMode('dm'); setActiveDMPartner(publicKey); };
   const handleSelectDM = () => { setViewMode('dm'); setActiveCommunityId(null); setActive(null); };

@@ -52,6 +52,15 @@ interface GroupCryptoState {
   encrypt: (channelId: string, plaintext: string) => Promise<{ ciphertext: string; nonce: string; epoch: number } | null>;
   /** Decrypt a message from a channel. Returns plaintext or null if can't decrypt. */
   decrypt: (channelId: string, ciphertext: string, nonce: string, epoch: number) => Promise<string | null>;
+  /**
+   * R25 — Phase 4. Wrap a per-blob AES-256 key under the channel key so a
+   * file/voice envelope can carry it. Uses the channel group key when E2E
+   * is enabled, otherwise a deterministic per-channel fallback so the blob
+   * stays decryptable by anyone in the channel during rollout.
+   */
+  wrapBlobKey: (channelId: string, blobKey: Uint8Array) => Promise<{ wrap: Uint8Array; nonce: Uint8Array; epoch: number }>;
+  /** R25 — Phase 4. Inverse of wrapBlobKey. Returns the raw 32-byte blob key. */
+  unwrapBlobKey: (channelId: string, wrap: Uint8Array, nonce: Uint8Array, epoch: number) => Promise<Uint8Array>;
   /** Check if a channel has E2E enabled. */
   isEncrypted: (channelId: string) => boolean;
   /** Init message listener. */
@@ -112,6 +121,19 @@ async function aesDecrypt(key: CryptoKey, ciphertext: Uint8Array, nonce: Uint8Ar
 /** Import a raw 32-byte key as AES-GCM CryptoKey. */
 async function importAesKey(rawKey: Uint8Array): Promise<CryptoKey> {
   return crypto.subtle.importKey('raw', rawKey.buffer as ArrayBuffer, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
+}
+
+/**
+ * R25 — Phase 4. Deterministic per-channel fallback key, used to wrap blob
+ * keys when no group key has been distributed yet. Anyone in the channel
+ * derives the same value, so file/voice blobs stay openable during rollout
+ * even before E2E is enabled. Once a real group key exists, wrapBlobKey
+ * prefers it (epoch > 0) and this is no longer used for new uploads.
+ */
+async function deterministicChannelKey(channelId: string): Promise<Uint8Array> {
+  const enc = new TextEncoder();
+  const h = await crypto.subtle.digest('SHA-256', enc.encode(`muster-blob-fallback:${channelId}`));
+  return new Uint8Array(h);
 }
 
 /** Encrypt a group key for a specific recipient using simple shared secret. */
@@ -281,6 +303,36 @@ export const useGroupCryptoStore = create<GroupCryptoState>((set, get) => ({
       console.error('[group-crypto] Decrypt failed:', err);
       return null;
     }
+  },
+
+  wrapBlobKey: async (channelId, blobKey) => {
+    const ch = get().channels.get(channelId);
+    let raw: Uint8Array;
+    let epoch: number;
+    const cur = ch && ch.enabled && ch.keys.size > 0 ? ch.keys.get(ch.currentEpoch) : undefined;
+    if (cur) {
+      raw = cur.key;
+      epoch = ch!.currentEpoch;
+    } else {
+      raw = await deterministicChannelKey(channelId);
+      epoch = 0;
+    }
+    const aesKey = await importAesKey(raw);
+    const nonce = generateNonce();
+    const wrap = await aesEncrypt(aesKey, blobKey, nonce);
+    return { wrap, nonce, epoch };
+  },
+
+  unwrapBlobKey: async (channelId, wrap, nonce, epoch) => {
+    const ch = get().channels.get(channelId);
+    let raw: Uint8Array | null = null;
+    if (epoch > 0 && ch) {
+      const k = ch.keys.get(epoch);
+      if (k) raw = k.key;
+    }
+    if (!raw) raw = await deterministicChannelKey(channelId);
+    const aesKey = await importAesKey(raw);
+    return await aesDecrypt(aesKey, wrap, nonce);
   },
 
   isEncrypted: (channelId) => {
