@@ -73,6 +73,36 @@ async function listKeystoreUsernamesFromIDB(): Promise<string[]> {
   });
 }
 
+// ─── Session persistence ──────────────────────────────────────────────────────
+//
+// Keeps the user logged in across page reloads / app restarts. The unlocked
+// keypair is cached in localStorage so the app can re-auth with the relay
+// without prompting for the password again. NOTE: this stores the private
+// key at rest on the device — acceptable for the desktop/alpha threat model;
+// a future hardening can wrap it with an OS-backed device secret.
+
+const SESSION_KEY = 'muster-session';
+
+interface SessionBlob { username: string; publicKeyHex: string; privateKeyHex: string; }
+
+function storeSession(keypair: KeyPair, username: string): void {
+  try {
+    const blob: SessionBlob = { username, publicKeyHex: toHex(keypair.publicKey), privateKeyHex: toHex(keypair.privateKey) };
+    localStorage.setItem(SESSION_KEY, JSON.stringify(blob));
+  } catch { /* private mode / quota */ }
+}
+
+function loadSession(): SessionBlob | null {
+  try {
+    const raw = localStorage.getItem(SESSION_KEY);
+    return raw ? JSON.parse(raw) as SessionBlob : null;
+  } catch { return null; }
+}
+
+function clearSession(): void {
+  try { localStorage.removeItem(SESSION_KEY); } catch { /* ignore */ }
+}
+
 // ─── Store ───────────────────────────────────────────────────────────────────
 
 interface AuthState {
@@ -107,6 +137,24 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
   _hadLocalKeystore: false,
 
   rehydrate: async () => {
+    // Fast path: a persisted session restores the full keypair so the user
+    // stays logged in across reloads (no password prompt). networkStore then
+    // re-auths with the relay using this keypair.
+    const sess = loadSession();
+    if (sess && sess.privateKeyHex && sess.publicKeyHex) {
+      try {
+        set({
+          isAuthenticated: true,
+          username: sess.username,
+          publicKeyHex: sess.publicKeyHex,
+          _keypair: { privateKey: fromHex(sess.privateKeyHex), publicKey: fromHex(sess.publicKeyHex) },
+          _authMode: 'login',
+          _hadLocalKeystore: true,
+        });
+        return;
+      } catch { clearSession(); }
+    }
+    // No session — prefill the last known username so login is one step.
     const usernames = await listKeystoreUsernamesFromIDB();
     if (usernames.length === 0) return;
     const lastUsername = usernames[usernames.length - 1];
@@ -205,6 +253,10 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
       set({ _pendingKeystore: null });
       console.log('[auth] Keystore saved after relay confirmation');
     }
+    // Persist the session so a reload keeps the user logged in.
+    const kp = get()._keypair;
+    const username = get().username;
+    if (kp && username) storeSession(kp, username);
   },
 
   handleAuthFailure: async () => {
@@ -219,6 +271,7 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
       await deleteKeystoreFromIDB(username).catch(() => {});
     }
 
+    clearSession();
     set({
       isAuthenticated: false,
       _keypair: null,
@@ -229,6 +282,7 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
   },
 
   logout: () => {
+    clearSession();
     set({
       isAuthenticated: false,
       _keypair: null,
