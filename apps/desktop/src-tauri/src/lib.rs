@@ -65,9 +65,11 @@ pub fn run() {
                 .item(&quit)
                 .build()?;
 
-            let _tray = TrayIconBuilder::new()
-                .menu(&menu)
-                .tooltip("Muster")
+            let mut tray_builder = TrayIconBuilder::with_id("main-tray").menu(&menu).tooltip("Muster");
+            if let Some(icon) = app.default_window_icon() {
+                tray_builder = tray_builder.icon(icon.clone());
+            }
+            let _tray = tray_builder
                 .on_menu_event(|app, event| match event.id().as_ref() {
                     "show" => {
                         if let Some(window) = app.get_webview_window("main") {
