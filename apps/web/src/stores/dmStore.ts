@@ -342,6 +342,10 @@ export const useDMStore = create<DMState>((set, get) => ({
     sendInboxSubscribe();
     const inboxTimer = setInterval(sendInboxSubscribe, 60 * 60 * 1000);
 
+    // Load conversations on connect so DM unread badges appear without having
+    // to open the DM view first.
+    get().loadConversations();
+
     const unsubscribe = network.onMessage((msg: TransportMessage) => {
       switch (msg.type) {
         case 'DM_MESSAGE': {
@@ -360,9 +364,12 @@ export const useDMStore = create<DMState>((set, get) => ({
             isOwn, encrypted,
           };
 
+          // Duplicate (e.g. re-sent bot welcome, reconnect replay) → ignore
+          // entirely so it doesn't bump unread badges.
+          if ((get().messages[otherKey] || []).some((m) => m.messageId === dmMsg.messageId)) break;
+
           set((state) => {
             const existing = state.messages[otherKey] || [];
-            if (existing.some((m) => m.messageId === dmMsg.messageId)) return state;
             return { messages: { ...state.messages, [otherKey]: [...existing, dmMsg].sort((a, b) => a.timestamp - b.timestamp) } };
           });
 
@@ -435,7 +442,19 @@ export const useDMStore = create<DMState>((set, get) => ({
 
         case 'DM_CONVERSATIONS_RESPONSE': {
           const p = msg.payload as any;
-          set({ conversations: p.conversations || [] });
+          const incoming: DMConversation[] = p.conversations || [];
+          // Merge with existing — preserve client-side unreadCount (relay
+          // doesn't track per-client read state) and keep any conversations
+          // the relay doesn't know about (e.g. the Node Bot).
+          set((state) => {
+            const byKey = new Map(state.conversations.map((c) => [c.publicKey, c]));
+            for (const inc of incoming) {
+              const prev = byKey.get(inc.publicKey);
+              byKey.set(inc.publicKey, { ...inc, unreadCount: prev?.unreadCount ?? inc.unreadCount ?? 0 });
+            }
+            const merged = [...byKey.values()].sort((a, b) => b.lastTimestamp - a.lastTimestamp);
+            return { conversations: merged };
+          });
           break;
         }
 

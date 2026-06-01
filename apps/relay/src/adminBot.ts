@@ -469,7 +469,9 @@ export class AdminBot {
     this.sendToClient(client, {
       type: 'DM_MESSAGE',
       payload: {
-        messageId: 'bot-welcome-' + randomBytes(8).toString('hex'),
+        // Stable id so re-sends (every conversations request / reconnect)
+        // dedup on the client instead of stacking phantom unread badges.
+        messageId: 'bot-welcome',
         senderPublicKey: NODE_BOT_KEY,
         senderUsername: NODE_BOT_USERNAME,
         recipientPublicKey: client.publicKey,
