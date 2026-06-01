@@ -34,7 +34,8 @@ export default function ChannelsSidebar({ communityId, activeChannelId, onSelect
   const { t } = useTranslation();
   const { username, logout }              = useAuthStore();
   const { status, peerCount, peerId, disconnect } = useNetworkStore();
-  const { communities, subscribePresence, onlineMembers, serveCommunityRequests, myRoles, deleteChannel, fetchCommunity } = useCommunityStore();
+  const { communities, subscribePresence, onlineMembers, serveCommunityRequests, myRoles, deleteChannel, fetchCommunity, reorderChannels } = useCommunityStore();
+  const [dragChannelId, setDragChannelId] = useState<string | null>(null);
   const [showInvite, setShowInvite] = useState(false);
   const [showGovernance, setShowGovernance] = useState(false);
   const [showCreateChannel, setShowCreateChannel] = useState(false);
@@ -96,6 +97,29 @@ export default function ChannelsSidebar({ communityId, activeChannelId, onSelect
       deleteChannel(communityId, channelId);
     }
   };
+
+  // Drag-to-reorder channels (admin only). Reorders within a type (text or
+  // voice) and sends the full new channel order to the relay.
+  const handleChannelDrop = (targetId: string, sameTypeList: { id: string }[]): void => {
+    if (!communityId || !dragChannelId || dragChannelId === targetId) { setDragChannelId(null); return; }
+    const ids = sameTypeList.map((c) => c.id);
+    const from = ids.indexOf(dragChannelId);
+    const to = ids.indexOf(targetId);
+    if (from < 0 || to < 0) { setDragChannelId(null); return; }
+    ids.splice(to, 0, ids.splice(from, 1)[0]!);
+    // Full order = this type's new order + the other type's existing order.
+    const otherIds = channels.filter((c) => !ids.includes(c.id)).map((c) => c.id);
+    reorderChannels(communityId, [...ids, ...otherIds]);
+    setDragChannelId(null);
+  };
+
+  const dragProps = (chId: string, list: { id: string }[]) => isAdmin ? {
+    draggable: true,
+    onDragStart: (e: React.DragEvent) => { setDragChannelId(chId); e.dataTransfer.effectAllowed = 'move'; },
+    onDragOver: (e: React.DragEvent) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; },
+    onDrop: (e: React.DragEvent) => { e.preventDefault(); handleChannelDrop(chId, list); },
+    onDragEnd: () => setDragChannelId(null),
+  } : {};
 
   const buildChannelContextMenu = (ch: { id: string; name: string; visibility: string }) => {
     if (!isAdmin) return [];
@@ -188,7 +212,8 @@ export default function ChannelsSidebar({ communityId, activeChannelId, onSelect
                   <button
                     key={ch.id}
                     onClick={() => communityId && onSelectChannel(communityId, ch.id, ch.name)}
-                    style={{ ...styles.channelItem, ...(activeChannelId === ch.id ? styles.channelActive : {}) }}
+                    {...dragProps(ch.id, textChannels)}
+                    style={{ ...styles.channelItem, ...(activeChannelId === ch.id ? styles.channelActive : {}), opacity: dragChannelId === ch.id ? 0.4 : 1, cursor: isAdmin ? 'grab' : 'pointer' }}
                   >
                     <span style={styles.chIcon}>#</span>
                     <span style={styles.chName}>{ch.name}</span>
@@ -243,7 +268,11 @@ export default function ChannelsSidebar({ communityId, activeChannelId, onSelect
               {voiceChannels.map((ch) => {
                 const menuItems = buildChannelContextMenu(ch);
                 const channelButton = (
-                  <button key={ch.id} style={styles.channelItem}>
+                  <button
+                    key={ch.id}
+                    {...dragProps(ch.id, voiceChannels)}
+                    style={{ ...styles.channelItem, opacity: dragChannelId === ch.id ? 0.4 : 1, cursor: isAdmin ? 'grab' : 'pointer' }}
+                  >
                     <span style={{ ...styles.chIcon, color: 'var(--color-green)' }}>&#x25C8;</span>
                     <span style={styles.chName}>{ch.name}</span>
                   </button>

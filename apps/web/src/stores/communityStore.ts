@@ -80,6 +80,7 @@ export function parseInviteLink(url: string): string | null {
 // =================================================================
 
 const LS_KEY = 'muster-communities';
+const LS_ORDER_KEY = 'muster-community-order';
 
 function saveToLocalStorage(communities: Record<string, StoredCommunity>): void {
   try {
@@ -92,6 +93,17 @@ function loadFromLocalStorage(): Record<string, StoredCommunity> {
     const raw = localStorage.getItem(LS_KEY);
     return raw ? JSON.parse(raw) : {};
   } catch { return {}; }
+}
+
+function loadOrder(): string[] {
+  try {
+    const raw = localStorage.getItem(LS_ORDER_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch { return []; }
+}
+
+function saveOrder(ids: string[]): void {
+  try { localStorage.setItem(LS_ORDER_KEY, JSON.stringify(ids)); } catch { /* ignore */ }
 }
 
 // =================================================================
@@ -127,6 +139,12 @@ interface CommunityState {
   createChannel: (communityId: string, name: string, type?: string, visibility?: string) => Promise<void>;
   editChannel: (communityId: string, channelId: string, name?: string, visibility?: string) => Promise<void>;
   deleteChannel: (communityId: string, channelId: string) => Promise<void>;
+  /** Admin: persist a new channel order (sends REORDER_CHANNELS). */
+  reorderChannels: (communityId: string, channelIds: string[]) => void;
+
+  // Community ordering (client-side, persisted locally)
+  communityOrder: string[];
+  setCommunityOrder: (ids: string[]) => void;
 
   /** Internal: initialize relay message listener. Called by MainLayout. */
   initRelay: () => () => void;
@@ -417,6 +435,12 @@ export const useCommunityStore = create<CommunityState>()((set, get) => {
     onlineMembers: {},
     members: {},
     myRoles: {},
+    communityOrder: loadOrder(),
+
+    setCommunityOrder: (ids) => {
+      saveOrder(ids);
+      set({ communityOrder: ids });
+    },
 
     fetchCommunity: (communityId: string) => {
       const { transport } = useNetworkStore.getState();
@@ -546,6 +570,27 @@ export const useCommunityStore = create<CommunityState>()((set, get) => {
         payload: { communityId, channelId },
         timestamp: Date.now(),
       });
+    },
+
+    reorderChannels: (communityId, channelIds) => {
+      // Optimistic local reorder; relay confirms via CHANNELS_REORDERED.
+      set((state) => {
+        const community = state.communities[communityId];
+        if (!community) return state;
+        const byId = new Map(community.channels.map((c) => [c.id, c]));
+        const reordered = channelIds
+          .map((id, i) => { const c = byId.get(id); return c ? { ...c, position: i } : null; })
+          .filter((c): c is StoredChannel => c !== null);
+        // Keep any channels not in the provided list (e.g. other type) appended.
+        for (const c of community.channels) if (!channelIds.includes(c.id)) reordered.push(c);
+        const updated = { ...state.communities, [communityId]: { ...community, channels: reordered } };
+        saveToLocalStorage(updated);
+        return { communities: updated };
+      });
+      const { transport } = useNetworkStore.getState();
+      if (transport?.isConnected) {
+        transport.send({ type: 'REORDER_CHANNELS', payload: { communityId, channelIds }, timestamp: Date.now() });
+      }
     },
 
     subscribePresence: (communityId) => {

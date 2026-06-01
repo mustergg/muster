@@ -39,9 +39,10 @@ function communityColor(id: string): { color: string; bg: string } {
 
 export default function GuildsSidebar({ activeCommunityId, onSelectCommunity, dmActive, onSelectDM, friendsActive, onSelectFriends, settingsActive, onSelectSettings }: Props): React.JSX.Element {
   const { t } = useTranslation();
-  const { communities, loadCommunities, leaveCommunity, myRoles } = useCommunityStore();
+  const { communities, loadCommunities, leaveCommunity, myRoles, communityOrder, setCommunityOrder } = useCommunityStore();
   const { conversations } = useDMStore();
   const { publicKey: myKey } = useNetworkStore();
+  const [dragCommunityId, setDragCommunityId] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [showJoin,   setShowJoin]   = useState(false);
   const [showMenu,   setShowMenu]   = useState(false);
@@ -77,7 +78,29 @@ export default function GuildsSidebar({ activeCommunityId, onSelectCommunity, dm
     return unsub;
   }, [communities]);
 
-  const communityList = Object.values(communities);
+  // Order communities by the saved client-side order; any not yet in the
+  // order list are appended in their natural order.
+  const communityList = (() => {
+    const all = Object.values(communities);
+    const pos = new Map(communityOrder.map((id, i) => [id, i]));
+    return all.slice().sort((a, b) => {
+      const pa = pos.has(a.id) ? pos.get(a.id)! : Number.MAX_SAFE_INTEGER;
+      const pb = pos.has(b.id) ? pos.get(b.id)! : Number.MAX_SAFE_INTEGER;
+      return pa - pb;
+    });
+  })();
+
+  const handleCommunityDrop = (targetId: string): void => {
+    if (!dragCommunityId || dragCommunityId === targetId) { setDragCommunityId(null); return; }
+    const ids = communityList.map((c) => c.id);
+    const from = ids.indexOf(dragCommunityId);
+    const to = ids.indexOf(targetId);
+    if (from < 0 || to < 0) { setDragCommunityId(null); return; }
+    ids.splice(to, 0, ids.splice(from, 1)[0]!);
+    setCommunityOrder(ids);
+    setDragCommunityId(null);
+  };
+
   const unreadDMs = conversations.reduce((sum, c) => sum + (c.unreadCount || 0), 0);
   const pendingFriends = useFriendStore((s) => s.incomingRequests.length);
 
@@ -169,12 +192,18 @@ export default function GuildsSidebar({ activeCommunityId, onSelectCommunity, dm
               <button
                 title={c.name}
                 onClick={() => onSelectCommunity(c.id)}
+                draggable
+                onDragStart={(e) => { setDragCommunityId(c.id); e.dataTransfer.effectAllowed = 'move'; }}
+                onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; }}
+                onDrop={(e) => { e.preventDefault(); handleCommunityDrop(c.id); }}
+                onDragEnd={() => setDragCommunityId(null)}
                 style={{
                   ...styles.icon,
                   background: bg, color,
                   borderRadius: isActive ? '14px' : '50%',
                   border: isActive ? '2px solid var(--color-accent)' : '2px solid transparent',
                   position: 'relative' as const,
+                  opacity: dragCommunityId === c.id ? 0.4 : 1,
                 }}
               >
                 {isActive && <div style={styles.activePip} />}
