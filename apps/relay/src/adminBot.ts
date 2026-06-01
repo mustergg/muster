@@ -55,6 +55,12 @@ export class AdminBot {
   private getPeerCount: () => number;
   private getPeerVersions: () => Array<{ nodeId: string; name: string; url: string; version: string }>;
 
+  /** Monotonic timestamp for bot replies (skew-proof ordering vs questions). */
+  private lastReplyTs = 0;
+  /** Public keys already sent the welcome this process — avoids re-spamming
+   *  on every DM_CONVERSATIONS_REQUEST. */
+  private welcomed = new Set<string>();
+
   constructor(deps: {
     nodeDB: NodeDB;
     messageDB: RelayDB;
@@ -113,7 +119,13 @@ export class AdminBot {
   // =================================================================
 
   /** Process an incoming DM to the bot. Returns true if handled. */
-  handleMessage(client: RelayClient, content: string): void {
+  handleMessage(client: RelayClient, content: string, incomingTs?: number): void {
+    // Ensure replies sort AFTER the user's question even when the relay's
+    // clock lags the client's (clock skew between machines). Base the reply
+    // timestamps on the incoming message's client timestamp.
+    if (typeof incomingTs === 'number' && incomingTs > this.lastReplyTs) {
+      this.lastReplyTs = incomingTs;
+    }
     // Auto-configure admin on first interaction
     this.ensureAdmin(client.publicKey);
 
@@ -463,14 +475,18 @@ export class AdminBot {
   // =================================================================
 
   sendWelcome(client: RelayClient): void {
-    // Inject the bot as a DM conversation
+    // Send at most once per process per admin — the dispatcher calls this on
+    // every DM_CONVERSATIONS_REQUEST, which previously stacked welcomes.
+    if (this.welcomed.has(client.publicKey)) return;
+    this.welcomed.add(client.publicKey);
+
     const version = getCurrentVersion();
     const commit = getGitCommit();
+    const ts = this.nextReplyTs();
     this.sendToClient(client, {
       type: 'DM_MESSAGE',
       payload: {
-        // Stable id so re-sends (every conversations request / reconnect)
-        // dedup on the client instead of stacking phantom unread badges.
+        // Stable id so any re-send dedups on the client.
         messageId: 'bot-welcome',
         senderPublicKey: NODE_BOT_KEY,
         senderUsername: NODE_BOT_USERNAME,
@@ -482,10 +498,17 @@ export class AdminBot {
           ``,
           `Quick: /status for stats, /version for update info.`,
         ].join('\n'),
-        timestamp: Date.now(),
+        timestamp: ts,
       },
-      timestamp: Date.now(),
+      timestamp: ts,
     });
+  }
+
+  /** Next monotonic reply timestamp (≥ now and ≥ last question/reply). */
+  private nextReplyTs(): number {
+    const t = Math.max(Date.now(), this.lastReplyTs + 1);
+    this.lastReplyTs = t;
+    return t;
   }
 
   // =================================================================
@@ -493,6 +516,7 @@ export class AdminBot {
   // =================================================================
 
   private reply(client: RelayClient, content: string): void {
+    const ts = this.nextReplyTs();
     this.sendToClient(client, {
       type: 'DM_MESSAGE',
       payload: {
@@ -501,9 +525,9 @@ export class AdminBot {
         senderUsername: NODE_BOT_USERNAME,
         recipientPublicKey: client.publicKey,
         content,
-        timestamp: Date.now(),
+        timestamp: ts,
       },
-      timestamp: Date.now(),
+      timestamp: ts,
     });
   }
 }

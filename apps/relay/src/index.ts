@@ -329,7 +329,7 @@ function handleMessage(client: RelayClient, msg: any): void {
       const recipientKey = msg.payload?.recipientPublicKey;
       // R16: Intercept DMs to the node bot
       if (recipientKey === NODE_BOT_KEY) {
-        adminBot.handleMessage(client, msg.payload?.content || '');
+        adminBot.handleMessage(client, msg.payload?.content || '', msg.payload?.timestamp ?? msg.timestamp);
         return;
       }
       if (recipientKey) {
