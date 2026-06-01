@@ -24,6 +24,7 @@ import { useStorageStore } from '../stores/storageStore.js';
 import { useGroupCryptoStore } from '../stores/groupCryptoStore.js';
 import { useManifestStore } from '../stores/manifestStore.js';
 import { usePieceCacheStore } from '../stores/pieceCacheStore.js';
+import { useBandwidthStore } from '../stores/bandwidthStore.js';
 // clientNodeStore is imported dynamically (only registers global, no init needed)
 import '../stores/clientNodeStore.js';
 import { useNatStore } from '../stores/natStore.js';
@@ -62,6 +63,7 @@ export default function MainLayout(): React.JSX.Element {
   const groupCryptoInit = useGroupCryptoStore((s) => s.init);
   const natInit = useNatStore((s) => s.init);
   const manifestInit = useManifestStore((s) => s.init);
+  const bandwidthInit = useBandwidthStore((s) => s.init);
 
 
   useEffect(() => {
@@ -77,8 +79,9 @@ export default function MainLayout(): React.JSX.Element {
       const c9 = groupCryptoInit();
       const c10 = natInit();
       const c11 = manifestInit();
+      const c12 = bandwidthInit();
       loadCommunities();
-      return () => { c1(); c2(); c3(); c4(); c5(); c6(); c7(); c8(); c9(); c10(); c11(); };
+      return () => { c1(); c2(); c3(); c4(); c5(); c6(); c7(); c8(); c9(); c10(); c11(); c12(); };
     }
     return undefined;
   }, [status]);

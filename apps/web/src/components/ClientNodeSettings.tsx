@@ -8,6 +8,7 @@
 import React, { useState } from 'react';
 import { useClientNodeStore, NodeMode } from '../stores/clientNodeStore.js';
 import { useCommunityStore } from '../stores/communityStore.js';
+import { useBandwidthStore, formatBps } from '../stores/bandwidthStore.js';
 
 const MODE_INFO: Record<NodeMode, { icon: string; label: string; desc: string }> = {
   off: { icon: '\u{26AA}', label: 'Off', desc: 'No local relay. You connect to remote nodes only.' },
@@ -18,6 +19,7 @@ const MODE_INFO: Record<NodeMode, { icon: string; label: string; desc: string }>
 export default function ClientNodeSettings(): React.JSX.Element {
   const { config, running, pid, logs, error, uptimeSeconds, start, stop, setMode, setPort, setMaxDisk, setMaxBandwidth, setAutoStart, setRelayPath, hostCommunity, unhostCommunity, clearLogs } = useClientNodeStore();
   const { communities } = useCommunityStore();
+  const bw = useBandwidthStore((st) => st.snapshot);
   const [showLogs, setShowLogs] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
 
@@ -65,6 +67,33 @@ export default function ClientNodeSettings(): React.JSX.Element {
           </div>
 
           {error && <div style={s.errorBar}>{error}</div>}
+
+          {/* R25 — Phase 9: live swarm bandwidth from the relay's monitor. */}
+          {bw && (
+            <div style={s.bwCard}>
+              <div style={s.bwHeadRow}>
+                <span style={s.bwTitle}>{'\u{1F4E1}'} Bandwidth</span>
+                {bw.congested && <span style={s.bwCongested}>CONGESTED</span>}
+              </div>
+              <div style={s.bwMain}>
+                <span style={s.bwNow}>{formatBps(bw.outboundBps)}</span>
+                <span style={s.bwCap}>/ cap {formatBps(bw.capBps)}</span>
+              </div>
+              <div style={s.bwMeter}>
+                <div style={{
+                  ...s.bwMeterFill,
+                  width: `${bw.capBps > 0 ? Math.min(100, (bw.outboundBps / bw.capBps) * 100) : 0}%`,
+                  background: bw.congested ? '#E24B4A' : '#43B581',
+                }} />
+              </div>
+              <div style={s.bwSub}>
+                {bw.measuring
+                  ? 'Measuring upload capacity…'
+                  : `Measured upload ${formatBps(bw.measuredUploadBps)}`}
+                {bw.ewmaRttMs > 0 && ` · RTT ${bw.ewmaRttMs}ms`}
+              </div>
+            </div>
+          )}
 
           {/* Start/Stop button */}
           <div style={s.btnRow}>
@@ -233,6 +262,16 @@ const s = {
   statusLabel: { color: 'var(--color-text-muted)', minWidth: '60px' } as React.CSSProperties,
   statusValue: { fontWeight: 500 } as React.CSSProperties,
   errorBar: { marginTop: '8px', padding: '8px 12px', fontSize: '12px', color: '#E24B4A', background: 'rgba(226,75,74,0.1)', borderRadius: 'var(--radius-md)', border: '1px solid rgba(226,75,74,0.3)' } as React.CSSProperties,
+  bwCard: { marginTop: '12px', padding: '12px', background: 'var(--color-bg-secondary)', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)' } as React.CSSProperties,
+  bwHeadRow: { display: 'flex', alignItems: 'center', justifyContent: 'space-between' } as React.CSSProperties,
+  bwTitle: { fontSize: '12px', fontWeight: 700, color: 'var(--color-text-muted)', textTransform: 'uppercase' as const, letterSpacing: '0.05em' } as React.CSSProperties,
+  bwCongested: { fontSize: '9px', fontWeight: 700, color: '#fff', background: '#E24B4A', padding: '1px 6px', borderRadius: '3px' } as React.CSSProperties,
+  bwMain: { display: 'flex', alignItems: 'baseline', gap: '8px', marginTop: '6px' } as React.CSSProperties,
+  bwNow: { fontSize: '20px', fontWeight: 700, color: 'var(--color-text-primary)' } as React.CSSProperties,
+  bwCap: { fontSize: '12px', color: 'var(--color-text-muted)' } as React.CSSProperties,
+  bwMeter: { marginTop: '8px', height: '6px', borderRadius: '3px', background: 'var(--color-bg-primary)', overflow: 'hidden' } as React.CSSProperties,
+  bwMeterFill: { height: '100%', borderRadius: '3px', transition: 'width 0.4s ease' } as React.CSSProperties,
+  bwSub: { fontSize: '11px', color: 'var(--color-text-muted)', marginTop: '6px' } as React.CSSProperties,
   btnRow: { marginTop: '12px', display: 'flex', gap: '8px' } as React.CSSProperties,
   startBtn: { padding: '10px 24px', border: 'none', borderRadius: 'var(--radius-md)', background: '#43B581', color: '#fff', fontSize: '14px', fontWeight: 600, cursor: 'pointer' } as React.CSSProperties,
   stopBtn: { padding: '10px 24px', border: '1px solid #E24B4A', borderRadius: 'var(--radius-md)', background: 'transparent', color: '#E24B4A', fontSize: '14px', fontWeight: 600, cursor: 'pointer' } as React.CSSProperties,
