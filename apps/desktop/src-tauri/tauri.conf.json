@@ -2,13 +2,13 @@
   "$schema": "https://raw.githubusercontent.com/tauri-apps/tauri/dev/crates/tauri-cli/schema.json",
   "productName": "Muster",
   "identifier": "gg.muster.app",
-  "version": "0.1.0",
-"build": {
+  "version": "0.0.1",
+  "build": {
     "frontendDist": "../../web/dist",
     "devUrl": "http://localhost:5173",
     "beforeDevCommand": "pnpm --filter @muster/web dev",
     "beforeBuildCommand": "pnpm --filter @muster/web build && pnpm --filter @muster/relay build && pnpm --filter @muster/web build"
-},
+  },
   "app": {
     "withGlobalTauri": true,
     "windows": [
@@ -51,7 +51,9 @@
     "resources": {
       "../../relay/bundle/": "relay/"
     },
-    "externalBin": ["bin/node"],
+    "externalBin": [
+      "bin/node"
+    ],
     "copyright": "© 2026 Muster.GG",
     "category": "SocialNetworking",
     "shortDescription": "Decentralized, privacy-first community platform",
@@ -67,7 +69,10 @@
     },
     "linux": {
       "deb": {
-        "depends": ["libwebkit2gtk-4.1-0", "libgtk-3-0"]
+        "depends": [
+          "libwebkit2gtk-4.1-0",
+          "libgtk-3-0"
+        ]
       },
       "appimage": {
         "bundleMediaFramework": true
@@ -80,10 +85,12 @@
       "providerShortName": null
     }
   },
-"plugins": {
+  "plugins": {
     "deep-link": {
       "desktop": {
-        "schemes": ["muster"]
+        "schemes": [
+          "muster"
+        ]
       }
     }
   }

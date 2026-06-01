@@ -44,6 +44,12 @@ export default function GeneralSettings(): React.JSX.Element {
           </div>
           <div style={s.note}>{t('settings.languageNote')}</div>
         </div>
+
+        <div style={s.section}>
+          <div style={s.sectionTitle}>{t('settings.about')}</div>
+          <div style={s.aboutRow}><span style={s.aboutK}>{t('settings.version')}</span><span style={s.aboutV}>{__APP_VERSION__}</span></div>
+          <div style={s.aboutRow}><span style={s.aboutK}>{t('settings.build')}</span><span style={s.aboutV}>{__APP_BUILD__} ({__APP_STAGE__})</span></div>
+        </div>
       </div>
     </div>
   );
@@ -62,4 +68,7 @@ const s = {
   langLabel: { fontWeight: 500 } as React.CSSProperties,
   check: { color: 'var(--color-accent)', fontWeight: 700 } as React.CSSProperties,
   note: { fontSize: '12px', color: 'var(--color-text-muted)', marginTop: '10px', maxWidth: '320px', lineHeight: 1.4 } as React.CSSProperties,
+  aboutRow: { display: 'flex', justifyContent: 'space-between', maxWidth: '320px', fontSize: '13px', padding: '3px 0' } as React.CSSProperties,
+  aboutK: { color: 'var(--color-text-muted)' } as React.CSSProperties,
+  aboutV: { fontWeight: 500, fontFamily: 'var(--font-mono, monospace)' } as React.CSSProperties,
 } as const;

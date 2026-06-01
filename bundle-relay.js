@@ -76,6 +76,18 @@ async function bundle() {
   // relay can run on Node 20/22/24 without a local native rebuild.
   await multiAbiBetterSqlite3();
 
+  // Copy version.json alongside the bundle so the relay can report its
+  // build number at runtime (getBuildNumber reads from cwd/__dirname).
+  try {
+    const vsrc = path.resolve(__dirname, 'version.json');
+    if (fs.existsSync(vsrc)) {
+      fs.copyFileSync(vsrc, path.join(OUT_DIR, 'version.json'));
+      console.log('[bundle] Copied version.json');
+    }
+  } catch (err) {
+    console.warn('[bundle] Could not copy version.json:', err.message);
+  }
+
   // Verify bundle
   const stats = fs.statSync(OUT_FILE);
   console.log(`[bundle] Size: ${(stats.size / 1024).toFixed(0)} KB`);

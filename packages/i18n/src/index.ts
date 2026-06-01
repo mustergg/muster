@@ -98,6 +98,7 @@ const enTranslation = {
     language: "Language", voiceVideo: "Voice & Video", keybinds: "Keybinds", about: "About Muster",
     general: "General", nodes: "Nodes", storage: "Storage", clientNode: "Client Node",
     languageNote: "English is the source language; other languages are translations and may lag behind.",
+    version: "Version", build: "Build",
   },
   // R25 — Phase 9: bandwidth monitor
   bandwidth: {
@@ -292,6 +293,7 @@ const ptTranslation = {
     language: "Idioma", voiceVideo: "Voz e Vídeo", keybinds: "Atalhos de teclado", about: "Sobre o Muster",
     general: "Geral", nodes: "Nós", storage: "Armazenamento", clientNode: "Nó Cliente",
     languageNote: "O inglês é o idioma de origem; os outros idiomas são traduções e podem estar desatualizados.",
+    version: "Versão", build: "Build",
   },
   // R25 — Phase 9: monitor de largura de banda
   bandwidth: {

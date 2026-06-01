@@ -3,10 +3,20 @@ import react from '@vitejs/plugin-react';
 import { nodePolyfills } from 'vite-plugin-node-polyfills';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { readFileSync } from 'fs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const nobleCurvesDir = path.resolve(__dirname, '../../node_modules/@noble/curves');
+
+// Single source of truth for app version + build number (repo-root version.json).
+const versionInfo = (() => {
+  try {
+    return JSON.parse(readFileSync(path.resolve(__dirname, '../../version.json'), 'utf-8'));
+  } catch {
+    return { version: '0.0.0', build: 0, stage: 'dev' };
+  }
+})();
 
 export default defineConfig({
   base: './',
@@ -19,6 +29,9 @@ nodePolyfills({
   ],
   define: {
     global: 'globalThis',
+    __APP_VERSION__: JSON.stringify(versionInfo.version),
+    __APP_BUILD__: JSON.stringify(versionInfo.build),
+    __APP_STAGE__: JSON.stringify(versionInfo.stage),
   },
   resolve: {
     alias: {

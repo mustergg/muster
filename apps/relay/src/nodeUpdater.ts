@@ -37,6 +37,28 @@ export function getCurrentVersion(): string {
   return '0.0.0';
 }
 
+/** Read the monotonic build number from version.json (best-effort). The
+ *  desktop UI is the authoritative display; this is for the relay boot log. */
+export function getBuildNumber(): number | string {
+  try {
+    const candidates = [
+      join(process.cwd(), 'version.json'),
+      join(process.cwd(), '..', 'version.json'),
+      join(process.cwd(), '..', '..', 'version.json'),
+      join(__dirname, '..', 'version.json'),
+      join(__dirname, '..', '..', 'version.json'),
+      join(__dirname, '..', '..', '..', 'version.json'),
+    ];
+    for (const p of candidates) {
+      if (existsSync(p)) {
+        const v = JSON.parse(readFileSync(p, 'utf-8'));
+        if (typeof v.build === 'number') return v.build;
+      }
+    }
+  } catch { /* ignore */ }
+  return '?';
+}
+
 /** Compare semver: returns 1 if a > b, -1 if a < b, 0 if equal. */
 export function compareVersions(a: string, b: string): number {
   const pa = a.split('.').map(Number);
