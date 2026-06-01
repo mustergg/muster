@@ -131,9 +131,12 @@ export class DMDB {
       `).get(publicKey, partnerKey, partnerKey, publicKey) as any;
 
       if (latest) {
+        // Partner account purged → label "(Deleted User)" instead of the
+        // stale stored name. DM history is kept on purge.
+        const stillExists = this.db.prepare('SELECT 1 FROM users WHERE publicKey = ? LIMIT 1').get(partnerKey);
         conversations.push({
           publicKey: partnerKey,
-          username: partnerUsername || partnerKey.slice(0, 8) + '...',
+          username: stillExists ? (partnerUsername || partnerKey.slice(0, 8) + '...') : '(Deleted User)',
           lastMessage: (latest.content || '').slice(0, 100),
           lastTimestamp: latest.timestamp,
         });

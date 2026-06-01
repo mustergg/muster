@@ -255,17 +255,27 @@ export class UserDB {
     ).all(cutoff) as Array<{ publicKey: string; username: string }>;
     if (expired.length === 0) return 0;
 
+    // Purge the account everywhere EXCEPT the DM history: deleting the user
+    // row frees the username for re-signup, and we strip community membership,
+    // friendships, friend requests and blocks so the user disappears from
+    // every active surface. DM rows are KEPT so the other party's chat
+    // history survives — getConversations() labels the now-missing user as
+    // "(Deleted User)". (Tables are created defensively; ignore if absent.)
     const deleteUser = this.db.prepare('DELETE FROM users WHERE publicKey = ?');
     const deleteMember = this.db.prepare('DELETE FROM members WHERE publicKey = ?');
-    const deleteDMs = this.db.prepare(
-      'DELETE FROM direct_messages WHERE senderPublicKey = ? OR recipientPublicKey = ?'
-    );
+    const stmt = (sql: string) => { try { return this.db.prepare(sql); } catch { return null; } };
+    const deleteFriends = stmt('DELETE FROM friends WHERE userA = ? OR userB = ?');
+    const deleteFriendReqs = stmt('DELETE FROM friend_requests WHERE fromPublicKey = ? OR toPublicKey = ?');
+    const deleteBlocks = stmt('DELETE FROM blocked_users WHERE blockerPublicKey = ? OR blockedPublicKey = ?');
+
     const transaction = this.db.transaction(() => {
       for (const user of expired) {
         deleteUser.run(user.publicKey);
         deleteMember.run(user.publicKey);
-        deleteDMs.run(user.publicKey, user.publicKey);
-        console.log(`[user-db] Auto-deleted expired basic account: ${user.username}`);
+        deleteFriends?.run(user.publicKey, user.publicKey);
+        deleteFriendReqs?.run(user.publicKey, user.publicKey);
+        deleteBlocks?.run(user.publicKey, user.publicKey);
+        console.log(`[user-db] Auto-deleted expired basic account: ${user.username} (DMs kept as (Deleted User))`);
       }
     });
     transaction();

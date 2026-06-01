@@ -86,6 +86,7 @@ export class FriendDB {
     this.db = db;
     initFriendTables(db);
     this.cleanupExpiredRequests();
+    try { this.cleanupOrphaned(); } catch { /* users table may not exist yet */ }
     console.log('[relay-db] Friend tables initialized.');
   }
 
@@ -265,6 +266,24 @@ export class FriendDB {
     ).run(cutoff);
     if (result.changes > 0) console.log(`[friend-db] Cleaned up ${result.changes} expired friend requests.`);
     return result.changes;
+  }
+
+  /** Remove friendships / requests / blocks that reference a user who no
+   *  longer exists (e.g. purged accounts). Repairs orphans left by older
+   *  purge logic and keeps deleted users from lingering as friends. */
+  cleanupOrphaned(): number {
+    let changes = 0;
+    changes += this.db.prepare(
+      'DELETE FROM friends WHERE userA NOT IN (SELECT publicKey FROM users) OR userB NOT IN (SELECT publicKey FROM users)'
+    ).run().changes;
+    changes += this.db.prepare(
+      'DELETE FROM friend_requests WHERE fromPublicKey NOT IN (SELECT publicKey FROM users) OR toPublicKey NOT IN (SELECT publicKey FROM users)'
+    ).run().changes;
+    changes += this.db.prepare(
+      'DELETE FROM blocked_users WHERE blockerPublicKey NOT IN (SELECT publicKey FROM users) OR blockedPublicKey NOT IN (SELECT publicKey FROM users)'
+    ).run().changes;
+    if (changes > 0) console.log(`[friend-db] Cleaned up ${changes} orphaned friend/block rows (deleted users).`);
+    return changes;
   }
 
   /** Lookup user by username. Returns publicKey or null. */

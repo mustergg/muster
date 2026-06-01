@@ -514,6 +514,7 @@ setInterval(() => {
   const fileDel = fileDB.deleteOlderThan(Date.now() - RETENTION_MS); if (fileDel > 0) console.log(`[relay] Cleanup: ${fileDel} old files`);
   const accDel = userDB.deleteExpiredAccounts(); if (accDel > 0) console.log(`[relay] Cleanup: ${accDel} expired accounts`);
   const frDel = friendDB.cleanupExpiredRequests(); if (frDel > 0) console.log(`[relay] Cleanup: ${frDel} expired friend requests`);
+  const orphDel = friendDB.cleanupOrphaned(); if (orphDel > 0) console.log(`[relay] Cleanup: ${orphDel} orphaned friend/block rows`);
 }, 6 * 60 * 60 * 1000);
 
 // R25 — Phase 7. Daily reputation decay (POS.md §Reputation: ±1 toward 0
