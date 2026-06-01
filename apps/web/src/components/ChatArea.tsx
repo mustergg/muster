@@ -144,16 +144,18 @@ function FileAttachment({ fileId, fileName, mimeType, size }: {
 
 function BlobAttachment({ msg }: { msg: ChatMessage }): React.JSX.Element {
   const fetchAttachment = useChatStore((s) => s.fetchAttachment);
-  const isImage = (msg.mimeType || '').startsWith('image/');
+  const mime = msg.mimeType || '';
+  const isImage = mime.startsWith('image/');
+  const isAudio = mime.startsWith('audio/');
   const status = msg.blobStatus ?? 'pending';
   const url = msg.attachmentUrl;
   const name = msg.fileName || 'attachment';
   const size = msg.fileSize || 0;
 
-  // Auto-fetch images so they render inline without a click.
+  // Auto-fetch images + voice notes so they render inline without a click.
   useEffect(() => {
-    if (isImage && status === 'pending') void fetchAttachment(msg.channel, msg.messageId);
-  }, [isImage, status, msg.channel, msg.messageId]);
+    if ((isImage || isAudio) && status === 'pending') void fetchAttachment(msg.channel, msg.messageId);
+  }, [isImage, isAudio, status, msg.channel, msg.messageId]);
 
   const download = () => {
     if (!url) { void fetchAttachment(msg.channel, msg.messageId); return; }
@@ -170,6 +172,20 @@ function BlobAttachment({ msg }: { msg: ChatMessage }): React.JSX.Element {
         <div style={fileStyles.imageWrap}>
           <img src={url} alt={name} style={fileStyles.image} onClick={download} title="Click to download" />
           <span style={fileStyles.imageLabel}>{name} ({formatSize(size)})</span>
+        </div>
+      );
+    }
+    return <></>;
+  }
+
+  if (isAudio) {
+    if (status === 'loading' || status === 'pending') return <div style={fileStyles.imagePlaceholder}>{'\u{1F3A4}'} Loading voice note…</div>;
+    if (status === 'failed') return <div style={fileStyles.imagePlaceholder}>Failed to load voice note</div>;
+    if (url) {
+      return (
+        <div style={fileStyles.imageWrap}>
+          <audio src={url} controls style={{ maxWidth: '320px' }} />
+          <span style={fileStyles.imageLabel}>{'\u{1F3A4}'} {formatSize(size)}</span>
         </div>
       );
     }
@@ -247,8 +263,11 @@ export default function ChatArea({ active }: Props): React.JSX.Element {
   const [draft, setDraft] = useState('');
   const [uploading, setUploading] = useState(false);
   const [dragOver, setDragOver] = useState(false);
+  const [recording, setRecording] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const recordChunksRef = useRef<Blob[]>([]);
 
   useEffect(() => {
     if (!active) return;
@@ -314,6 +333,37 @@ export default function ChatArea({ active }: Props): React.JSX.Element {
     if (file) uploadFile(file);
   }, [uploadFile]);
 
+  // R25 — Phase 4. Voice note capture → audio/* File → sendFile (envelope+blob,
+  // kind 'voice'). Same content-addressed path as any attachment.
+  const toggleRecord = useCallback(async () => {
+    if (recording) {
+      recorderRef.current?.stop();
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const rec = new MediaRecorder(stream);
+      recordChunksRef.current = [];
+      rec.ondataavailable = (e) => { if (e.data.size > 0) recordChunksRef.current.push(e.data); };
+      rec.onstop = () => {
+        stream.getTracks().forEach((t) => t.stop());
+        setRecording(false);
+        const type = rec.mimeType || 'audio/webm';
+        const blob = new Blob(recordChunksRef.current, { type });
+        if (blob.size === 0) return;
+        const ext = type.includes('ogg') ? 'ogg' : type.includes('mp4') ? 'mp4' : 'webm';
+        const file = new File([blob], `voice-${Date.now()}.${ext}`, { type });
+        void uploadFile(file);
+      };
+      recorderRef.current = rec;
+      rec.start();
+      setRecording(true);
+    } catch (err) {
+      console.error('[chat] mic access failed:', err);
+      alert('Microphone access denied or unavailable.');
+    }
+  }, [recording, uploadFile]);
+
   if (!active) {
     return (
       <div style={styles.empty}>
@@ -367,11 +417,19 @@ export default function ChatArea({ active }: Props): React.JSX.Element {
         <div style={styles.inputWrap}>
           <button
             onClick={() => fileInputRef.current?.click()}
-            disabled={uploading}
+            disabled={uploading || recording}
             style={styles.attachBtn}
             title="Attach file"
           >
             {uploading ? '\u231B' : '\u{1F4CE}'}
+          </button>
+          <button
+            onClick={toggleRecord}
+            disabled={uploading}
+            style={{ ...styles.attachBtn, color: recording ? '#E24B4A' : undefined }}
+            title={recording ? 'Stop & send voice note' : 'Record voice note'}
+          >
+            {recording ? '\u23F9' : '\u{1F3A4}'}
           </button>
           <input
             style={styles.input}
