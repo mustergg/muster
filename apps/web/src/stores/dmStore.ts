@@ -276,6 +276,29 @@ export const useDMStore = create<DMState>((set, get) => ({
         c.publicKey === publicKey ? { ...c, unreadCount: 0 } : c
       ),
     }));
+
+    // Load cached history from the local DB first so conversations persist
+    // across reloads — including the Node Bot, which the relay does not store.
+    const myKey = useNetworkStore.getState().publicKey;
+    const channelKey = `dm:${[myKey, publicKey].sort().join(':')}`;
+    dmDB.getMessages(channelKey).then((dbMsgs) => {
+      if (!dbMsgs || dbMsgs.length === 0) return;
+      const cached: DMMessage[] = dbMsgs.map((m) => ({
+        messageId: m.messageId,
+        content: tryDecryptDM(m.content, m.senderPublicKey, publicKey, myKey),
+        senderPublicKey: m.senderPublicKey, senderUsername: m.senderUsername,
+        recipientPublicKey: m.senderPublicKey === myKey ? publicKey : myKey,
+        timestamp: m.timestamp, isOwn: m.senderPublicKey === myKey,
+        encrypted: isE2EEncrypted(m.content),
+      }));
+      set((state) => {
+        const existing = state.messages[publicKey] || [];
+        const ids = new Set(existing.map((x) => x.messageId));
+        const merged = [...existing, ...cached.filter((x) => !ids.has(x.messageId))].sort((a, b) => a.timestamp - b.timestamp);
+        return { messages: { ...state.messages, [publicKey]: merged } };
+      });
+    }).catch(() => { /* ignore cache errors */ });
+
     const network = useNetworkStore.getState();
     if (!network.transport?.isConnected) return;
     network.transport.send({ type: 'DM_HISTORY_REQUEST', payload: { otherPublicKey: publicKey, since: 0 }, timestamp: Date.now() });
@@ -399,7 +422,14 @@ export const useDMStore = create<DMState>((set, get) => ({
               isOwn: m.senderPublicKey === myKey, encrypted: isE2EEncrypted(m.content),
             };
           });
-          set((state) => ({ messages: { ...state.messages, [p.otherPublicKey]: msgs } }));
+          // Merge with any locally-cached / in-memory messages (dedup by id)
+          // rather than replacing — preserves bot DMs + optimistic sends.
+          set((state) => {
+            const existing = state.messages[p.otherPublicKey] || [];
+            const ids = new Set(existing.map((x) => x.messageId));
+            const merged = [...existing, ...msgs.filter((x) => !ids.has(x.messageId))].sort((a, b) => a.timestamp - b.timestamp);
+            return { messages: { ...state.messages, [p.otherPublicKey]: merged } };
+          });
           break;
         }
 
