@@ -37,10 +37,22 @@ const setVersion = argVal('--version');
 const setStage = argVal('--stage');
 const syncOnly = args.includes('--sync');
 
-if (setVersion) v.version = setVersion;
-if (setStage) v.stage = setStage;
-if (!syncOnly && !setVersion && !setStage) v.build = (v.build || 0) + 1;
-else if (!syncOnly) v.build = (v.build || 0) + 1; // any change is a new build
+if (!syncOnly) {
+  v.build = (v.build || 0) + 1;
+  if (setStage) v.stage = setStage;
+  if (setVersion) {
+    // Explicit version (phase jump, e.g. 0.1.0 for first beta).
+    v.version = setVersion;
+  } else if (v.stage === 'alpha') {
+    // Alpha: the semver patch tracks the build count → 0.0.<build>.
+    v.version = `0.0.${v.build}`;
+  } else {
+    // Beta/rc/stable: bump the patch on each build.
+    const p = v.version.split('.').map((n) => parseInt(n, 10) || 0);
+    p[2] = (p[2] || 0) + 1;
+    v.version = `${p[0]}.${p[1]}.${p[2]}`;
+  }
+}
 
 fs.writeFileSync(versionFile, JSON.stringify(v, null, 2) + '\n');
 

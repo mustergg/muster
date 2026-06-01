@@ -1,6 +1,6 @@
 {
   "name": "@muster/web",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Muster web client — React browser application",
   "type": "module",
   "private": true,
