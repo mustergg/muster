@@ -6,11 +6,19 @@
 
 import { create } from 'zustand';
 import { useNetworkStore } from './networkStore';
+import { useGroupCryptoStore } from './groupCryptoStore';
 import { buildAndUploadBlob } from '../lib/blobUpload';
 import type { TransportMessage } from '@muster/transport';
 
 /** Marker prefix for blob-attachment squad messages (descriptor JSON). */
 export const SQUAD_BLOB_PREFIX = '__BLOB__';
+/** Marker prefix for E2E-encrypted squad message content. */
+const SQUAD_ENC_PREFIX = '__SQENC__';
+
+/** Pack an encrypted payload into a wire string. */
+function packEnc(enc: { ciphertext: string; nonce: string; epoch: number }): string {
+  return SQUAD_ENC_PREFIX + JSON.stringify({ c: enc.ciphertext, n: enc.nonce, e: enc.epoch });
+}
 
 export interface Squad {
   id: string;
@@ -186,6 +194,8 @@ export const useSquadStore = create<SquadState>((set, get) => ({
     set({ activeSquadId: squadId });
     // Subscribe to squad channel for real-time messages
     transport.send({ type: 'SUBSCRIBE_SQUAD', payload: { squadId }, timestamp: Date.now() });
+    // E2E: fetch the squad group key(s) so messages decrypt.
+    useGroupCryptoStore.getState().requestKeys(squadId);
     // Load history
     transport.send({ type: 'SQUAD_HISTORY_REQUEST', payload: { squadId, since: 0 }, timestamp: Date.now() });
     // Load members
@@ -198,7 +208,7 @@ export const useSquadStore = create<SquadState>((set, get) => ({
     const messageId = uuid();
     const timestamp = Date.now();
 
-    // Optimistic update
+    // Optimistic update — sender sees plaintext locally.
     set((s) => ({
       messages: {
         ...s.messages,
@@ -206,7 +216,14 @@ export const useSquadStore = create<SquadState>((set, get) => ({
       },
     }));
 
-    transport.send({ type: 'SEND_SQUAD_MESSAGE', payload: { squadId, content, messageId }, timestamp: Date.now() });
+    // E2E: encrypt with the squad group key before it touches the wire.
+    const groupCrypto = useGroupCryptoStore.getState();
+    void groupCrypto.encrypt(squadId, content).then((enc) => {
+      const wire = enc ? packEnc(enc) : content; // fallback plaintext only if no key yet
+      transport.send({ type: 'SEND_SQUAD_MESSAGE', payload: { squadId, content: wire, messageId }, timestamp: Date.now() });
+    }).catch(() => {
+      transport.send({ type: 'SEND_SQUAD_MESSAGE', payload: { squadId, content, messageId }, timestamp: Date.now() });
+    });
   },
 
   sendSquadFile: async (squadId: string, file: File) => {
@@ -234,6 +251,35 @@ export const useSquadStore = create<SquadState>((set, get) => ({
   init: () => {
     const myKey = useNetworkStore.getState().publicKey;
 
+    // Decrypt an E2E squad message and patch its content into state.
+    const decryptInto = (squadId: string, messageId: string, raw: string): void => {
+      if (!raw.startsWith(SQUAD_ENC_PREFIX)) return;
+      try {
+        const { c, n, e } = JSON.parse(raw.slice(SQUAD_ENC_PREFIX.length));
+        void useGroupCryptoStore.getState().decrypt(squadId, c, n, e).then((plain) => {
+          if (plain == null) return;
+          set((s) => ({
+            messages: {
+              ...s.messages,
+              [squadId]: (s.messages[squadId] || []).map((m) => m.messageId === messageId ? { ...m, content: plain } : m),
+            },
+          }));
+        });
+      } catch { /* leave placeholder */ }
+    };
+
+    // Owner: (re)distribute the squad group key to the current member set so
+    // every member can decrypt. Rotates on membership change.
+    const ownerSyncKey = (squadId: string): void => {
+      const squad = get().allMySquads().find((sq) => sq.id === squadId);
+      if (!squad || squad.ownerPublicKey !== myKey) return;
+      const memberKeys = (get().members[squadId] || []).map((m) => m.publicKey);
+      const keys = memberKeys.length > 0 ? memberKeys : [myKey];
+      const gc = useGroupCryptoStore.getState();
+      if (gc.isEncrypted(squadId)) gc.rotateKey(squadId, keys, 'squad-membership').catch(() => {});
+      else gc.setupEncryption(squadId, squad.communityId, keys, 'from_join').catch(() => {});
+    };
+
     const unsubscribe = useNetworkStore.getState().onMessage((msg: TransportMessage) => {
       switch (msg.type) {
         case 'SQUAD_LIST': {
@@ -248,6 +294,10 @@ export const useSquadStore = create<SquadState>((set, get) => ({
             if (list.some((sq) => sq.id === p.id)) return s;
             return { squads: { ...s.squads, [p.communityId]: [...list, p] }, loading: false };
           });
+          // Owner sets up E2E for the new squad.
+          if (p.ownerPublicKey === myKey) {
+            useGroupCryptoStore.getState().setupEncryption(p.id, p.communityId, [myKey], 'from_join').catch(() => {});
+          }
           break;
         }
         case 'SQUAD_DELETED': {
@@ -276,6 +326,8 @@ export const useSquadStore = create<SquadState>((set, get) => ({
             if (existing.some((m) => m.publicKey === p.member.publicKey)) return s;
             return { members: { ...s.members, [p.squadId]: [...existing, p.member] } };
           });
+          // Owner: rotate the key so the new member can decrypt.
+          ownerSyncKey(p.squadId);
           break;
         }
         case 'SQUAD_MEMBER_LEFT': {
@@ -287,18 +339,28 @@ export const useSquadStore = create<SquadState>((set, get) => ({
         }
         case 'SQUAD_MESSAGE': {
           const p = msg.payload as any;
-          const squadMsg: SquadMessage = { ...p, isOwn: p.senderPublicKey === myKey };
+          const raw: string = p.content || '';
+          const enc = raw.startsWith(SQUAD_ENC_PREFIX);
+          const squadMsg: SquadMessage = { ...p, content: enc ? '\u{1F512}…' : raw, isOwn: p.senderPublicKey === myKey };
           set((s) => {
             const existing = s.messages[p.squadId] || [];
             if (existing.some((m) => m.messageId === p.messageId)) return s;
             return { messages: { ...s.messages, [p.squadId]: [...existing, squadMsg].sort((a, b) => a.timestamp - b.timestamp) } };
           });
+          if (enc) decryptInto(p.squadId, p.messageId, raw);
           break;
         }
         case 'SQUAD_HISTORY_RESPONSE': {
           const p = msg.payload as any;
-          const msgs: SquadMessage[] = (p.messages || []).map((m: any) => ({ ...m, squadId: p.squadId, isOwn: m.senderPublicKey === myKey }));
+          const msgs: SquadMessage[] = (p.messages || []).map((m: any) => {
+            const raw: string = m.content || '';
+            const enc = raw.startsWith(SQUAD_ENC_PREFIX);
+            return { ...m, squadId: p.squadId, content: enc ? '\u{1F512}…' : raw, isOwn: m.senderPublicKey === myKey };
+          });
           set((s) => ({ messages: { ...s.messages, [p.squadId]: msgs } }));
+          for (const m of (p.messages || [])) {
+            if ((m.content || '').startsWith(SQUAD_ENC_PREFIX)) decryptInto(p.squadId, m.messageId, m.content);
+          }
           break;
         }
         case 'SQUAD_RESULT': {
