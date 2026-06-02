@@ -10,6 +10,7 @@ import { useSquadStore, SQUAD_BLOB_PREFIX } from '../stores/squadStore.js';
 import { useNetworkStore } from '../stores/networkStore.js';
 import { fetchAndDecryptBlob } from '../lib/blobUpload.js';
 import EmojiPicker from './EmojiPicker.js';
+import VoiceRecorder from './VoiceRecorder.js';
 import VoicePanel from './VoicePanel.js';
 
 interface Props {
@@ -101,11 +102,8 @@ export default function SquadChatArea({ squadId, mode }: Props): React.JSX.Eleme
   const [showSettings, setShowSettings] = useState(false);
   const [inviteUsername, setInviteUsername] = useState('');
   const [uploading, setUploading] = useState(false);
-  const [recording, setRecording] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const recorderRef = useRef<MediaRecorder | null>(null);
-  const recordChunksRef = useRef<Blob[]>([]);
 
   const uploadFile = useCallback(async (file: File) => {
     if (file.size > MAX_SQUAD_FILE) { alert(`File too large. Max ${formatSize(MAX_SQUAD_FILE)}.`); return; }
@@ -114,26 +112,6 @@ export default function SquadChatArea({ squadId, mode }: Props): React.JSX.Eleme
     catch (err) { console.error('[squad] upload failed:', err); alert('Failed to send file.'); }
     finally { setUploading(false); }
   }, [squadId, sendSquadFile]);
-
-  const toggleRecord = useCallback(async () => {
-    if (recording) { recorderRef.current?.stop(); return; }
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const rec = new MediaRecorder(stream);
-      recordChunksRef.current = [];
-      rec.ondataavailable = (e) => { if (e.data.size > 0) recordChunksRef.current.push(e.data); };
-      rec.onstop = () => {
-        stream.getTracks().forEach((t) => t.stop());
-        setRecording(false);
-        const type = rec.mimeType || 'audio/webm';
-        const blob = new Blob(recordChunksRef.current, { type });
-        if (blob.size === 0) return;
-        const ext = type.includes('ogg') ? 'ogg' : type.includes('mp4') ? 'mp4' : 'webm';
-        void uploadFile(new File([blob], `voice-${Date.now()}.${ext}`, { type }));
-      };
-      recorderRef.current = rec; rec.start(); setRecording(true);
-    } catch (err) { console.error('[squad] mic failed:', err); alert('Microphone access denied or unavailable.'); }
-  }, [recording, uploadFile]);
 
   const squadMessages = messages[squadId] || [];
   const squadMembers = members[squadId] || [];
@@ -256,12 +234,10 @@ export default function SquadChatArea({ squadId, mode }: Props): React.JSX.Eleme
 
       {/* Input */}
       <div style={s.inputBar}>
-        <button onClick={() => fileInputRef.current?.click()} disabled={uploading || recording} style={s.iconBtn} title="Attach file">
+        <button onClick={() => fileInputRef.current?.click()} disabled={uploading} style={s.iconBtn} title="Attach file">
           {uploading ? '⌛' : '\u{1F4CE}'}
         </button>
-        <button onClick={toggleRecord} disabled={uploading} style={{ ...s.iconBtn, color: recording ? '#E24B4A' : undefined }} title={recording ? 'Stop & send voice note' : 'Record voice note'}>
-          {recording ? '⏹' : '\u{1F3A4}'}
-        </button>
+        <VoiceRecorder onSend={(f) => void uploadFile(f)} disabled={uploading} />
         <input
           type="text" value={input}
           onChange={(e) => setInput(e.target.value)}

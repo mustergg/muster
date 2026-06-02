@@ -13,6 +13,7 @@ import { useTranslation } from 'react-i18next';
 import { useChatStore, type ChatMessage } from '../stores/chatStore.js';
 import { useNetworkStore } from '../stores/networkStore.js';
 import EmojiPicker from './EmojiPicker.js';
+import VoiceRecorder from './VoiceRecorder.js';
 import type { ActiveLocation } from '../pages/MainLayout.js';
 import type { TransportMessage } from '@muster/transport';
 
@@ -265,11 +266,8 @@ export default function ChatArea({ active }: Props): React.JSX.Element {
   const [draft, setDraft] = useState('');
   const [uploading, setUploading] = useState(false);
   const [dragOver, setDragOver] = useState(false);
-  const [recording, setRecording] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const recorderRef = useRef<MediaRecorder | null>(null);
-  const recordChunksRef = useRef<Blob[]>([]);
   // Drag depth counter — dragenter/dragleave fire for every child element, so
   // a plain boolean flickers. Count enters vs leaves and only hide at zero.
   const dragDepthRef = useRef(0);
@@ -361,37 +359,6 @@ export default function ChatArea({ active }: Props): React.JSX.Element {
     if (file) uploadFile(file);
   }, [uploadFile]);
 
-  // R25 — Phase 4. Voice note capture → audio/* File → sendFile (envelope+blob,
-  // kind 'voice'). Same content-addressed path as any attachment.
-  const toggleRecord = useCallback(async () => {
-    if (recording) {
-      recorderRef.current?.stop();
-      return;
-    }
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const rec = new MediaRecorder(stream);
-      recordChunksRef.current = [];
-      rec.ondataavailable = (e) => { if (e.data.size > 0) recordChunksRef.current.push(e.data); };
-      rec.onstop = () => {
-        stream.getTracks().forEach((t) => t.stop());
-        setRecording(false);
-        const type = rec.mimeType || 'audio/webm';
-        const blob = new Blob(recordChunksRef.current, { type });
-        if (blob.size === 0) return;
-        const ext = type.includes('ogg') ? 'ogg' : type.includes('mp4') ? 'mp4' : 'webm';
-        const file = new File([blob], `voice-${Date.now()}.${ext}`, { type });
-        void uploadFile(file);
-      };
-      recorderRef.current = rec;
-      rec.start();
-      setRecording(true);
-    } catch (err) {
-      console.error('[chat] mic access failed:', err);
-      alert(t('attachment.micDenied'));
-    }
-  }, [recording, uploadFile, t]);
-
   if (!active) {
     return (
       <div style={styles.empty}>
@@ -446,20 +413,13 @@ export default function ChatArea({ active }: Props): React.JSX.Element {
         <div style={styles.inputWrap}>
           <button
             onClick={() => fileInputRef.current?.click()}
-            disabled={uploading || recording}
+            disabled={uploading}
             style={styles.attachBtn}
             title={t('attachment.attachFile')}
           >
             {uploading ? '\u231B' : '\u{1F4CE}'}
           </button>
-          <button
-            onClick={toggleRecord}
-            disabled={uploading}
-            style={{ ...styles.attachBtn, color: recording ? '#E24B4A' : undefined }}
-            title={recording ? t('attachment.stopVoice') : t('attachment.recordVoice')}
-          >
-            {recording ? '\u23F9' : '\u{1F3A4}'}
-          </button>
+          <VoiceRecorder onSend={(f) => void uploadFile(f)} disabled={uploading} />
           <input
             style={styles.input}
             type="text"
