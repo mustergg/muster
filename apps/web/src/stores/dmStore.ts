@@ -450,7 +450,12 @@ export const useDMStore = create<DMState>((set, get) => ({
             const byKey = new Map(state.conversations.map((c) => [c.publicKey, c]));
             for (const inc of incoming) {
               const prev = byKey.get(inc.publicKey);
-              byKey.set(inc.publicKey, { ...inc, unreadCount: prev?.unreadCount ?? inc.unreadCount ?? 0 });
+              // Relay stores ciphertext, so its lastMessage preview is the
+              // raw __E2E__… blob. Decrypt it locally with the partner key
+              // (ECDH is symmetric → works for both send/receive direction).
+              const decrypted = tryDecryptDM(inc.lastMessage || '', inc.publicKey, myKey, myKey);
+              const preview = decrypted.length > 50 ? decrypted.slice(0, 50) + '...' : decrypted;
+              byKey.set(inc.publicKey, { ...inc, lastMessage: preview, unreadCount: prev?.unreadCount ?? inc.unreadCount ?? 0 });
             }
             const merged = [...byKey.values()].sort((a, b) => b.lastTimestamp - a.lastTimestamp);
             return { conversations: merged };
