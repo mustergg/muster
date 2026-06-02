@@ -5,9 +5,11 @@
  * Includes squad settings (invite, kick, leave, delete).
  */
 
-import React, { useState, useEffect, useRef } from 'react';
-import { useSquadStore } from '../stores/squadStore.js';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { useSquadStore, SQUAD_BLOB_PREFIX } from '../stores/squadStore.js';
 import { useNetworkStore } from '../stores/networkStore.js';
+import { fetchAndDecryptBlob } from '../lib/blobUpload.js';
+import EmojiPicker from './EmojiPicker.js';
 import VoicePanel from './VoicePanel.js';
 
 interface Props {
@@ -15,13 +17,123 @@ interface Props {
   mode: 'text' | 'voice';
 }
 
+const MAX_SQUAD_FILE = 100 * 1024 * 1024;
+
+function formatSize(bytes: number): string {
+  if (bytes < 1024) return bytes + 'B';
+  if (bytes < 1024 * 1024) return Math.round(bytes / 1024) + 'KB';
+  return (bytes / (1024 * 1024)).toFixed(1) + 'MB';
+}
+
+interface BlobDesc { root: string; size: number; mime: string; name: string; pieceCount: number; key: string; }
+
+function parseBlobContent(content: string): BlobDesc | null {
+  if (!content.startsWith(SQUAD_BLOB_PREFIX)) return null;
+  try { return JSON.parse(content.slice(SQUAD_BLOB_PREFIX.length)); } catch { return null; }
+}
+
+function SquadAttachment({ desc }: { desc: BlobDesc }): React.JSX.Element {
+  const [url, setUrl] = useState<string | null>(null);
+  const [status, setStatus] = useState<'idle' | 'loading' | 'failed'>('idle');
+  const isImage = desc.mime.startsWith('image/');
+  const isAudio = desc.mime.startsWith('audio/');
+
+  const fetchIt = useCallback(async () => {
+    if (url || status === 'loading') return;
+    setStatus('loading');
+    try {
+      const network = useNetworkStore.getState();
+      const bytes = await fetchAndDecryptBlob(
+        { send: (m) => network.transport!.send(m), isConnected: !!network.transport?.isConnected, onMessage: network.onMessage },
+        { rootHex: desc.root, size: desc.size, mime: desc.mime, pieceCount: desc.pieceCount, keyHex: desc.key },
+      );
+      const ab = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+      setUrl(URL.createObjectURL(new Blob([ab], { type: desc.mime })));
+      setStatus('idle');
+    } catch (err) { console.warn('[squad] attachment fetch failed:', err); setStatus('failed'); }
+  }, [url, status, desc]);
+
+  useEffect(() => { if (isImage || isAudio) void fetchIt(); }, [isImage, isAudio]);
+
+  const download = () => {
+    if (!url) { void fetchIt(); return; }
+    const a = document.createElement('a'); a.href = url; a.download = desc.name;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  };
+
+  if (isImage) {
+    if (status === 'loading') return <div style={fs.ph}>Loading image…</div>;
+    if (status === 'failed') return <div style={fs.ph}>Failed to load image</div>;
+    if (url) return <div style={fs.wrap}><img src={url} alt={desc.name} style={fs.img} onClick={download} /><span style={fs.lbl}>{desc.name} ({formatSize(desc.size)})</span></div>;
+    return <></>;
+  }
+  if (isAudio) {
+    if (status === 'loading') return <div style={fs.ph}>{'\u{1F3A4}'} Loading voice note…</div>;
+    if (status === 'failed') return <div style={fs.ph}>Failed to load voice note</div>;
+    if (url) return <div style={fs.wrap}><audio src={url} controls style={{ maxWidth: '320px' }} /><span style={fs.lbl}>{'\u{1F3A4}'} {formatSize(desc.size)}</span></div>;
+    return <></>;
+  }
+  return (
+    <div style={fs.card}>
+      <span style={{ fontSize: '18px' }}>&#x1F4CE;</span>
+      <div style={fs.meta}><span style={fs.name}>{desc.name}</span><span style={fs.size}>{formatSize(desc.size)}{status === 'failed' ? ' · failed' : ''}</span></div>
+      <button onClick={download} style={fs.dl}>{status === 'loading' ? '…' : '⬇'}</button>
+    </div>
+  );
+}
+
+const fs = {
+  ph: { padding: '10px', background: 'var(--color-bg-hover)', borderRadius: '8px', fontSize: '12px', color: 'var(--color-text-muted)', marginTop: '4px' } as React.CSSProperties,
+  wrap: { marginTop: '4px', display: 'flex', flexDirection: 'column' as const, gap: '4px' } as React.CSSProperties,
+  img: { maxWidth: '360px', maxHeight: '280px', borderRadius: '8px', cursor: 'pointer', objectFit: 'contain' as const, border: '1px solid var(--color-border)' } as React.CSSProperties,
+  lbl: { fontSize: '10px', color: 'var(--color-text-muted)', fontFamily: 'var(--font-mono)' } as React.CSSProperties,
+  card: { display: 'flex', alignItems: 'center', gap: '10px', padding: '8px 12px', background: 'var(--color-bg-hover)', borderRadius: '8px', marginTop: '4px', maxWidth: '320px' } as React.CSSProperties,
+  meta: { flex: 1, display: 'flex', flexDirection: 'column' as const, minWidth: 0 } as React.CSSProperties,
+  name: { fontSize: '13px', color: 'var(--color-accent)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const } as React.CSSProperties,
+  size: { fontSize: '10px', color: 'var(--color-text-muted)', fontFamily: 'var(--font-mono)' } as React.CSSProperties,
+  dl: { width: '28px', height: '28px', borderRadius: '6px', border: '1px solid var(--color-border)', background: 'transparent', color: 'var(--color-text-secondary)', cursor: 'pointer', fontSize: '14px', flexShrink: 0 } as React.CSSProperties,
+} as const;
+
 export default function SquadChatArea({ squadId, mode }: Props): React.JSX.Element {
-  const { messages, members, sendMessage, openSquad, inviteMember, kickMember, leaveSquad, deleteSquad, lastMessage, clearMessage, loadMembers } = useSquadStore();
+  const { messages, members, sendMessage, sendSquadFile, openSquad, inviteMember, kickMember, leaveSquad, deleteSquad, lastMessage, clearMessage, loadMembers } = useSquadStore();
   const { publicKey: myKey } = useNetworkStore();
   const [input, setInput] = useState('');
   const [showSettings, setShowSettings] = useState(false);
   const [inviteUsername, setInviteUsername] = useState('');
+  const [uploading, setUploading] = useState(false);
+  const [recording, setRecording] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const recordChunksRef = useRef<Blob[]>([]);
+
+  const uploadFile = useCallback(async (file: File) => {
+    if (file.size > MAX_SQUAD_FILE) { alert(`File too large. Max ${formatSize(MAX_SQUAD_FILE)}.`); return; }
+    setUploading(true);
+    try { await sendSquadFile(squadId, file); }
+    catch (err) { console.error('[squad] upload failed:', err); alert('Failed to send file.'); }
+    finally { setUploading(false); }
+  }, [squadId, sendSquadFile]);
+
+  const toggleRecord = useCallback(async () => {
+    if (recording) { recorderRef.current?.stop(); return; }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const rec = new MediaRecorder(stream);
+      recordChunksRef.current = [];
+      rec.ondataavailable = (e) => { if (e.data.size > 0) recordChunksRef.current.push(e.data); };
+      rec.onstop = () => {
+        stream.getTracks().forEach((t) => t.stop());
+        setRecording(false);
+        const type = rec.mimeType || 'audio/webm';
+        const blob = new Blob(recordChunksRef.current, { type });
+        if (blob.size === 0) return;
+        const ext = type.includes('ogg') ? 'ogg' : type.includes('mp4') ? 'mp4' : 'webm';
+        void uploadFile(new File([blob], `voice-${Date.now()}.${ext}`, { type }));
+      };
+      recorderRef.current = rec; rec.start(); setRecording(true);
+    } catch (err) { console.error('[squad] mic failed:', err); alert('Microphone access denied or unavailable.'); }
+  }, [recording, uploadFile]);
 
   const squadMessages = messages[squadId] || [];
   const squadMembers = members[squadId] || [];
@@ -129,18 +241,27 @@ export default function SquadChatArea({ squadId, mode }: Props): React.JSX.Eleme
         {squadMessages.length === 0 && (
           <div style={s.empty}>No messages yet. Say hello!</div>
         )}
-        {squadMessages.map((m) => (
-          <div key={m.messageId} style={s.msg}>
-            <span style={s.msgAuthor}>{m.senderUsername}</span>
-            <span style={s.msgContent}>{m.content}</span>
-            <span style={s.msgTime}>{new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-          </div>
-        ))}
+        {squadMessages.map((m) => {
+          const blob = parseBlobContent(m.content);
+          return (
+            <div key={m.messageId} style={s.msg}>
+              <span style={s.msgAuthor}>{m.senderUsername}</span>
+              {blob ? <SquadAttachment desc={blob} /> : <span style={s.msgContent}>{m.content}</span>}
+              <span style={s.msgTime}>{new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+            </div>
+          );
+        })}
         <div ref={bottomRef} />
       </div>
 
       {/* Input */}
       <div style={s.inputBar}>
+        <button onClick={() => fileInputRef.current?.click()} disabled={uploading || recording} style={s.iconBtn} title="Attach file">
+          {uploading ? '⌛' : '\u{1F4CE}'}
+        </button>
+        <button onClick={toggleRecord} disabled={uploading} style={{ ...s.iconBtn, color: recording ? '#E24B4A' : undefined }} title={recording ? 'Stop & send voice note' : 'Record voice note'}>
+          {recording ? '⏹' : '\u{1F3A4}'}
+        </button>
         <input
           type="text" value={input}
           onChange={(e) => setInput(e.target.value)}
@@ -148,7 +269,9 @@ export default function SquadChatArea({ squadId, mode }: Props): React.JSX.Eleme
           placeholder={`Message ${squad?.name || 'squad'}...`}
           style={s.chatInput}
         />
+        <EmojiPicker onPick={(e) => setInput((d) => d + e)} />
         <button onClick={handleSend} disabled={!input.trim()} style={{ ...s.sendBtn, opacity: input.trim() ? 1 : 0.5 }}>Send</button>
+        <input ref={fileInputRef} type="file" style={{ display: 'none' }} onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadFile(f); e.target.value = ''; }} />
       </div>
     </div>
   );
@@ -179,7 +302,8 @@ const s = {
   msgAuthor: { fontSize: '13px', fontWeight: 600, flexShrink: 0 } as React.CSSProperties,
   msgContent: { fontSize: '13px', color: 'var(--color-text-secondary)', wordBreak: 'break-word' as const } as React.CSSProperties,
   msgTime: { fontSize: '10px', color: 'var(--color-text-muted)', marginLeft: 'auto', flexShrink: 0 } as React.CSSProperties,
-  inputBar: { display: 'flex', gap: '6px', padding: '10px 16px', borderTop: '1px solid var(--color-border)', flexShrink: 0 } as React.CSSProperties,
+  inputBar: { display: 'flex', gap: '6px', padding: '10px 16px', borderTop: '1px solid var(--color-border)', flexShrink: 0, alignItems: 'center' } as React.CSSProperties,
+  iconBtn: { width: '30px', height: '30px', borderRadius: '6px', background: 'transparent', border: 'none', color: 'var(--color-text-muted)', cursor: 'pointer', fontSize: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 } as React.CSSProperties,
   chatInput: { flex: 1, padding: '8px 12px', background: 'var(--color-bg-input)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', fontSize: '13px', outline: 'none', fontFamily: 'inherit' } as React.CSSProperties,
   sendBtn: { padding: '8px 16px', borderRadius: 'var(--radius-md)', border: 'none', background: 'var(--color-accent)', color: '#fff', fontSize: '12px', fontWeight: 500, cursor: 'pointer' } as React.CSSProperties,
   voicePlaceholder: { flex: 1, display: 'flex', flexDirection: 'column' as const, alignItems: 'center', justifyContent: 'center', gap: '8px', color: 'var(--color-text-secondary)' } as React.CSSProperties,

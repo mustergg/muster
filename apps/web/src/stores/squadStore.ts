@@ -6,7 +6,11 @@
 
 import { create } from 'zustand';
 import { useNetworkStore } from './networkStore';
+import { buildAndUploadBlob } from '../lib/blobUpload';
 import type { TransportMessage } from '@muster/transport';
+
+/** Marker prefix for blob-attachment squad messages (descriptor JSON). */
+export const SQUAD_BLOB_PREFIX = '__BLOB__';
 
 export interface Squad {
   id: string;
@@ -68,6 +72,8 @@ interface SquadState {
   loadMembers: (squadId: string) => void;
   openSquad: (squadId: string) => void;
   sendMessage: (squadId: string, content: string) => void;
+  /** Send a file/voice attachment to a squad (blob + descriptor marker). */
+  sendSquadFile: (squadId: string, file: File) => Promise<void>;
   clearMessage: () => void;
   init: () => () => void;
 }
@@ -201,6 +207,26 @@ export const useSquadStore = create<SquadState>((set, get) => ({
     }));
 
     transport.send({ type: 'SEND_SQUAD_MESSAGE', payload: { squadId, content, messageId }, timestamp: Date.now() });
+  },
+
+  sendSquadFile: async (squadId: string, file: File) => {
+    const network = useNetworkStore.getState();
+    if (!network.transport?.isConnected) return;
+    const mime = file.type || 'application/octet-stream';
+    const raw = new Uint8Array(await file.arrayBuffer());
+    let up;
+    try {
+      up = await buildAndUploadBlob(
+        { send: (m) => network.transport!.send(m), isConnected: network.transport.isConnected },
+        raw, mime,
+      );
+    } catch (err) { console.warn('[squad] blob upload failed:', err); return; }
+    // Descriptor travels in the squad message content (squad msgs are not
+    // E2E; key in plaintext — acceptable for the alpha threat model).
+    const descriptor = SQUAD_BLOB_PREFIX + JSON.stringify({
+      root: up.rootHex, size: up.size, mime, name: file.name, pieceCount: up.pieceCount, key: up.keyHex,
+    });
+    get().sendMessage(squadId, descriptor);
   },
 
   clearMessage: () => set({ lastMessage: '' }),
