@@ -346,7 +346,7 @@ function handleMessage(client: RelayClient, msg: any): void {
   }
 
   if (TIER_TYPES.has(msg.type)) { handleTierMessage(client, msg, tierManager, messageDB, communityDB, dmDB, sendToClient); return; }
-  if (ROLE_TYPES.has(msg.type)) { handleRoleMessage(client, msg, communityDB, messageDB, sendToClient, clients, channels); return; }
+  if (ROLE_TYPES.has(msg.type)) { handleRoleMessage(client, msg, communityDB, messageDB, sendToClient, clients, channels, userDB); return; }
 
 const GROUP_KEY_TYPES = new Set(['GROUP_KEY_REQUEST', 'GROUP_KEY_DISTRIBUTE', 'GROUP_KEY_ROTATE', 'GROUP_CRYPTO_CONFIG']);
 if (GROUP_KEY_TYPES.has(msg.type)) {

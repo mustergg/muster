@@ -9,6 +9,7 @@
 import { WebSocket } from 'ws';
 import { CommunityDB } from './communityDB';
 import { RelayDB } from './database';
+import { UserDB } from './userDB';
 import type { RelayClient } from './types';
 
 const ROLE_LEVEL: Record<string, number> = {
@@ -30,10 +31,11 @@ export function handleRoleMessage(
   sendToClient: (client: RelayClient, msg: Record<string, unknown>) => void,
   clients: Map<WebSocket, RelayClient>,
   channels: Map<string, Set<WebSocket>>,
+  userDB?: UserDB,
 ): void {
   switch (msg.type) {
     case 'ASSIGN_ROLE':
-      handleAssignRole(client, msg, communityDB, sendToClient, clients);
+      handleAssignRole(client, msg, communityDB, sendToClient, clients, userDB);
       break;
     case 'KICK_MEMBER':
       handleKickMember(client, msg, communityDB, sendToClient, clients);
@@ -54,10 +56,17 @@ function handleAssignRole(
   communityDB: CommunityDB,
   sendToClient: (client: RelayClient, msg: Record<string, unknown>) => void,
   clients: Map<WebSocket, RelayClient>,
+  userDB?: UserDB,
 ): void {
   const { communityId, targetPublicKey, role } = msg.payload || {};
   if (!communityId || !targetPublicKey || !role) {
     sendToClient(client, { type: 'ERROR', payload: { code: 'INVALID', message: 'Missing fields' }, timestamp: Date.now() });
+    return;
+  }
+
+  // Elevated roles require a verified target account.
+  if ((role === 'admin' || role === 'moderator') && userDB && !userDB.isVerified(targetPublicKey)) {
+    sendToClient(client, { type: 'ERROR', payload: { code: 'NOT_VERIFIED', message: `Only verified accounts can be made ${role}.` }, timestamp: Date.now() });
     return;
   }
 

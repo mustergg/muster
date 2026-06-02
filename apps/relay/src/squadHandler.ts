@@ -41,7 +41,7 @@ export function handleSquadMessage(
   clients: Map<WebSocket, RelayClient>,
 ): void {
   switch (msg.type) {
-    case 'CREATE_SQUAD':          handleCreate(client, msg, squadDB, communityDB, sendToClient, clients); break;
+    case 'CREATE_SQUAD':          handleCreate(client, msg, squadDB, communityDB, userDB, sendToClient, clients); break;
     case 'GET_SQUADS':            handleGetSquads(client, msg, squadDB, sendToClient); break;
     case 'INVITE_TO_SQUAD':       handleInvite(client, msg, squadDB, userDB, sendToClient, clients); break;
     case 'LEAVE_SQUAD':           handleLeave(client, msg, squadDB, sendToClient); break;
@@ -68,12 +68,19 @@ export function cleanupSquadSubscriptions(ws: WebSocket): void {
 
 function handleCreate(
   client: RelayClient, msg: any, squadDB: SquadDB, communityDB: CommunityDB,
+  userDB: UserDB,
   sendToClient: (c: RelayClient, m: Record<string, unknown>) => void,
   clients: Map<WebSocket, RelayClient>,
 ): void {
   const { communityId, name } = msg.payload || {};
   if (!communityId || !name?.trim()) {
     sendToClient(client, { type: 'SQUAD_RESULT', payload: { action: 'CREATE_SQUAD', success: false, message: 'Squad name is required.' }, timestamp: Date.now() });
+    return;
+  }
+
+  // Verified-only: basic accounts cannot create squads.
+  if (!userDB.isVerified(client.publicKey)) {
+    sendToClient(client, { type: 'SQUAD_RESULT', payload: { action: 'CREATE_SQUAD', success: false, message: 'Verify your email to create squads.' }, timestamp: Date.now() });
     return;
   }
 
@@ -127,6 +134,12 @@ function handleInvite(
 ): void {
   const { squadId, targetUsername } = msg.payload || {};
   if (!squadId || !targetUsername) return;
+
+  // Verified-only: basic accounts cannot invite to squads.
+  if (!userDB.isVerified(client.publicKey)) {
+    sendToClient(client, { type: 'SQUAD_RESULT', payload: { action: 'INVITE_TO_SQUAD', success: false, message: 'Verify your email to invite members.' }, timestamp: Date.now() });
+    return;
+  }
 
   // Must be squad owner to invite
   if (!squadDB.isOwner(squadId, client.publicKey)) {
