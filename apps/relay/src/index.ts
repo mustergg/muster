@@ -26,7 +26,7 @@ import { handleProfileMessage } from './profileHandler';
 import { PostDB } from './postDB';
 import { handlePostMessage } from './postHandler';
 import { SquadDB } from './squadDB';
-import { handleSquadMessage, cleanupSquadSubscriptions } from './squadHandler';
+import { handleSquadMessage, cleanupSquadSubscriptions, forwardToSquad } from './squadHandler';
 import { handleVoiceMessage, cleanupVoiceParticipant, getVoiceStats } from './voiceHandler';
 import { FriendDB } from './friendDB';
 import { handleFriendMessage } from './friendHandler';
@@ -265,6 +265,26 @@ function handleMessage(client: RelayClient, msg: any): void {
   // R25 — Phase 9. Desktop UI / web client requests live bandwidth stats.
   if (msg.type === 'BANDWIDTH_STATS_REQUEST') {
     sendToClient(client, { type: 'BANDWIDTH_STATS', payload: bandwidthMonitor.snapshot(), timestamp: Date.now() });
+    return;
+  }
+
+  // Read receipts — forwarded to the relevant audience. Privacy is the
+  // sender's choice (client only emits when the user enabled receipts or
+  // explicitly marked-as-seen).
+  if (msg.type === 'READ_RECEIPT') {
+    const p = msg.payload || {};
+    const out = { type: 'READ_RECEIPT', payload: p, timestamp: Date.now() };
+    if (p.context === 'dm' && typeof p.to === 'string') {
+      // Route to the message author only.
+      for (const c of clients.values()) {
+        if (c.authenticated && c.publicKey === p.to && c.ws.readyState === WebSocket.OPEN) c.ws.send(JSON.stringify(out));
+      }
+    } else if (p.context === 'squad' && typeof p.contextId === 'string') {
+      forwardToSquad(p.contextId, out, client.ws);
+    } else if (p.context === 'channel' && typeof p.contextId === 'string') {
+      const subs = channels.get(p.contextId);
+      if (subs) for (const ws of subs) { if (ws !== client.ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(out)); }
+    }
     return;
   }
 

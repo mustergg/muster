@@ -8,6 +8,8 @@ import { useDMStore, type DMMessage } from '../stores/dmStore.js';
 import { useNetworkStore } from '../stores/networkStore.js';
 import EmojiPicker from './EmojiPicker.js';
 import VoiceRecorder from './VoiceRecorder.js';
+import { ReceiptToggle, SeenIndicator, MarkSeenButton } from './ReadReceiptUI.js';
+import { useReadReceiptStore } from '../stores/readReceiptStore.js';
 
 interface Props {
   /** Public key of the conversation partner. */
@@ -82,13 +84,14 @@ function DMAttachment({ msg }: { msg: DMMessage }): React.JSX.Element {
   );
 }
 
-function DMMessageRow({ msg }: { msg: DMMessage }): React.JSX.Element {
+function DMMessageRow({ msg, ctxId, partnerKey }: { msg: DMMessage; ctxId: string; partnerKey: string }): React.JSX.Element {
   const hue = parseInt((msg.senderPublicKey || '0000').slice(0, 4), 16) % 360;
   const initials = (msg.senderUsername || '??').slice(0, 2).toUpperCase();
+  const [hover, setHover] = useState(false);
   const hasAttachment = !!msg._attachment || !!msg.attachmentUrl;
 
   return (
-    <div style={styles.msgGroup}>
+    <div style={styles.msgGroup} onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}>
       <div style={{ ...styles.avatar, background: `hsl(${hue},45%,25%)`, color: `hsl(${hue},75%,72%)` }}>
         {initials}
       </div>
@@ -98,6 +101,8 @@ function DMMessageRow({ msg }: { msg: DMMessage }): React.JSX.Element {
             {msg.senderUsername}
           </span>
           <span style={styles.time}>{formatTime(msg.timestamp)}</span>
+          {msg.isOwn && <SeenIndicator context="dm" contextId={ctxId} messageId={msg.messageId} />}
+          {!msg.isOwn && hover && <MarkSeenButton context="dm" contextId={ctxId} messageId={msg.messageId} to={partnerKey} />}
         </div>
         {msg.content && <p style={styles.content}>{msg.content}</p>}
         {hasAttachment && <DMAttachment msg={msg} />}
@@ -157,6 +162,16 @@ export default function DMChatArea({ partnerPublicKey }: Props): React.JSX.Eleme
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [dmMessages.length]);
 
+  // Auto-send read receipts for the partner's messages when enabled.
+  useEffect(() => {
+    if (!partnerPublicKey) return;
+    const ctxId = `dm:${[myKey, partnerPublicKey].sort().join(':')}`;
+    const ack = useReadReceiptStore.getState().ack;
+    for (const m of dmMessages) {
+      if (!m.isOwn) ack('dm', ctxId, m.messageId, m.timestamp, partnerPublicKey);
+    }
+  }, [partnerPublicKey, myKey, dmMessages.length]);
+
   const handleSend = (): void => {
     if (!partnerPublicKey || !draft.trim()) return;
     sendDM(partnerPublicKey, draft.trim());
@@ -189,6 +204,7 @@ export default function DMChatArea({ partnerPublicKey }: Props): React.JSX.Eleme
     || partnerPublicKey.slice(0, 12) + '...';
 
   const partnerHue = parseInt((partnerPublicKey || '0000').slice(0, 4), 16) % 360;
+  const dmCtxId = `dm:${[myKey, partnerPublicKey].sort().join(':')}`;
 
   return (
     <div style={styles.container} onDragEnter={onDragEnter} onDragOver={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop}>
@@ -203,6 +219,8 @@ export default function DMChatArea({ partnerPublicKey }: Props): React.JSX.Eleme
           {(partnerName || '??').slice(0, 2).toUpperCase()}
         </div>
         <span style={styles.headerName}>{partnerName}</span>
+        <div style={{ flex: 1 }} />
+        <ReceiptToggle context="dm" contextId={dmCtxId} />
       </div>
 
       {/* Messages */}
@@ -213,7 +231,7 @@ export default function DMChatArea({ partnerPublicKey }: Props): React.JSX.Eleme
           </div>
         )}
         {dmMessages.map((msg) => (
-          <DMMessageRow key={msg.messageId} msg={msg} />
+          <DMMessageRow key={msg.messageId} msg={msg} ctxId={dmCtxId} partnerKey={partnerPublicKey} />
         ))}
         <div ref={bottomRef} />
       </div>

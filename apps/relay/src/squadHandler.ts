@@ -31,6 +31,11 @@ function broadcastToSquad(squadId: string, msg: Record<string, unknown>, exclude
   }
 }
 
+/** Forward an arbitrary message to a squad's subscribers (e.g. read receipts). */
+export function forwardToSquad(squadId: string, msg: Record<string, unknown>, excludeWs?: WebSocket): void {
+  broadcastToSquad(squadId, msg, excludeWs);
+}
+
 export function handleSquadMessage(
   client: RelayClient,
   msg: any,

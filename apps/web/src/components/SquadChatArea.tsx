@@ -12,6 +12,8 @@ import { fetchAndDecryptBlob } from '../lib/blobUpload.js';
 import EmojiPicker from './EmojiPicker.js';
 import VoiceRecorder from './VoiceRecorder.js';
 import VoicePanel from './VoicePanel.js';
+import { ReceiptToggle, SeenIndicator, MarkSeenButton } from './ReadReceiptUI.js';
+import { useReadReceiptStore } from '../stores/readReceiptStore.js';
 
 interface Props {
   squadId: string;
@@ -133,6 +135,14 @@ export default function SquadChatArea({ squadId, mode }: Props): React.JSX.Eleme
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [squadMessages.length]);
 
+  // Auto-send read receipts for others' squad messages when enabled.
+  useEffect(() => {
+    const ack = useReadReceiptStore.getState().ack;
+    for (const m of squadMessages) {
+      if (!m.isOwn) ack('squad', squadId, m.messageId, m.timestamp);
+    }
+  }, [squadId, squadMessages.length]);
+
   useEffect(() => {
     if (lastMessage) {
       const t = setTimeout(clearMessage, 4000);
@@ -166,6 +176,7 @@ export default function SquadChatArea({ squadId, mode }: Props): React.JSX.Eleme
         <span style={s.headerIcon}>#</span>
         <span style={s.headerTitle}>{squad?.name || 'Squad'}</span>
         <span style={s.memberCount}>{squadMembers.length} members</span>
+        <ReceiptToggle context="squad" contextId={squadId} />
         <button onClick={() => { setShowSettings(!showSettings); if (!showSettings) loadMembers(squadId); }} style={s.settingsBtn} title="Squad settings">
           {'\u2699'}
         </button>
@@ -226,6 +237,9 @@ export default function SquadChatArea({ squadId, mode }: Props): React.JSX.Eleme
               <span style={s.msgAuthor}>{m.senderUsername}</span>
               {blob ? <SquadAttachment desc={blob} /> : <span style={s.msgContent}>{m.content}</span>}
               <span style={s.msgTime}>{new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+              {m.isOwn
+                ? <SeenIndicator context="squad" contextId={squadId} messageId={m.messageId} />
+                : <MarkSeenButton context="squad" contextId={squadId} messageId={m.messageId} />}
             </div>
           );
         })}

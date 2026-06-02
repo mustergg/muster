@@ -15,6 +15,8 @@ import { useNetworkStore } from '../stores/networkStore.js';
 import { useCommunityStore } from '../stores/communityStore.js';
 import EmojiPicker from './EmojiPicker.js';
 import VoiceRecorder from './VoiceRecorder.js';
+import { ReceiptToggle, SeenIndicator, MarkSeenButton } from './ReadReceiptUI.js';
+import { useReadReceiptStore } from '../stores/readReceiptStore.js';
 import type { ActiveLocation } from '../pages/MainLayout.js';
 import type { TransportMessage } from '@muster/transport';
 
@@ -228,7 +230,7 @@ const fileStyles = {
 /** Own messages can be deleted within this window (matches relay). */
 const DELETE_WINDOW_MS = 15 * 60 * 1000;
 
-function MessageRow({ msg, isAdmin, onDelete }: { msg: ChatMessage; isAdmin: boolean; onDelete: (id: string) => void }): React.JSX.Element {
+function MessageRow({ msg, isAdmin, onDelete, channelId }: { msg: ChatMessage; isAdmin: boolean; onDelete: (id: string) => void; channelId: string }): React.JSX.Element {
   const initials = (msg.senderUsername || '??').slice(0, 2).toUpperCase();
   const hue = parseInt((msg.senderPublicKey || '0000').slice(0, 4), 16) % 360;
   const [hover, setHover] = useState(false);
@@ -248,6 +250,8 @@ function MessageRow({ msg, isAdmin, onDelete }: { msg: ChatMessage; isAdmin: boo
             {msg.senderUsername}
           </span>
           <span style={styles.time}>{formatTime(msg.timestamp)}</span>
+          {msg.isOwn && <SeenIndicator context="channel" contextId={channelId} messageId={msg.messageId} />}
+          {!msg.isOwn && hover && <MarkSeenButton context="channel" contextId={channelId} messageId={msg.messageId} />}
         </div>
         {msg.content && <p style={styles.content}>{msg.content}</p>}
         {hasBlob && <BlobAttachment msg={msg} />}
@@ -305,6 +309,16 @@ export default function ChatArea({ active }: Props): React.JSX.Element {
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [active?.channelId, messages]);
+
+  // Auto-send read receipts for others' messages when enabled for this channel.
+  const channelMsgsForAck = active ? (messages[active.channelId] ?? []) : [];
+  useEffect(() => {
+    if (!active) return;
+    const ack = useReadReceiptStore.getState().ack;
+    for (const m of channelMsgsForAck) {
+      if (!m.isOwn) ack('channel', active.channelId, m.messageId, m.timestamp);
+    }
+  }, [active?.channelId, channelMsgsForAck.length]);
 
   const handleSend = async (): Promise<void> => {
     if (!active || !draft.trim()) return;
@@ -407,6 +421,8 @@ export default function ChatArea({ active }: Props): React.JSX.Element {
       <div style={styles.header}>
         <span style={styles.headerIcon}>#</span>
         <span style={styles.headerName}>{active.channelName}</span>
+        <div style={{ flex: 1 }} />
+        <ReceiptToggle context="channel" contextId={active.channelId} />
       </div>
 
       {/* Drag overlay */}
@@ -427,7 +443,7 @@ export default function ChatArea({ active }: Props): React.JSX.Element {
           </div>
         )}
         {channelMessages.map((msg) => (
-          <MessageRow key={msg.messageId} msg={msg} isAdmin={isAdmin} onDelete={(id) => active && deleteMessage(active.channelId, id)} />
+          <MessageRow key={msg.messageId} msg={msg} isAdmin={isAdmin} channelId={active.channelId} onDelete={(id) => active && deleteMessage(active.channelId, id)} />
         ))}
         <div ref={bottomRef} />
       </div>
