@@ -37,6 +37,32 @@ export function handleVoiceMessage(
     case 'VOICE_SIGNAL':        handleSignal(client, msg); break;
     case 'VOICE_ICE_CANDIDATE': handleIceCandidate(client, msg); break;
     case 'VOICE_MUTE':          handleMute(client, msg, clients); break;
+    case 'VOICE_ROSTER_REQUEST': handleRosterRequest(client, msg, sendToClient); break;
+  }
+}
+
+/** Reply with the current roster of each requested voice channel so the
+ *  sidebar can show active users without joining. Only non-empty channels
+ *  are sent; empty ones imply "nobody here". */
+function handleRosterRequest(
+  client: RelayClient, msg: any,
+  sendToClient: (c: RelayClient, m: Record<string, unknown>) => void,
+): void {
+  const ids: string[] = msg.payload?.channelIds || [];
+  if (!Array.isArray(ids)) return;
+  for (const channelId of ids) {
+    const channel = voiceChannels.get(channelId);
+    if (!channel || channel.size === 0) continue;
+    sendToClient(client, {
+      type: 'VOICE_PRESENCE',
+      payload: {
+        channelId,
+        participants: Array.from(channel.values()).map((p) => ({
+          publicKey: p.publicKey, username: p.username, muted: p.muted,
+        })),
+      },
+      timestamp: Date.now(),
+    });
   }
 }
 
@@ -93,6 +119,8 @@ function handleJoin(
 
   // Notify all participants (including the joiner) with current state
   broadcastVoiceState(channelId, clients);
+  // Notify *everyone* (sidebar rosters) that this channel's roster changed.
+  broadcastVoicePresence(channelId, clients);
 
   // Notify existing participants that a new user joined (so they send offers)
   for (const [key, p] of channel) {
@@ -173,11 +201,33 @@ function handleMute(client: RelayClient, msg: any, clients: Map<WebSocket, Relay
   for (const [, p] of channel) {
     if (p.ws.readyState === WebSocket.OPEN) p.ws.send(payload);
   }
+
+  broadcastVoicePresence(channelId, clients);
 }
 
 // =================================================================
 // Helpers
 // =================================================================
+
+/** Broadcast a voice channel's roster to ALL authenticated clients so the
+ *  sidebar can show active users per channel. An empty roster (channel just
+ *  emptied) clears the sidebar display. */
+function broadcastVoicePresence(channelId: string, clients: Map<WebSocket, RelayClient>): void {
+  const channel = voiceChannels.get(channelId);
+  const participants = channel
+    ? Array.from(channel.values()).map((p) => ({ publicKey: p.publicKey, username: p.username, muted: p.muted }))
+    : [];
+
+  const payload = JSON.stringify({
+    type: 'VOICE_PRESENCE',
+    payload: { channelId, participants },
+    timestamp: Date.now(),
+  });
+
+  for (const [ws, c] of clients) {
+    if (c.authenticated && ws.readyState === WebSocket.OPEN) ws.send(payload);
+  }
+}
 
 function removeFromChannel(client: RelayClient, channelId: string, clients: Map<WebSocket, RelayClient>): void {
   const channel = voiceChannels.get(channelId);
@@ -191,6 +241,8 @@ function removeFromChannel(client: RelayClient, channelId: string, clients: Map<
   // Clean up empty channels
   if (channel.size === 0) {
     voiceChannels.delete(channelId);
+    // Tell sidebar watchers the channel is now empty.
+    broadcastVoicePresence(channelId, clients);
     return;
   }
 
@@ -206,6 +258,7 @@ function removeFromChannel(client: RelayClient, channelId: string, clients: Map<
   }
 
   broadcastVoiceState(channelId, clients);
+  broadcastVoicePresence(channelId, clients);
 }
 
 function broadcastVoiceState(channelId: string, clients: Map<WebSocket, RelayClient>): void {

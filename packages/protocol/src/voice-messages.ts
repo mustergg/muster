@@ -58,6 +58,15 @@ export interface VoiceMuteMsg {
   timestamp: number;
 }
 
+/** Ask the relay for the current rosters of a set of voice channels.
+ *  Used by the sidebar to show who's active in each voice channel without
+ *  having to join it first. */
+export interface VoiceRosterRequestMsg {
+  type: 'VOICE_ROSTER_REQUEST';
+  payload: { channelIds: string[] };
+  timestamp: number;
+}
+
 // =================================================================
 // Relay → Client
 // =================================================================
@@ -65,6 +74,22 @@ export interface VoiceMuteMsg {
 /** Current state of a voice channel (who's in it). */
 export interface VoiceStateMsg {
   type: 'VOICE_STATE';
+  payload: {
+    channelId: string;
+    participants: Array<{
+      publicKey: string;
+      username: string;
+      muted: boolean;
+    }>;
+  };
+  timestamp: number;
+}
+
+/** Presence roster for a voice channel, broadcast to *all* clients (not just
+ *  participants) so the channel sidebar can show who's active in each voice
+ *  channel. Same shape as VOICE_STATE but delivered community-wide. */
+export interface VoicePresenceMsg {
+  type: 'VOICE_PRESENCE';
   payload: {
     channelId: string;
     participants: Array<{

@@ -20,6 +20,7 @@ import EditProfileModal from '../pages/EditProfileModal.js';
 import CreateSquadModal from '../pages/CreateSquadModal.js';
 import CommunityGovernanceModal from '../pages/CommunityGovernanceModal.js';
 import { useSquadStore } from '../stores/squadStore.js';
+import { useVoiceStore } from '../stores/voiceStore.js';
 import ContextMenu from './ContextMenu.js';
 
 interface Props {
@@ -33,16 +34,21 @@ const ADMIN_ROLES = new Set(['owner', 'admin']);
 export default function ChannelsSidebar({ communityId, activeChannelId, onSelectChannel }: Props): React.JSX.Element {
   const { t } = useTranslation();
   const { username, logout }              = useAuthStore();
-  const { status, peerCount, peerId, disconnect } = useNetworkStore();
+  const { status, peerCount, peerId, disconnect, publicKey: myVoiceKey } = useNetworkStore();
   const { communities, subscribePresence, onlineMembers, serveCommunityRequests, myRoles, deleteChannel, fetchCommunity, reorderChannels } = useCommunityStore();
   const [dragChannelId, setDragChannelId] = useState<string | null>(null);
   const [showInvite, setShowInvite] = useState(false);
   const [showGovernance, setShowGovernance] = useState(false);
   const [showCreateChannel, setShowCreateChannel] = useState(false);
+  const [createChannelType, setCreateChannelType] = useState<'text' | 'voice'>('text');
   const [editingChannel, setEditingChannel] = useState<{ id: string; name: string; visibility: string } | null>(null);
   const [showProfile, setShowProfile] = useState(false);
   const [showCreateSquad, setShowCreateSquad] = useState(false);
   const { squads: allSquads, loadSquads: loadSquadsAction } = useSquadStore();
+  const voiceRosters = useVoiceStore((st) => st.rosters);
+  const requestRosters = useVoiceStore((st) => st.requestRosters);
+
+  const openCreateChannel = (type: 'text' | 'voice'): void => { setCreateChannelType(type); setShowCreateChannel(true); };
 
   const community = communityId ? communities[communityId] : null;
   const channels  = community?.channels ?? [];
@@ -81,6 +87,14 @@ export default function ChannelsSidebar({ communityId, activeChannelId, onSelect
     loadSquadsAction(communityId);
     return () => { unsubPresence(); unsubRequests(); };
   }, [communityId]);
+
+  // Pull current voice-channel rosters so the sidebar shows who's active
+  // without joining. VOICE_PRESENCE broadcasts keep it live afterwards.
+  const voiceChannelIds = voiceChannels.map((c) => c.id).join(',');
+  useEffect(() => {
+    if (!voiceChannelIds || status !== 'connected') return;
+    requestRosters(voiceChannelIds.split(','));
+  }, [voiceChannelIds, status]);
 
   const handleLogout = async (): Promise<void> => {
     await disconnect();
@@ -199,7 +213,7 @@ export default function ChannelsSidebar({ communityId, activeChannelId, onSelect
                 {isAdmin && communityId && (
                   <button
                     title="Create channel"
-                    onClick={() => setShowCreateChannel(true)}
+                    onClick={() => openCreateChannel('text')}
                     style={styles.createChannelBtn}
                   >
                     +
@@ -243,7 +257,7 @@ export default function ChannelsSidebar({ communityId, activeChannelId, onSelect
               <div style={styles.sectionLabel}>{t('community.channels')}</div>
               <button
                 title="Create channel"
-                onClick={() => setShowCreateChannel(true)}
+                onClick={() => openCreateChannel('text')}
                 style={styles.createChannelBtn}
               >
                 +
@@ -258,7 +272,7 @@ export default function ChannelsSidebar({ communityId, activeChannelId, onSelect
                 {isAdmin && communityId && (
                   <button
                     title="Create voice channel"
-                    onClick={() => setShowCreateChannel(true)}
+                    onClick={() => openCreateChannel('voice')}
                     style={styles.createChannelBtn}
                   >
                     +
@@ -267,25 +281,38 @@ export default function ChannelsSidebar({ communityId, activeChannelId, onSelect
               </div>
               {voiceChannels.map((ch) => {
                 const menuItems = buildChannelContextMenu(ch);
+                const roster = voiceRosters[ch.id] ?? [];
                 const channelButton = (
                   <button
                     key={ch.id}
+                    onClick={() => communityId && onSelectChannel(communityId, ch.id, ch.name)}
                     {...dragProps(ch.id, voiceChannels)}
-                    style={{ ...styles.channelItem, opacity: dragChannelId === ch.id ? 0.4 : 1, cursor: isAdmin ? 'grab' : 'pointer' }}
+                    style={{ ...styles.channelItem, ...(activeChannelId === ch.id ? styles.channelActive : {}), opacity: dragChannelId === ch.id ? 0.4 : 1, cursor: isAdmin ? 'grab' : 'pointer' }}
                   >
-                    <span style={{ ...styles.chIcon, color: 'var(--color-green)' }}>&#x25C8;</span>
+                    <span style={{ ...styles.chIcon, color: 'var(--color-green)' }}>&#x1F3A4;</span>
                     <span style={styles.chName}>{ch.name}</span>
+                    {roster.length > 0 && <span style={styles.voiceCount}>{roster.length}</span>}
                   </button>
                 );
 
-                if (menuItems.length > 0) {
-                  return (
-                    <ContextMenu key={ch.id} items={menuItems}>
-                      {channelButton}
-                    </ContextMenu>
-                  );
-                }
-                return channelButton;
+                const item = menuItems.length > 0
+                  ? <ContextMenu key={ch.id} items={menuItems}>{channelButton}</ContextMenu>
+                  : channelButton;
+
+                // Active participants listed below the voice channel.
+                return (
+                  <React.Fragment key={ch.id}>
+                    {item}
+                    {roster.map((p) => (
+                      <div key={p.publicKey} style={styles.voiceParticipant}>
+                        <span style={styles.voiceDot}>{p.muted ? '\u{1F507}' : '\u{1F50A}'}</span>
+                        <span style={styles.voicePartName}>
+                          {p.username}{p.publicKey === myVoiceKey ? ' (you)' : ''}
+                        </span>
+                      </div>
+                    ))}
+                  </React.Fragment>
+                );
               })}
             </>
           )}
@@ -361,6 +388,7 @@ export default function ChannelsSidebar({ communityId, activeChannelId, onSelect
       {showCreateChannel && communityId && (
         <CreateChannelModal
           communityId={communityId}
+          defaultType={createChannelType}
           onClose={() => setShowCreateChannel(false)}
         />
       )}
@@ -401,6 +429,10 @@ const styles = {
   chIcon:       { width:'16px', textAlign:'center' as const, fontSize:'13px', flexShrink:0, fontFamily:'var(--font-mono)', color:'var(--color-text-muted)' } as React.CSSProperties,
   chName:       { fontSize:'13px', flex:1 } as React.CSSProperties,
   visibilityBadge: { fontSize:'10px', flexShrink:0, opacity:0.6 } as React.CSSProperties,
+  voiceCount:   { fontSize:'10px', flexShrink:0, color:'var(--color-green)', fontFamily:'var(--font-mono)' } as React.CSSProperties,
+  voiceParticipant: { display:'flex', alignItems:'center', gap:'6px', padding:'2px 14px 2px 30px' } as React.CSSProperties,
+  voiceDot:     { fontSize:'10px', flexShrink:0 } as React.CSSProperties,
+  voicePartName:{ fontSize:'12px', color:'var(--color-text-secondary)', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' as const } as React.CSSProperties,
   syncing:      { fontSize:'12px', color:'var(--color-text-muted)', padding:'12px 14px', fontStyle:'italic' as const } as React.CSSProperties,
   emptyState:   { fontSize:'12px', color:'var(--color-text-muted)', padding:'12px 14px', lineHeight:1.6 } as React.CSSProperties,
   userPanel:    { padding:'8px 10px', background:'var(--color-bg-tertiary)', borderTop:'1px solid var(--color-border)', display:'flex', alignItems:'center', gap:'8px' } as React.CSSProperties,

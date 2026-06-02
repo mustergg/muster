@@ -30,6 +30,10 @@ interface VoiceState {
   currentChannel: string | null;
   /** Participants in the current channel. */
   participants: VoiceParticipant[];
+  /** Per-channel rosters (active users) for ALL voice channels, for the
+   *  sidebar — populated by VOICE_PRESENCE broadcasts + VOICE_ROSTER_REQUEST.
+   *  Keyed by channelId. */
+  rosters: Record<string, VoiceParticipant[]>;
   /** Whether local mic is muted. */
   muted: boolean;
   /** Whether voice is connecting. */
@@ -40,6 +44,8 @@ interface VoiceState {
   join: (channelId: string) => Promise<void>;
   leave: () => void;
   toggleMute: () => void;
+  /** Ask the relay for current rosters of the given voice channels. */
+  requestRosters: (channelIds: string[]) => void;
   init: () => () => void;
 }
 
@@ -164,6 +170,7 @@ function createPeerConnection(
 export const useVoiceStore = create<VoiceState>((set, get) => ({
   currentChannel: null,
   participants: [],
+  rosters: {},
   muted: false,
   connecting: false,
   error: '',
@@ -256,6 +263,16 @@ export const useVoiceStore = create<VoiceState>((set, get) => ({
     set({ muted: newMuted });
   },
 
+  requestRosters: (channelIds: string[]) => {
+    const { transport } = useNetworkStore.getState();
+    if (!transport?.isConnected || channelIds.length === 0) return;
+    transport.send({
+      type: 'VOICE_ROSTER_REQUEST',
+      payload: { channelIds },
+      timestamp: Date.now(),
+    });
+  },
+
   init: () => {
     const myKey = useNetworkStore.getState().publicKey;
 
@@ -270,6 +287,20 @@ export const useVoiceStore = create<VoiceState>((set, get) => ({
               })),
             });
           }
+          break;
+        }
+
+        case 'VOICE_PRESENCE': {
+          // Roster broadcast for ANY voice channel (sidebar display).
+          const p = msg.payload as any;
+          if (!p.channelId) break;
+          const list = (p.participants || []).map((pp: any) => ({ ...pp, speaking: false }));
+          set((s) => {
+            const rosters = { ...s.rosters };
+            if (list.length === 0) delete rosters[p.channelId];
+            else rosters[p.channelId] = list;
+            return { rosters };
+          });
           break;
         }
 

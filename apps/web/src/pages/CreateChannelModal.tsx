@@ -8,13 +8,15 @@ import { useCommunityStore } from '../stores/communityStore.js';
 
 interface Props {
   communityId: string;
+  /** Pre-selected channel type (the Voice section "+" opens with 'voice'). */
+  defaultType?: 'text' | 'voice';
   onClose: () => void;
 }
 
-export default function CreateChannelModal({ communityId, onClose }: Props): React.JSX.Element {
+export default function CreateChannelModal({ communityId, defaultType = 'text', onClose }: Props): React.JSX.Element {
   const { createChannel } = useCommunityStore();
   const [name, setName] = useState('');
-  const [type, setType] = useState<'text' | 'voice'>('text');
+  const [type, setType] = useState<'text' | 'voice'>(defaultType);
   const [visibility, setVisibility] = useState<'public' | 'private' | 'readonly'>('public');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
