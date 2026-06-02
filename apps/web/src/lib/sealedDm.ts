@@ -69,6 +69,8 @@ interface SealedDmPayload {
   i: string;
   /** sender Ed25519 pubkey, hex. */
   s: string;
+  /** sender username (so the recipient shows a name, not the pubkey). */
+  u?: string;
   /** plaintext content. */
   c: string;
   /** sender wall-clock ms. */
@@ -91,6 +93,7 @@ export interface BuiltDmFrame {
 export function buildSealedDmFrame(args: {
   recipientEdPubHex: string;
   senderEdPubHex: string;
+  senderUsername?: string;
   messageId: string;
   content: string;
   attachment?: SealedDmAttachment;
@@ -106,6 +109,7 @@ export function buildSealedDmFrame(args: {
   const key = deriveSealedDmKey(shared, inbox);
 
   const payload: SealedDmPayload = { i: args.messageId, s: args.senderEdPubHex, c: args.content, t: now };
+  if (args.senderUsername) payload.u = args.senderUsername;
   if (args.attachment) payload.a = args.attachment;
   const plaintext = encodeCanonical(payload as unknown as CborValue);
 
@@ -137,7 +141,7 @@ export function buildSealedDmFrame(args: {
 export function openSealedDmFrame(
   frameCborB64: string,
   myEdSeed: Uint8Array,
-): { messageId: string; senderPubkey: string; content: string; ts: number; attachment?: SealedDmAttachment } | null {
+): { messageId: string; senderPubkey: string; senderUsername?: string; content: string; ts: number; attachment?: SealedDmAttachment } | null {
   let frame: DmFrame;
   try {
     const bytes = b64ToBytes(frameCborB64);
@@ -152,7 +156,7 @@ export function openSealedDmFrame(
     const plain = openBytes(key, frame.nonce, frame.ciphertext);
     const payload = decodeCanonical(plain) as unknown as SealedDmPayload;
     if (!payload || typeof payload.c !== 'string' || typeof payload.s !== 'string') return null;
-    return { messageId: payload.i, senderPubkey: payload.s, content: payload.c, ts: payload.t, attachment: payload.a };
+    return { messageId: payload.i, senderPubkey: payload.s, senderUsername: payload.u, content: payload.c, ts: payload.t, attachment: payload.a };
   } catch {
     return null;
   }

@@ -177,6 +177,7 @@ export const useDMStore = create<DMState>((set, get) => ({
       const built = buildSealedDmFrame({
         recipientEdPubHex: recipientPublicKey,
         senderEdPubHex: network.publicKey,
+        senderUsername: network.username,
         messageId,
         content,
         nowMs: timestamp,
@@ -233,6 +234,7 @@ export const useDMStore = create<DMState>((set, get) => ({
       const built = buildSealedDmFrame({
         recipientEdPubHex: recipientPublicKey,
         senderEdPubHex: network.publicKey,
+        senderUsername: network.username,
         messageId, content: '', attachment, nowMs: timestamp,
       });
       if (built) network.transport.send({ type: 'DM_FRAME', payload: { cbor: built.cborB64 }, timestamp });
@@ -476,10 +478,11 @@ export const useDMStore = create<DMState>((set, get) => ({
           if (!opened) break; // not for us / corrupt
           const otherKey = opened.senderPubkey === myKey ? undefined : opened.senderPubkey;
           if (!otherKey) break; // our own echo — ignore (already optimistic)
+          const senderName = opened.senderUsername || opened.senderPubkey.slice(0, 8);
 
           const dmMsg: DMMessage = {
             messageId: opened.messageId, content: opened.content,
-            senderPublicKey: opened.senderPubkey, senderUsername: opened.senderPubkey.slice(0, 8),
+            senderPublicKey: opened.senderPubkey, senderUsername: senderName,
             recipientPublicKey: myKey, timestamp: opened.ts,
             isOwn: false, encrypted: true,
             ...(opened.attachment ? {
@@ -508,7 +511,7 @@ export const useDMStore = create<DMState>((set, get) => ({
             channel: `dm:${[myKey, otherKey].sort().join(':')}`,
             content: opened.content,
             senderPublicKey: opened.senderPubkey,
-            senderUsername: opened.senderPubkey.slice(0, 8),
+            senderUsername: senderName,
             timestamp: opened.ts, signature: '',
           });
 
@@ -521,7 +524,7 @@ export const useDMStore = create<DMState>((set, get) => ({
               const prev = convs[idx]!;
               convs[idx] = { ...prev, lastMessage: preview, lastTimestamp: opened.ts, unreadCount: !isActive ? (prev.unreadCount || 0) + 1 : prev.unreadCount };
             } else {
-              convs.unshift({ publicKey: otherKey, username: opened.senderPubkey.slice(0, 8), lastMessage: preview, lastTimestamp: opened.ts, unreadCount: !isActive ? 1 : 0 });
+              convs.unshift({ publicKey: otherKey, username: senderName, lastMessage: preview, lastTimestamp: opened.ts, unreadCount: !isActive ? 1 : 0 });
             }
             convs.sort((a, b) => b.lastTimestamp - a.lastTimestamp);
             return { conversations: convs };
