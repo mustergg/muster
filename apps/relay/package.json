@@ -1,6 +1,6 @@
 {
   "name": "@muster/relay",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "description": "Muster relay node — WebSocket relay with SQLite persistence",
   "main": "dist/index.js",
   "scripts": {
