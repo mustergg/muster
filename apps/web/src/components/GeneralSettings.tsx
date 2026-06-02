@@ -9,10 +9,13 @@
 import React from 'react';
 import { useTranslation } from 'react-i18next';
 import { SUPPORTED_LOCALES, setLocale, getStoredLocale, type SupportedLocale } from '@muster/i18n';
+import { useReadReceiptStore } from '../stores/readReceiptStore.js';
 
 export default function GeneralSettings(): React.JSX.Element {
   const { t, i18n } = useTranslation();
   const current = (i18n.language as SupportedLocale) || getStoredLocale();
+  const receiptsDefaultOn = useReadReceiptStore((st) => st.defaultOn);
+  const setDefaultOn = useReadReceiptStore((st) => st.setDefaultOn);
 
   const pick = (loc: SupportedLocale): void => { void setLocale(loc); };
 
@@ -46,6 +49,15 @@ export default function GeneralSettings(): React.JSX.Element {
         </div>
 
         <div style={s.section}>
+          <div style={s.sectionTitle}>{t('settings.privacy')}</div>
+          <label style={s.checkRow}>
+            <input type="checkbox" checked={receiptsDefaultOn} onChange={(e) => setDefaultOn(e.target.checked)} style={{ accentColor: 'var(--color-accent)' }} />
+            <span>{t('settings.receiptsDefault')}</span>
+          </label>
+          <div style={s.note}>{t('settings.receiptsNote')}</div>
+        </div>
+
+        <div style={s.section}>
           <div style={s.sectionTitle}>{t('settings.about')}</div>
           <div style={s.aboutRow}><span style={s.aboutK}>{t('settings.version')}</span><span style={s.aboutV}>{__APP_VERSION__}</span></div>
           <div style={s.aboutRow}><span style={s.aboutK}>{t('settings.build')}</span><span style={s.aboutV}>{__APP_BUILD__} ({__APP_STAGE__})</span></div>
@@ -67,7 +79,8 @@ const s = {
   langBtn: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 14px', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', cursor: 'pointer', color: 'var(--color-text-primary)', fontSize: '14px' } as React.CSSProperties,
   langLabel: { fontWeight: 500 } as React.CSSProperties,
   check: { color: 'var(--color-accent)', fontWeight: 700 } as React.CSSProperties,
-  note: { fontSize: '12px', color: 'var(--color-text-muted)', marginTop: '10px', maxWidth: '320px', lineHeight: 1.4 } as React.CSSProperties,
+  note: { fontSize: '12px', color: 'var(--color-text-muted)', marginTop: '10px', maxWidth: '360px', lineHeight: 1.4 } as React.CSSProperties,
+  checkRow: { display: 'flex', alignItems: 'center', gap: '8px', fontSize: '14px', cursor: 'pointer' } as React.CSSProperties,
   aboutRow: { display: 'flex', justifyContent: 'space-between', maxWidth: '320px', fontSize: '13px', padding: '3px 0' } as React.CSSProperties,
   aboutK: { color: 'var(--color-text-muted)' } as React.CSSProperties,
   aboutV: { fontWeight: 500, fontFamily: 'var(--font-mono, monospace)' } as React.CSSProperties,

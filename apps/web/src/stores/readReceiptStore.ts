@@ -1,13 +1,16 @@
 /**
- * Read Receipts — per-context "seen" with an opt-in toggle.
+ * Read Receipts — reciprocal "seen" with a global default + per-chat toggle.
  *
- * Privacy: receipts are OFF by default per context. When the user enables
- * them for a chat/squad/community, only messages received AFTER the toggle
- * was enabled get an automatic receipt. A user can always "mark as seen" a
- * single message manually, even with the toggle off.
+ * Defaults: receipts are ON for new chats unless the user flips the global
+ * preference off (Settings → General).
+ *
+ * Reciprocity: if you don't broadcast your reads (toggle OFF for a context),
+ * you only get to see the reads that others *manually* marked — never their
+ * automatic ones. With the toggle ON you see everything. Manual
+ * "mark as seen" always shows both ways.
  *
  * context = 'channel' | 'dm' | 'squad'; contextId is the channelId / squadId
- * / stable DM channel key. Receipts are keyed by `${context}:${contextId}`.
+ * / stable DM channel key. Keyed by `${context}:${contextId}`.
  */
 
 import { create } from 'zustand';
@@ -16,84 +19,111 @@ import type { TransportMessage } from '@muster/transport';
 
 export type ReceiptContext = 'channel' | 'dm' | 'squad';
 
-export interface Receipt { reader: string; username: string; ts: number; }
+export interface Receipt { reader: string; username: string; ts: number; manual: boolean; }
 
 function ctxKey(context: ReceiptContext, contextId: string): string {
   return `${context}:${contextId}`;
 }
 
-const LS_KEY = 'muster-read-receipts';
-function loadEnabled(): Record<string, number> {
-  try { return JSON.parse(localStorage.getItem(LS_KEY) || '{}'); } catch { return {}; }
+const LS_OVERRIDES = 'muster-read-receipts';     // ctxKey -> boolean (explicit on/off)
+const LS_SINCE = 'muster-read-receipts-since';   // ctxKey -> ts (when explicitly enabled)
+const LS_DEFAULT = 'muster-read-receipts-default'; // '0' | '1'
+
+function loadJSON<T>(k: string, fallback: T): T {
+  try { const r = localStorage.getItem(k); return r ? JSON.parse(r) as T : fallback; } catch { return fallback; }
 }
-function saveEnabled(m: Record<string, number>): void {
-  try { localStorage.setItem(LS_KEY, JSON.stringify(m)); } catch { /* ignore */ }
+function saveJSON(k: string, v: unknown): void { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* ignore */ } }
+function loadDefault(): boolean {
+  try { const r = localStorage.getItem(LS_DEFAULT); return r === null ? true : r === '1'; } catch { return true; }
 }
 
 interface ReadReceiptState {
-  /** ctxKey → timestamp when receipts were enabled (absent = disabled). */
-  enabled: Record<string, number>;
-  /** ctxKey → messageId → receipts (for OWN messages, to show "seen"). */
+  defaultOn: boolean;
+  /** ctxKey → explicit on/off (overrides defaultOn). */
+  overrides: Record<string, boolean>;
+  /** ctxKey → ts when explicitly enabled (gate for "only after toggle"). */
+  since: Record<string, number>;
+  /** ctxKey → messageId → receipts (for OWN messages). */
   receipts: Record<string, Record<string, Receipt[]>>;
   _sent: Set<string>;
 
+  setDefaultOn: (on: boolean) => void;
   isEnabled: (context: ReceiptContext, contextId: string) => boolean;
   setEnabled: (context: ReceiptContext, contextId: string, on: boolean) => void;
-  /** Auto-ack a message if receipts are enabled + it post-dates the toggle. */
+  /** Auto-ack a message if receipts are enabled + it post-dates the gate. */
   ack: (context: ReceiptContext, contextId: string, messageId: string, msgTs: number, to?: string) => void;
-  /** Manual mark-as-seen — sends regardless of toggle. */
+  /** Manual mark-as-seen — sends regardless of toggle (always visible). */
   markSeen: (context: ReceiptContext, contextId: string, messageId: string, to?: string) => void;
-  /** Receipts for one of my own messages. */
+  /** Receipts for one of my own messages, filtered by reciprocity. */
   seenBy: (context: ReceiptContext, contextId: string, messageId: string) => Receipt[];
   init: () => () => void;
 }
 
 export const useReadReceiptStore = create<ReadReceiptState>((set, get) => ({
-  enabled: loadEnabled(),
+  defaultOn: loadDefault(),
+  overrides: loadJSON<Record<string, boolean>>(LS_OVERRIDES, {}),
+  since: loadJSON<Record<string, number>>(LS_SINCE, {}),
   receipts: {},
   _sent: new Set<string>(),
 
-  isEnabled: (context, contextId) => (get().enabled[ctxKey(context, contextId)] ?? 0) > 0,
+  setDefaultOn: (on) => { try { localStorage.setItem(LS_DEFAULT, on ? '1' : '0'); } catch { /* */ } set({ defaultOn: on }); },
+
+  isEnabled: (context, contextId) => {
+    const k = ctxKey(context, contextId);
+    const o = get().overrides[k];
+    return o === undefined ? get().defaultOn : o;
+  },
 
   setEnabled: (context, contextId, on) => {
-    const key = ctxKey(context, contextId);
+    const k = ctxKey(context, contextId);
     set((s) => {
-      const next = { ...s.enabled };
-      if (on) next[key] = Date.now(); else delete next[key];
-      saveEnabled(next);
-      return { enabled: next };
+      const overrides = { ...s.overrides, [k]: on };
+      const since = { ...s.since };
+      if (on) since[k] = Date.now(); else delete since[k];
+      saveJSON(LS_OVERRIDES, overrides);
+      saveJSON(LS_SINCE, since);
+      return { overrides, since };
     });
   },
 
   ack: (context, contextId, messageId, msgTs, to) => {
-    const key = ctxKey(context, contextId);
-    const enabledAt = get().enabled[key] ?? 0;
-    if (enabledAt <= 0 || msgTs < enabledAt) return;
-    sendReceipt(context, contextId, messageId, to, get()._sent);
+    if (!get().isEnabled(context, contextId)) return;
+    // Gate: only messages after an explicit enable. Default-on (no explicit
+    // "since") covers all messages.
+    const gate = get().since[ctxKey(context, contextId)] ?? 0;
+    if (msgTs < gate) return;
+    sendReceipt(context, contextId, messageId, to, get()._sent, false);
   },
 
   markSeen: (context, contextId, messageId, to) => {
-    sendReceipt(context, contextId, messageId, to, get()._sent, true);
+    sendReceipt(context, contextId, messageId, to, get()._sent, true, true);
   },
 
   seenBy: (context, contextId, messageId) => {
-    return get().receipts[ctxKey(context, contextId)]?.[messageId] ?? [];
+    const all = get().receipts[ctxKey(context, contextId)]?.[messageId] ?? [];
+    if (get().isEnabled(context, contextId)) return all;
+    // Reciprocity: toggle off → only see manually-marked reads.
+    return all.filter((r) => r.manual);
   },
 
   init: () => {
     const network = useNetworkStore.getState();
     const unsub = network.onMessage((msg: TransportMessage) => {
       if (msg.type !== 'READ_RECEIPT') return;
-      const p = msg.payload as { context?: ReceiptContext; contextId?: string; messageId?: string; reader?: string; readerUsername?: string; ts?: number } | undefined;
+      const p = msg.payload as { context?: ReceiptContext; contextId?: string; messageId?: string; reader?: string; readerUsername?: string; ts?: number; manual?: boolean } | undefined;
       if (!p || !p.context || !p.contextId || !p.messageId || !p.reader) return;
-      // Ignore our own receipts echoed back.
       if (p.reader === useNetworkStore.getState().publicKey) return;
       const key = ctxKey(p.context, p.contextId);
       set((s) => {
         const ctx = { ...(s.receipts[key] || {}) };
         const list = ctx[p.messageId!] || [];
-        if (list.some((r) => r.reader === p.reader)) return s; // dedup
-        ctx[p.messageId!] = [...list, { reader: p.reader!, username: p.readerUsername || p.reader!.slice(0, 8), ts: p.ts || Date.now() }];
+        const existing = list.find((r) => r.reader === p.reader);
+        if (existing) {
+          if (p.manual && !existing.manual) existing.manual = true; // upgrade auto→manual
+          else return s;
+        } else {
+          ctx[p.messageId!] = [...list, { reader: p.reader!, username: p.readerUsername || p.reader!.slice(0, 8), ts: p.ts || Date.now(), manual: !!p.manual }];
+        }
         return { receipts: { ...s.receipts, [key]: ctx } };
       });
     });
@@ -101,15 +131,15 @@ export const useReadReceiptStore = create<ReadReceiptState>((set, get) => ({
   },
 }));
 
-function sendReceipt(context: ReceiptContext, contextId: string, messageId: string, to: string | undefined, sent: Set<string>, force = false): void {
-  const sentKey = `${context}:${contextId}:${messageId}`;
+function sendReceipt(context: ReceiptContext, contextId: string, messageId: string, to: string | undefined, sent: Set<string>, manual: boolean, force = false): void {
+  const sentKey = `${context}:${contextId}:${messageId}:${manual ? 'm' : 'a'}`;
   if (!force && sent.has(sentKey)) return;
   sent.add(sentKey);
   const network = useNetworkStore.getState();
   if (!network.transport?.isConnected) return;
   network.transport.send({
     type: 'READ_RECEIPT',
-    payload: { context, contextId, messageId, reader: network.publicKey, readerUsername: network.username, to, ts: Date.now() },
+    payload: { context, contextId, messageId, reader: network.publicKey, readerUsername: network.username, to, ts: Date.now(), manual },
     timestamp: Date.now(),
   });
 }

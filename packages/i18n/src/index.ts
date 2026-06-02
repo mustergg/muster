@@ -99,6 +99,8 @@ const enTranslation = {
     general: "General", nodes: "Nodes", storage: "Storage", clientNode: "Client Node",
     languageNote: "English is the source language; other languages are translations and may lag behind.",
     version: "Version", build: "Build",
+    receiptsDefault: "Start new chats with read receipts on",
+    receiptsNote: "If off, you won't show others when you read — and you won't see their reads either, unless they mark a message as seen manually.",
   },
   // R25 — Phase 9: bandwidth monitor
   bandwidth: {
@@ -294,6 +296,8 @@ const ptTranslation = {
     general: "Geral", nodes: "Nós", storage: "Armazenamento", clientNode: "Nó Cliente",
     languageNote: "O inglês é o idioma de origem; os outros idiomas são traduções e podem estar desatualizados.",
     version: "Versão", build: "Build",
+    receiptsDefault: "Iniciar novos chats com confirmação de leitura ativa",
+    receiptsNote: "Se desligado, não mostras quando lês — e também não vês as leituras dos outros, a menos que marquem manualmente uma mensagem como vista.",
   },
   // R25 — Phase 9: monitor de largura de banda
   bandwidth: {
