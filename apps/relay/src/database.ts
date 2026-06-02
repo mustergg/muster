@@ -57,6 +57,11 @@ export class RelayDB {
     return (this.db.prepare('SELECT COUNT(*) as count FROM messages').get() as any).count;
   }
 
+  /** Fetch a single message by id (for delete-permission checks). */
+  getMessage(messageId: string): RelayDBMessage | undefined {
+    return this.db.prepare('SELECT * FROM messages WHERE messageId = ?').get(messageId) as RelayDBMessage | undefined;
+  }
+
   /** Delete a specific message by ID (moderation). */
   deleteMessage(messageId: string): void {
     this.db.prepare('DELETE FROM messages WHERE messageId = ?').run(messageId);

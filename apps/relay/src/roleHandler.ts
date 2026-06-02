@@ -216,16 +216,31 @@ function handleDeleteMessage(
   const { channel, messageId } = msg.payload || {};
   if (!channel || !messageId) return;
 
-  // Find which community this channel belongs to
-  // For now, allow mod+ to delete in any channel they're subscribed to
-  // TODO: Look up community from channel ID for proper permission check
-
-  // Check if user is at least moderator in any community
-  // (simplified — full implementation would check the specific community)
-  const canDelete = client.channels.has(channel);
-  if (!canDelete) {
+  if (!client.channels.has(channel)) {
     sendToClient(client, { type: 'ERROR', payload: { code: 'FORBIDDEN', message: 'Cannot delete messages in channels you are not in' }, timestamp: Date.now() });
     return;
+  }
+
+  // Permission: the author may delete their own message within the edit
+  // window (15 min); admins/moderators of the owning community may delete any.
+  const DELETE_WINDOW_MS = 15 * 60 * 1000;
+  const stored = messageDB.getMessage(messageId);
+  if (stored) {
+    const isAuthor = stored.senderPublicKey === client.publicKey;
+    const withinWindow = (Date.now() - stored.timestamp) <= DELETE_WINDOW_MS;
+    let isMod = false;
+    // Resolve the community this channel belongs to → check role.
+    for (const cid of communityDB.getAllCommunityIds()) {
+      if (communityDB.getChannels(cid).some((ch) => ch.id === channel)) {
+        const role = communityDB.getMemberRole(cid, client.publicKey);
+        isMod = role === 'owner' || role === 'admin' || role === 'moderator';
+        break;
+      }
+    }
+    if (!isMod && !(isAuthor && withinWindow)) {
+      sendToClient(client, { type: 'ERROR', payload: { code: 'FORBIDDEN', message: isAuthor ? 'The edit/delete window for this message has passed.' : 'You can only delete your own messages.' }, timestamp: Date.now() });
+      return;
+    }
   }
 
   // Delete from SQLite

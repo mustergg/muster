@@ -12,6 +12,7 @@ import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useChatStore, type ChatMessage } from '../stores/chatStore.js';
 import { useNetworkStore } from '../stores/networkStore.js';
+import { useCommunityStore } from '../stores/communityStore.js';
 import EmojiPicker from './EmojiPicker.js';
 import VoiceRecorder from './VoiceRecorder.js';
 import type { ActiveLocation } from '../pages/MainLayout.js';
@@ -224,15 +225,20 @@ const fileStyles = {
 
 // ─── Message row ────────────────────────────────────────────────────────
 
-function MessageRow({ msg }: { msg: ChatMessage }): React.JSX.Element {
+/** Own messages can be deleted within this window (matches relay). */
+const DELETE_WINDOW_MS = 15 * 60 * 1000;
+
+function MessageRow({ msg, isAdmin, onDelete }: { msg: ChatMessage; isAdmin: boolean; onDelete: (id: string) => void }): React.JSX.Element {
   const initials = (msg.senderUsername || '??').slice(0, 2).toUpperCase();
   const hue = parseInt((msg.senderPublicKey || '0000').slice(0, 4), 16) % 360;
+  const [hover, setHover] = useState(false);
 
   const hasFile = !!(msg as any).fileId;
   const hasBlob = !!msg.blobRoot;
+  const canDelete = isAdmin || (msg.isOwn && (Date.now() - msg.timestamp) <= DELETE_WINDOW_MS);
 
   return (
-    <div style={styles.msgGroup}>
+    <div style={styles.msgGroup} onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}>
       <div style={{ ...styles.avatar, background: `hsl(${hue},45%,25%)`, color: `hsl(${hue},75%,72%)` }}>
         {initials}
       </div>
@@ -254,6 +260,15 @@ function MessageRow({ msg }: { msg: ChatMessage }): React.JSX.Element {
           />
         )}
       </div>
+      {canDelete && hover && (
+        <button
+          onClick={() => { if (confirm('Delete this message?')) onDelete(msg.messageId); }}
+          style={styles.msgDeleteBtn}
+          title="Delete message"
+        >
+          {'\u{1F5D1}'}
+        </button>
+      )}
     </div>
   );
 }
@@ -262,7 +277,16 @@ function MessageRow({ msg }: { msg: ChatMessage }): React.JSX.Element {
 
 export default function ChatArea({ active }: Props): React.JSX.Element {
   const { t } = useTranslation();
-  const { messages, subscribe, unsubscribe, sendMessage, sendFile } = useChatStore();
+  const { messages, subscribe, unsubscribe, sendMessage, sendFile, deleteMessage } = useChatStore();
+  const myRoles = useCommunityStore((s) => s.myRoles);
+  const communities = useCommunityStore((s) => s.communities);
+  const myKey = useNetworkStore((s) => s.publicKey);
+  const isAdmin = (() => {
+    if (!active) return false;
+    const role = myRoles[active.communityId];
+    if (role === 'owner' || role === 'admin' || role === 'moderator') return true;
+    return communities[active.communityId]?.ownerPublicKey === myKey;
+  })();
   const [draft, setDraft] = useState('');
   const [uploading, setUploading] = useState(false);
   const [dragOver, setDragOver] = useState(false);
@@ -403,7 +427,7 @@ export default function ChatArea({ active }: Props): React.JSX.Element {
           </div>
         )}
         {channelMessages.map((msg) => (
-          <MessageRow key={msg.messageId} msg={msg} />
+          <MessageRow key={msg.messageId} msg={msg} isAdmin={isAdmin} onDelete={(id) => active && deleteMessage(active.channelId, id)} />
         ))}
         <div ref={bottomRef} />
       </div>
@@ -457,7 +481,8 @@ const styles = {
   headerName: { fontSize: '15px', fontWeight: 600 } as React.CSSProperties,
   messages: { flex: 1, overflowY: 'auto' as const, padding: '16px', display: 'flex', flexDirection: 'column' as const, gap: '4px' } as React.CSSProperties,
   emptyChannel: { fontSize: '13px', color: 'var(--color-text-muted)', padding: '8px 0' } as React.CSSProperties,
-  msgGroup: { display: 'flex', gap: '12px', padding: '2px 0', marginBottom: '8px' } as React.CSSProperties,
+  msgGroup: { display: 'flex', gap: '12px', padding: '2px 0', marginBottom: '8px', position: 'relative' as const } as React.CSSProperties,
+  msgDeleteBtn: { position: 'absolute' as const, top: '0', right: '4px', width: '24px', height: '24px', borderRadius: '6px', border: '1px solid var(--color-border)', background: 'var(--color-bg-secondary)', color: '#E24B4A', cursor: 'pointer', fontSize: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center' } as React.CSSProperties,
   avatar: { width: '36px', height: '36px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', fontWeight: 700, flexShrink: 0, alignSelf: 'flex-start' as const, marginTop: '2px' } as React.CSSProperties,
   msgBody: { flex: 1, minWidth: 0 } as React.CSSProperties,
   msgHeader: { display: 'flex', alignItems: 'baseline', gap: '8px', marginBottom: '2px' } as React.CSSProperties,
