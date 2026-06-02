@@ -51,7 +51,9 @@ export default function GuildsSidebar({ activeCommunityId, onSelectCommunity, dm
   const { conversations } = useDMStore();
   const { publicKey: myKey } = useNetworkStore();
   const mySquads = useSquadStore((s) => s.allMySquads());
+  const setSquadOrder = useSquadStore((s) => s.setSquadOrder);
   const [dragCommunityId, setDragCommunityId] = useState<string | null>(null);
+  const [dragSquadId, setDragSquadId] = useState<string | null>(null);
   const [showCreateSquad, setShowCreateSquad] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
   const [showJoin,   setShowJoin]   = useState(false);
@@ -99,6 +101,17 @@ export default function GuildsSidebar({ activeCommunityId, onSelectCommunity, dm
       return pa - pb;
     });
   })();
+
+  const handleSquadDrop = (targetId: string): void => {
+    if (!dragSquadId || dragSquadId === targetId) { setDragSquadId(null); return; }
+    const ids = mySquads.map((s) => s.id);
+    const from = ids.indexOf(dragSquadId);
+    const to = ids.indexOf(targetId);
+    if (from < 0 || to < 0) { setDragSquadId(null); return; }
+    ids.splice(to, 0, ids.splice(from, 1)[0]!);
+    setSquadOrder(ids);
+    setDragSquadId(null);
+  };
 
   const handleCommunityDrop = (targetId: string): void => {
     if (!dragCommunityId || dragCommunityId === targetId) { setDragCommunityId(null); return; }
@@ -179,12 +192,18 @@ export default function GuildsSidebar({ activeCommunityId, onSelectCommunity, dm
                   key={sq.id}
                   title={sq.name}
                   onClick={() => onSelectSquad?.(sq.id)}
+                  draggable
+                  onDragStart={(e) => { setDragSquadId(sq.id); e.dataTransfer.effectAllowed = 'move'; }}
+                  onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; }}
+                  onDrop={(e) => { e.preventDefault(); handleSquadDrop(sq.id); }}
+                  onDragEnd={() => setDragSquadId(null)}
                   style={{
                     ...styles.icon,
                     background: `hsl(${hue},35%,20%)`, color: `hsl(${hue},60%,70%)`,
                     borderRadius: isActive ? '14px' : '50%',
                     border: isActive ? '2px solid var(--color-accent)' : '2px solid transparent',
                     fontSize: '13px',
+                    opacity: dragSquadId === sq.id ? 0.4 : 1,
                   }}
                 >
                   {squadInitials(sq.name)}

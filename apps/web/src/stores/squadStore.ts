@@ -54,8 +54,12 @@ interface SquadState {
   personalSpaceId: () => string;
   /** Load personal squads + squads for all known communities. */
   loadMySquads: () => void;
-  /** Flat list of every squad the user is in (across communities + personal). */
+  /** Flat list of every squad the user is in (across communities + personal),
+   *  ordered by the client-side squad order. */
   allMySquads: () => Squad[];
+  /** Client-side squad order (persisted). */
+  squadOrder: string[];
+  setSquadOrder: (ids: string[]) => void;
   createSquad: (communityId: string, name: string) => void;
   deleteSquad: (squadId: string) => void;
   inviteMember: (squadId: string, username: string) => void;
@@ -74,6 +78,14 @@ function uuid(): string {
   });
 }
 
+const SQUAD_ORDER_KEY = 'muster-squad-order';
+function loadSquadOrder(): string[] {
+  try { const raw = localStorage.getItem(SQUAD_ORDER_KEY); return raw ? JSON.parse(raw) : []; } catch { return []; }
+}
+function saveSquadOrder(ids: string[]): void {
+  try { localStorage.setItem(SQUAD_ORDER_KEY, JSON.stringify(ids)); } catch { /* ignore */ }
+}
+
 export const useSquadStore = create<SquadState>((set, get) => ({
   squads: {},
   members: {},
@@ -81,6 +93,9 @@ export const useSquadStore = create<SquadState>((set, get) => ({
   activeSquadId: null,
   lastMessage: '',
   loading: false,
+  squadOrder: loadSquadOrder(),
+
+  setSquadOrder: (ids) => { saveSquadOrder(ids); set({ squadOrder: ids }); },
 
   loadSquads: (communityId: string) => {
     const { transport } = useNetworkStore.getState();
@@ -112,6 +127,13 @@ export const useSquadStore = create<SquadState>((set, get) => ({
     for (const list of Object.values(get().squads)) {
       for (const sq of list) { if (!seen.has(sq.id)) { seen.add(sq.id); out.push(sq); } }
     }
+    const order = get().squadOrder;
+    const pos = new Map(order.map((id, i) => [id, i]));
+    out.sort((a, b) => {
+      const pa = pos.has(a.id) ? pos.get(a.id)! : Number.MAX_SAFE_INTEGER;
+      const pb = pos.has(b.id) ? pos.get(b.id)! : Number.MAX_SAFE_INTEGER;
+      return pa - pb;
+    });
     return out;
   },
 

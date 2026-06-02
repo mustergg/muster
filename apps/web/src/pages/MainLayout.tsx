@@ -106,7 +106,25 @@ export default function MainLayout(): React.JSX.Element {
   const handleSelectFriends = () => { setViewMode('friends'); setActiveCommunityId(null); setActive(null); setActiveDMPartner(null); setActiveSquad(null); };
   const handleSelectCommunity = (id: string) => { setViewMode('community'); setActiveCommunityId(id); setActiveDMPartner(null); setActiveSquad(null); };
   const handleSelectSettings = () => { setViewMode('settings'); setActiveCommunityId(null); setActive(null); setActiveDMPartner(null); setActiveSquad(null); };
-  const handleSelectSquad = (squadId: string) => { setViewMode('squad'); setActiveSquad(squadId); setActiveCommunityId(null); setActive(null); setActiveDMPartner(null); useSquadStore.getState().openSquad(squadId); };
+  const handleSelectSquad = (squadId: string) => {
+    const squad = useSquadStore.getState().allMySquads().find((s) => s.id === squadId);
+    const cid = squad?.communityId || '';
+    setActiveDMPartner(null);
+    // Community squad → open inside its community (sidebar + squad chat).
+    // Personal/friends squad → standalone squad view.
+    if (cid && !cid.startsWith('personal:')) {
+      setViewMode('community');
+      setActiveCommunityId(cid);
+      setActiveSquad(null);
+      setActive({ communityId: cid, channelId: `__squad_text__${squadId}`, channelName: squad?.name || 'Squad' });
+    } else {
+      setViewMode('squad');
+      setActiveSquad(squadId);
+      setActiveCommunityId(null);
+      setActive(null);
+    }
+    useSquadStore.getState().openSquad(squadId);
+  };
 
   // Determine what's active in the main area
   const isFeedActive = active?.channelId === '__feed__';
@@ -137,7 +155,7 @@ export default function MainLayout(): React.JSX.Element {
           onSelectFriends={handleSelectFriends}
           settingsActive={viewMode === 'settings'}
           onSelectSettings={handleSelectSettings}
-          activeSquadId={viewMode === 'squad' ? activeSquad : null}
+          activeSquadId={activeSquad ?? (active?.channelId?.match(/^__squad_(?:text|voice)__(.+)$/)?.[1] ?? null)}
           onSelectSquad={handleSelectSquad}
         />
 
