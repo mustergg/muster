@@ -38,17 +38,37 @@ export function getCurrentVersion(): string {
 }
 
 /** Find a pnpm command that actually runs in the service's environment.
- *  Tries `pnpm` (user install), then `corepack pnpm` (bundled with Node). */
+ *  The systemd unit's PATH often lacks the user-installed pnpm/corepack, so
+ *  we probe absolute paths and a login shell before giving up. */
 function resolvePnpmCmd(cwd: string): string {
-  const candidates = ['pnpm', 'corepack pnpm'];
-  for (const c of candidates) {
+  const home = process.env.HOME || process.env.USERPROFILE || '/home/pi';
+  const direct = [
+    'pnpm',
+    `${home}/.local/share/pnpm/pnpm`,
+    `${home}/.npm-global/bin/pnpm`,
+    '/usr/local/bin/pnpm',
+    '/usr/bin/pnpm',
+  ];
+  for (const p of direct) {
     try {
-      execSync(`${c} --version`, { cwd, stdio: 'pipe', timeout: 20000 });
-      return c;
-    } catch { /* try next */ }
+      execSync(`"${p}" --version`, { cwd, stdio: 'pipe', timeout: 20000 });
+      return p.includes(' ') || p.includes('/') ? `"${p}"` : p;
+    } catch { /* next */ }
   }
-  // Last resort — corepack is part of Node, so this is the safest default.
-  return 'corepack pnpm';
+  // Ask an interactive login shell where pnpm lives (loads the user's PATH).
+  try {
+    const found = execSync(`bash -lic 'command -v pnpm' 2>/dev/null`, { cwd, encoding: 'utf-8', timeout: 20000 }).trim().split('\n').pop()?.trim();
+    if (found) {
+      execSync(`"${found}" --version`, { cwd, stdio: 'pipe', timeout: 20000 });
+      return `"${found}"`;
+    }
+  } catch { /* next */ }
+  // Corepack (bundled with Node) — only if actually present.
+  try {
+    execSync('corepack --version', { cwd, stdio: 'pipe', timeout: 20000 });
+    return 'corepack pnpm';
+  } catch { /* next */ }
+  return 'pnpm';
 }
 
 /** Read the monotonic build number from version.json (best-effort). The
