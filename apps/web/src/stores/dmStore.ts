@@ -96,6 +96,32 @@ interface DMState {
 
 const dmDB = new BrowserDB();
 
+/**
+ * Per-partner "cleared" watermark. When the user deletes a DM conversation we
+ * record the delete timestamp locally (the relay still keeps the history for
+ * the *other* side). Any history older than the watermark is never re-shown to
+ * the deleter: requests use it as `since`, and conversations whose newest
+ * message predates it stay hidden. A later reply (ts > watermark) reappears,
+ * showing only messages from the delete point onward.
+ *
+ * Watermarks are per-account so a shared browser doesn't leak deletes between
+ * users — keyed by the local public key.
+ */
+const LS_DM_CLEARED = 'muster-dm-cleared';
+function clearedKey(): string {
+  const myKey = useNetworkStore.getState().publicKey || 'anon';
+  return `${LS_DM_CLEARED}:${myKey}`;
+}
+function loadCleared(): Record<string, number> {
+  try { const r = localStorage.getItem(clearedKey()); return r ? JSON.parse(r) as Record<string, number> : {}; } catch { return {}; }
+}
+function saveCleared(map: Record<string, number>): void {
+  try { localStorage.setItem(clearedKey(), JSON.stringify(map)); } catch { /* ignore */ }
+}
+function clearedAtFor(publicKey: string): number {
+  return loadCleared()[publicKey] ?? 0;
+}
+
 /** R25 — Phase 8. Send DM_SUBSCRIBE for our current/prev/next inbox hashes.
  *  Called on init + every window so a DM near a rotation boundary lands. */
 function sendInboxSubscribe(): void {
@@ -283,9 +309,10 @@ export const useDMStore = create<DMState>((set, get) => ({
     // across reloads — including the Node Bot, which the relay does not store.
     const myKey = useNetworkStore.getState().publicKey;
     const channelKey = `dm:${[myKey, publicKey].sort().join(':')}`;
+    const clearedAt = clearedAtFor(publicKey);
     dmDB.getMessages(channelKey).then((dbMsgs) => {
       if (!dbMsgs || dbMsgs.length === 0) return;
-      const cached: DMMessage[] = dbMsgs.map((m) => ({
+      const cached: DMMessage[] = dbMsgs.filter((m) => m.timestamp > clearedAt).map((m) => ({
         messageId: m.messageId,
         content: tryDecryptDM(m.content, m.senderPublicKey, publicKey, myKey),
         senderPublicKey: m.senderPublicKey, senderUsername: m.senderUsername,
@@ -303,7 +330,7 @@ export const useDMStore = create<DMState>((set, get) => ({
 
     const network = useNetworkStore.getState();
     if (!network.transport?.isConnected) return;
-    network.transport.send({ type: 'DM_HISTORY_REQUEST', payload: { otherPublicKey: publicKey, since: 0 }, timestamp: Date.now() });
+    network.transport.send({ type: 'DM_HISTORY_REQUEST', payload: { otherPublicKey: publicKey, since: clearedAt }, timestamp: Date.now() });
   },
 
   loadConversations: () => {
@@ -322,6 +349,11 @@ export const useDMStore = create<DMState>((set, get) => ({
   },
 
   clearConversation: (publicKey) => {
+    // Record the delete watermark first so any in-flight responses are gated.
+    const cleared = loadCleared();
+    cleared[publicKey] = Date.now();
+    saveCleared(cleared);
+
     set((state) => ({
       messages: (() => { const m = { ...state.messages }; delete m[publicKey]; return m; })(),
       conversations: state.conversations.filter((c) => c.publicKey !== publicKey),
@@ -354,6 +386,9 @@ export const useDMStore = create<DMState>((set, get) => ({
           const p = msg.payload as any;
           const otherKey = p.senderPublicKey === myKey ? p.recipientPublicKey : p.senderPublicKey;
           const isOwn = p.senderPublicKey === myKey;
+
+          // Drop replays of deleted history (older than the delete watermark).
+          if (p.timestamp <= clearedAtFor(otherKey)) break;
 
           // Decrypt the message content
           const decryptedContent = tryDecryptDM(p.content, p.senderPublicKey, p.recipientPublicKey, myKey);
@@ -422,7 +457,8 @@ export const useDMStore = create<DMState>((set, get) => ({
 
         case 'DM_HISTORY_RESPONSE': {
           const p = msg.payload as any;
-          const msgs: DMMessage[] = (p.messages || []).map((m: any) => {
+          const histClearedAt = clearedAtFor(p.otherPublicKey);
+          const msgs: DMMessage[] = (p.messages || []).filter((m: any) => m.timestamp > histClearedAt).map((m: any) => {
             const decrypted = tryDecryptDM(m.content, m.senderPublicKey, m.recipientPublicKey, myKey);
             return {
               messageId: m.messageId, content: decrypted,
@@ -451,6 +487,9 @@ export const useDMStore = create<DMState>((set, get) => ({
           set((state) => {
             const byKey = new Map(state.conversations.map((c) => [c.publicKey, c]));
             for (const inc of incoming) {
+              // Skip conversations the user deleted that have no newer message
+              // than the delete watermark — they stay hidden until a reply.
+              if ((inc.lastTimestamp ?? 0) <= clearedAtFor(inc.publicKey)) continue;
               const prev = byKey.get(inc.publicKey);
               // Relay stores ciphertext, so its lastMessage preview is the
               // raw __E2E__… blob. Decrypt it locally with the partner key
@@ -478,6 +517,8 @@ export const useDMStore = create<DMState>((set, get) => ({
           if (!opened) break; // not for us / corrupt
           const otherKey = opened.senderPubkey === myKey ? undefined : opened.senderPubkey;
           if (!otherKey) break; // our own echo — ignore (already optimistic)
+          // Drop replays of deleted history (older than the delete watermark).
+          if (opened.ts <= clearedAtFor(otherKey)) break;
           const senderName = opened.senderUsername || opened.senderPubkey.slice(0, 8);
 
           const dmMsg: DMMessage = {
