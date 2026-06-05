@@ -57,6 +57,8 @@ export interface OnlineMember {
   publicKey: string;
   username: string;
   status: string;
+  /** Free-text mood / activity (Rich Presence placeholder). */
+  mood?: string;
 }
 
 // =================================================================

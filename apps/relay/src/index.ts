@@ -26,7 +26,7 @@ import { handleProfileMessage } from './profileHandler';
 import { PostDB } from './postDB';
 import { handlePostMessage } from './postHandler';
 import { SquadDB } from './squadDB';
-import { handleSquadMessage, cleanupSquadSubscriptions, forwardToSquad } from './squadHandler';
+import { handleSquadMessage, cleanupSquadSubscriptions, forwardToSquad, broadcastSquadPresenceForWs } from './squadHandler';
 import { handleVoiceMessage, cleanupVoiceParticipant, getVoiceStats } from './voiceHandler';
 import { FriendDB } from './friendDB';
 import { handleFriendMessage } from './friendHandler';
@@ -378,6 +378,7 @@ if (GROUP_KEY_TYPES.has(msg.type)) {
   switch (msg.type) {
     case 'SUBSCRIBE': handleSubscribe(client, msg); break;
     case 'UNSUBSCRIBE': handleUnsubscribe(client, msg); break;
+    case 'SET_USER_STATUS': handleSetUserStatus(client, msg); break;
     case 'PUBLISH': handlePublish(client, msg); break;
     case 'SYNC_REQUEST': handleSyncRequest(client, msg); break;
     default: sendToClient(client, { type: 'ERROR', payload: { code: 'UNKNOWN_TYPE', message: `Unknown: ${msg.type}` }, timestamp: Date.now() });
@@ -412,6 +413,7 @@ async function handleAuth(client: RelayClient, msg: any): Promise<void> {
   }
 
   client.authenticated = true; client.publicKey = publicKey; client.username = username;
+  if (!client.status) client.status = 'online';
   const user = userDB.ensureUser(publicKey, username);
   console.log(`[relay] Auth OK: ${username} (${publicKey.slice(0, 12)}...) tier=${user.tier} mode=${authMode || 'legacy'}`);
   sendToClient(client, { type: 'AUTH_RESULT', payload: { success: true }, timestamp: Date.now() });
@@ -420,6 +422,18 @@ async function handleAuth(client: RelayClient, msg: any): Promise<void> {
 
 function handleSubscribe(client: RelayClient, msg: any): void { for (const ch of (msg.payload?.channels || [])) { client.channels.add(ch); if (!channels.has(ch)) channels.set(ch, new Set()); channels.get(ch)!.add(client.ws); broadcastPresence(ch); } }
 function handleUnsubscribe(client: RelayClient, msg: any): void { for (const ch of (msg.payload?.channels || [])) { client.channels.delete(ch); channels.get(ch)?.delete(client.ws); if (channels.get(ch)?.size === 0) channels.delete(ch); else broadcastPresence(ch); } }
+
+/** User changed availability / mood. Persist on the connection and refresh
+ *  presence everywhere this client is visible (channels + squads). */
+function handleSetUserStatus(client: RelayClient, msg: any): void {
+  const { status, mood } = msg.payload || {};
+  const allowed = new Set(['online', 'idle', 'dnd', 'invisible']);
+  if (typeof status === 'string' && allowed.has(status)) client.status = status;
+  if (typeof mood === 'string') client.mood = mood.slice(0, 120);
+  else if (mood === null) client.mood = undefined;
+  for (const ch of client.channels) broadcastPresence(ch);
+  broadcastSquadPresenceForWs(client.ws, clients);
+}
 
 async function handlePublish(client: RelayClient, msg: any): Promise<void> {
   const { channel, content, messageId, timestamp } = msg.payload || {};
@@ -519,13 +533,19 @@ function handleSyncRequest(client: RelayClient, msg: any): void {
 
 function broadcastPresence(channelId: string): void {
   const subs = channels.get(channelId); if (!subs) return;
-  const users: Array<{ publicKey: string; username: string; status: string }> = [];
-  for (const ws of subs) { const c = clients.get(ws); if (c?.authenticated) users.push({ publicKey: c.publicKey, username: c.username, status: 'online' }); }
+  const users: Array<{ publicKey: string; username: string; status: string; mood?: string }> = [];
+  for (const ws of subs) {
+    const c = clients.get(ws);
+    if (!c?.authenticated) continue;
+    const status = c.status || 'online';
+    if (status === 'invisible') continue; // masked — appears offline to others
+    users.push({ publicKey: c.publicKey, username: c.username, status, mood: c.mood });
+  }
   const msg = JSON.stringify({ type: 'PRESENCE', payload: { channel: channelId, users }, timestamp: Date.now() });
   for (const ws of subs) { if (ws.readyState === WebSocket.OPEN) ws.send(msg); }
 }
 
-function handleDisconnect(client: RelayClient): void { for (const ch of client.channels) { channels.get(ch)?.delete(client.ws); if (channels.get(ch)?.size) broadcastPresence(ch); else channels.delete(ch); } cleanupSquadSubscriptions(client.ws); cleanupVoiceParticipant(client.ws, clients); if (dmRouting && client.publicKey) dmRouting.forgetClient(client.publicKey); clients.delete(client.ws); }
+function handleDisconnect(client: RelayClient): void { for (const ch of client.channels) { channels.get(ch)?.delete(client.ws); if (channels.get(ch)?.size) broadcastPresence(ch); else channels.delete(ch); } cleanupSquadSubscriptions(client.ws, clients); cleanupVoiceParticipant(client.ws, clients); if (dmRouting && client.publicKey) dmRouting.forgetClient(client.publicKey); clients.delete(client.ws); }
 function sendToClient(client: RelayClient, msg: Record<string, unknown>): void { if (client.ws.readyState === WebSocket.OPEN) client.ws.send(JSON.stringify(msg)); }
 function requireAuth(client: RelayClient): boolean { if (!client.authenticated) { sendToClient(client, { type: 'ERROR', payload: { code: 'NOT_AUTH', message: 'Authenticate first' }, timestamp: Date.now() }); return false; } return true; }
 

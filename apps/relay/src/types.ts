@@ -27,4 +27,11 @@ export interface RelayClient {
 
   /** Timestamp of when the client connected. */
   connectedAt: number;
+
+  /** User-chosen availability: 'online' | 'idle' | 'dnd' | 'invisible'.
+   *  Defaults to 'online' on auth. 'invisible' is masked as offline to others. */
+  status?: string;
+
+  /** Free-text mood / activity line (Rich Presence placeholder). */
+  mood?: string;
 }

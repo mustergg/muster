@@ -176,3 +176,19 @@ export interface SquadResultMsg {
   payload: { action: string; success: boolean; message?: string };
   timestamp: number;
 }
+
+/** Online members of a squad (those currently subscribed). Offline members
+ *  are derived client-side from the full member list. */
+export interface SquadPresenceMsg {
+  type: 'SQUAD_PRESENCE';
+  payload: {
+    squadId: string;
+    online: Array<{
+      publicKey: string;
+      username: string;
+      status: string;
+      mood?: string;
+    }>;
+  };
+  timestamp: number;
+}

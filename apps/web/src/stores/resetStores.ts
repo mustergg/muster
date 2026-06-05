@@ -25,6 +25,7 @@ import { usePostStore } from './postStore';
 import { useVoiceStore } from './voiceStore';
 import { useGroupCryptoStore } from './groupCryptoStore';
 import { useManifestStore } from './manifestStore';
+import { useStatusStore } from './statusStore';
 
 /** Per-user localStorage caches to drop on account switch. */
 const LS_USER_KEYS = [
@@ -35,13 +36,16 @@ const LS_USER_KEYS = [
 
 export function resetUserStores(): void {
   // In-memory store data (keep methods — merge, don't replace).
-  useSquadStore.setState({ squads: {}, members: {}, messages: {}, activeSquadId: null, lastMessage: '', loading: false, squadOrder: [] });
+  useSquadStore.setState({ squads: {}, members: {}, squadOnline: {}, messages: {}, activeSquadId: null, lastMessage: '', loading: false, squadOrder: [] });
   useCommunityStore.setState({ communities: {}, onlineMembers: {}, members: {}, myRoles: {}, communityOrder: [] });
   useDMStore.setState({ messages: {}, conversations: [], activeConversation: null });
   useFriendStore.setState({ friends: [], incomingRequests: [], outgoingRequests: [], blockedUsers: [], lastMessage: '', loading: false });
   usePostStore.setState({ posts: {}, comments: {}, expandedPostId: null, lastMessage: '', loading: false });
   useManifestStore.setState({ byCommunity: {} });
   useGroupCryptoStore.setState({ channels: new Map() });
+  // Status/mood are per-account in localStorage; reset in-memory to defaults so
+  // the next account doesn't briefly show the previous user's status.
+  useStatusStore.setState({ status: 'online', mood: '' });
 
   // Drop the local voice session (mic + peer connections) and roster cache.
   try { useVoiceStore.getState().leave(); } catch { /* not in a call */ }

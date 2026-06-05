@@ -16,12 +16,12 @@ import { toHex } from '@muster/crypto';
 import InviteLinkModal from '../pages/InviteLinkModal.js';
 import CreateChannelModal from '../pages/CreateChannelModal.js';
 import EditChannelModal from '../pages/EditChannelModal.js';
-import EditProfileModal from '../pages/EditProfileModal.js';
 import CreateSquadModal from '../pages/CreateSquadModal.js';
 import CommunityGovernanceModal from '../pages/CommunityGovernanceModal.js';
 import { useSquadStore } from '../stores/squadStore.js';
 import { useVoiceStore } from '../stores/voiceStore.js';
 import ContextMenu from './ContextMenu.js';
+import UserPanel from './UserPanel.js';
 
 interface Props {
   communityId: string | null;
@@ -33,8 +33,7 @@ const ADMIN_ROLES = new Set(['owner', 'admin']);
 
 export default function ChannelsSidebar({ communityId, activeChannelId, onSelectChannel }: Props): React.JSX.Element {
   const { t } = useTranslation();
-  const { username, logout }              = useAuthStore();
-  const { status, peerCount, peerId, disconnect, publicKey: myVoiceKey } = useNetworkStore();
+  const { status, peerCount, publicKey: myVoiceKey } = useNetworkStore();
   const { communities, subscribePresence, onlineMembers, serveCommunityRequests, myRoles, deleteChannel, fetchCommunity, reorderChannels } = useCommunityStore();
   const [dragChannelId, setDragChannelId] = useState<string | null>(null);
   const [showInvite, setShowInvite] = useState(false);
@@ -42,7 +41,6 @@ export default function ChannelsSidebar({ communityId, activeChannelId, onSelect
   const [showCreateChannel, setShowCreateChannel] = useState(false);
   const [createChannelType, setCreateChannelType] = useState<'text' | 'voice'>('text');
   const [editingChannel, setEditingChannel] = useState<{ id: string; name: string; visibility: string } | null>(null);
-  const [showProfile, setShowProfile] = useState(false);
   const [showCreateSquad, setShowCreateSquad] = useState(false);
   const { squads: allSquads, loadSquads: loadSquadsAction } = useSquadStore();
   const voiceRosters = useVoiceStore((st) => st.rosters);
@@ -95,11 +93,6 @@ export default function ChannelsSidebar({ communityId, activeChannelId, onSelect
     if (!voiceChannelIds || status !== 'connected') return;
     requestRosters(voiceChannelIds.split(','));
   }, [voiceChannelIds, status]);
-
-  const handleLogout = async (): Promise<void> => {
-    await disconnect();
-    logout();
-  };
 
   const handleDeleteChannel = (channelId: string, channelName: string) => {
     if (!communityId) return;
@@ -356,18 +349,8 @@ export default function ChannelsSidebar({ communityId, activeChannelId, onSelect
           )}
         </div>
 
-        {/* User panel */}
-        <div style={styles.userPanel}>
-          <div style={styles.avatar}>{(username ?? '?').slice(0, 2).toUpperCase()}</div>
-          <div style={styles.userInfo}>
-            <div style={{ fontSize: '13px', fontWeight: 500 }}>{username}</div>
-            <div style={{ fontSize: '10px', color: 'var(--color-text-muted)', fontFamily: 'var(--font-mono)' }}>
-              {peerId ? peerId.slice(0, 16) + '\u2026' : 'not connected'}
-            </div>
-          </div>
-          <button onClick={() => setShowProfile(true)} title="Edit profile" style={styles.actionBtn}>&#x2699;</button>
-          <button onClick={handleLogout} title={t('auth.logout')} style={styles.actionBtn}>&#x23FB;</button>
-        </div>
+        {/* User panel (shared) */}
+        <UserPanel />
       </div>
 
       {showInvite && community && (
@@ -401,10 +384,6 @@ export default function ChannelsSidebar({ communityId, activeChannelId, onSelect
           currentVisibility={editingChannel.visibility}
           onClose={() => setEditingChannel(null)}
         />
-      )}
-
-      {showProfile && (
-        <EditProfileModal onClose={() => setShowProfile(false)} />
       )}
 
       {showCreateSquad && communityId && (

@@ -8,6 +8,8 @@ import DMChatArea from '../components/DMChatArea.js';
 import FriendsPanel from '../components/FriendsPanel.js';
 import FeedView from '../components/FeedView.js';
 import SquadChatArea from '../components/SquadChatArea.js';
+import SquadSidebar from '../components/SquadSidebar.js';
+import type { SquadRoom } from '../stores/squadStore.js';
 import VerificationBanner from '../components/VerificationBanner.js';
 import SettingsPanel from '../components/SettingsPanel.js';
 import VoicePanel from '../components/VoicePanel.js';
@@ -27,6 +29,7 @@ import { usePieceCacheStore } from '../stores/pieceCacheStore.js';
 import { useBandwidthStore } from '../stores/bandwidthStore.js';
 import { useReputationStore } from '../stores/reputationStore.js';
 import { useReadReceiptStore } from '../stores/readReceiptStore.js';
+import { useStatusStore } from '../stores/statusStore.js';
 // clientNodeStore is imported dynamically (only registers global, no init needed)
 import '../stores/clientNodeStore.js';
 import { useNatStore } from '../stores/natStore.js';
@@ -43,6 +46,7 @@ export default function MainLayout(): React.JSX.Element {
   const [viewMode, setViewMode] = useState<ViewMode>('community');
   const [active, setActive]                       = useState<ActiveLocation | null>(null);
   const [activeSquad, setActiveSquad]             = useState<string | null>(null);
+  const [squadMode, setSquadMode]                 = useState<SquadRoom>('text');
   const [activeCommunityId, setActiveCommunityId] = useState<string | null>(null);
   const [activeDMPartner, setActiveDMPartner]     = useState<string | null>(null);
   const { connect, status }   = useNetworkStore();
@@ -86,10 +90,11 @@ export default function MainLayout(): React.JSX.Element {
       const c12 = bandwidthInit();
       const c13 = reputationInit();
       const c14 = useReadReceiptStore.getState().init();
+      const c15 = useStatusStore.getState().init();
       loadCommunities();
       // Load top-level squads (personal + community) for the guild bar.
       setTimeout(() => useSquadStore.getState().loadMySquads(), 400);
-      return () => { c1(); c2(); c3(); c4(); c5(); c6(); c7(); c8(); c9(); c10(); c11(); c12(); c13(); c14(); };
+      return () => { c1(); c2(); c3(); c4(); c5(); c6(); c7(); c8(); c9(); c10(); c11(); c12(); c13(); c14(); c15(); };
     }
     return undefined;
   }, [status]);
@@ -122,6 +127,7 @@ export default function MainLayout(): React.JSX.Element {
     } else {
       setViewMode('squad');
       setActiveSquad(squadId);
+      setSquadMode('text');
       setActiveCommunityId(null);
       setActive(null);
     }
@@ -164,9 +170,12 @@ export default function MainLayout(): React.JSX.Element {
         {viewMode === 'settings' ? (
           <SettingsPanel />
         ) : viewMode === 'squad' && activeSquad ? (
-          <div style={styles.main}>
-            <SquadChatArea squadId={activeSquad} mode="text" />
-          </div>
+          <>
+            <SquadSidebar squadId={activeSquad} activeMode={squadMode} onSelectMode={setSquadMode} />
+            <div style={styles.main}>
+              <SquadChatArea squadId={activeSquad} mode={squadMode} />
+            </div>
+          </>
         ) : viewMode === 'friends' ? (
           <div style={styles.main}>
             <FriendsPanel onOpenDM={handleOpenDM} />

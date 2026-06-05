@@ -108,6 +108,11 @@ export interface ChannelMessageMsg {
 // Presence
 // =================================================================
 
+/** User-chosen availability. 'invisible' appears offline to others (the relay
+ *  masks it) but the user still functions normally. 'offline' is a derived
+ *  state for users with no live connection — it is never set explicitly. */
+export type UserAvailability = 'online' | 'idle' | 'dnd' | 'invisible' | 'offline';
+
 /** Sent by relay → clients whenever the online list changes. */
 export interface PresenceMsg {
   type: 'PRESENCE';
@@ -117,7 +122,20 @@ export interface PresenceMsg {
       publicKey: string;
       username: string;
       status: string;
+      /** Free-text mood / activity line (Rich Presence placeholder). */
+      mood?: string;
     }>;
+  };
+  timestamp: number;
+}
+
+/** Sent by client → relay when the user changes availability or mood. The
+ *  relay stores it on the connection and re-broadcasts presence. */
+export interface SetUserStatusMsg {
+  type: 'SET_USER_STATUS';
+  payload: {
+    status: UserAvailability;
+    mood?: string;
   };
   timestamp: number;
 }

@@ -61,11 +61,21 @@ export function squadRoomKey(squadId: string, room: SquadRoom = 'text'): string 
   return room === 'voice' ? `${squadId}::voice` : squadId;
 }
 
+/** A squad member currently online (from SQUAD_PRESENCE). */
+export interface OnlineSquadMember {
+  publicKey: string;
+  username: string;
+  status: string;
+  mood?: string;
+}
+
 interface SquadState {
   /** Squads keyed by communityId */
   squads: Record<string, Squad[]>;
   /** Members keyed by squadId */
   members: Record<string, SquadMember[]>;
+  /** Online members keyed by squadId (from SQUAD_PRESENCE). */
+  squadOnline: Record<string, OnlineSquadMember[]>;
   /** Messages keyed by squadId */
   messages: Record<string, SquadMessage[]>;
   /** Currently active squad */
@@ -118,6 +128,7 @@ function saveSquadOrder(ids: string[]): void {
 export const useSquadStore = create<SquadState>((set, get) => ({
   squads: {},
   members: {},
+  squadOnline: {},
   messages: {},
   activeSquadId: null,
   lastMessage: '',
@@ -392,6 +403,12 @@ export const useSquadStore = create<SquadState>((set, get) => ({
           for (const m of (p.messages || [])) {
             if ((m.content || '').startsWith(SQUAD_ENC_PREFIX)) decryptInto(p.squadId, key, m.messageId, m.content);
           }
+          break;
+        }
+        case 'SQUAD_PRESENCE': {
+          const p = msg.payload as any;
+          if (!p.squadId) break;
+          set((s) => ({ squadOnline: { ...s.squadOnline, [p.squadId]: p.online || [] } }));
           break;
         }
         case 'SQUAD_RESULT': {

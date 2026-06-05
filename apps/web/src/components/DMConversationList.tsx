@@ -4,10 +4,10 @@
  */
 
 import React, { useEffect } from 'react';
-import { useAuthStore } from '../stores/authStore.js';
 import { useNetworkStore } from '../stores/networkStore.js';
 import { useDMStore, type DMConversation } from '../stores/dmStore.js';
 import ContextMenu from './ContextMenu.js';
+import UserPanel from './UserPanel.js';
 
 interface Props {
   activeConversation: string | null;
@@ -22,8 +22,7 @@ function formatTime(ts: number): string {
 }
 
 export default function DMConversationList({ activeConversation, onSelectConversation }: Props): React.JSX.Element {
-  const { username, logout } = useAuthStore();
-  const { status, disconnect } = useNetworkStore();
+  const { status } = useNetworkStore();
   const { conversations, loadConversations, clearConversation } = useDMStore();
 
   useEffect(() => {
@@ -69,16 +68,7 @@ export default function DMConversationList({ activeConversation, onSelectConvers
         )}
       </div>
 
-      <div style={styles.userBar}>
-        <div style={styles.userInfo}>
-          <div style={styles.userAvatar}>{(username || '??').slice(0, 2).toUpperCase()}</div>
-          <div style={styles.userMeta}>
-            <span style={styles.userName}>{username}</span>
-            <span style={styles.userStatus}>{status === 'connected' ? 'Online' : 'Connecting...'}</span>
-          </div>
-        </div>
-        <button onClick={() => { disconnect(); logout(); }} style={styles.logoutBtn} title="Logout">&#x23FB;</button>
-      </div>
+      <UserPanel />
     </div>
   );
 }

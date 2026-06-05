@@ -2,6 +2,7 @@ import React from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNetworkStore } from '../stores/networkStore.js';
 import { useCommunityStore } from '../stores/communityStore.js';
+import { statusMeta } from '../stores/statusStore.js';
 
 interface Props {
   communityId: string | null;
@@ -36,16 +37,18 @@ export default function MembersSidebar({ communityId, onOpenDM }: Props): React.
               const hue = parseInt((key || '0000').slice(0, 4), 16) % 360;
               const isMe = key === myKey;
 
+              const dotColor = statusMeta(m.status).color;
               return (
                 <div key={key} style={styles.memberItem}>
                   <div style={{ ...styles.avatar, background: `hsl(${hue},40%,20%)`, color: `hsl(${hue},70%,65%)`, position: 'relative' as const }}>
                     {(m.username || '??').slice(0, 2).toUpperCase()}
-                    <div style={styles.onlineDot} />
+                    <div style={{ ...styles.onlineDot, background: dotColor }} title={statusMeta(m.status).label} />
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <span style={styles.memberName}>
                       {m.username}{isMe ? ' (you)' : ''}
                     </span>
+                    {m.mood && <span style={styles.memberMood}>{m.mood}</span>}
                   </div>
                   {!isMe && onOpenDM && (
                     <button
@@ -99,7 +102,8 @@ const styles = {
   memberItem:  { display:'flex', alignItems:'center', gap:'8px', padding:'4px 12px', cursor:'pointer', transition:'background 0.1s' } as React.CSSProperties,
   avatar:      { width:'28px', height:'28px', borderRadius:'50%', display:'flex', alignItems:'center', justifyContent:'center', fontSize:'10px', fontWeight:700, flexShrink:0 } as React.CSSProperties,
   onlineDot:   { position:'absolute' as const, bottom:'-1px', right:'-1px', width:'9px', height:'9px', borderRadius:'50%', background:'var(--color-green)', border:'2px solid var(--color-bg-secondary)' } as React.CSSProperties,
-  memberName:  { fontSize:'12px', color:'var(--color-text-secondary)' } as React.CSSProperties,
+  memberName:  { fontSize:'12px', color:'var(--color-text-secondary)', display:'block', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' as const } as React.CSSProperties,
+  memberMood:  { fontSize:'10px', color:'var(--color-text-muted)', display:'block', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' as const } as React.CSSProperties,
   emptyNote:   { fontSize:'11px', color:'var(--color-text-muted)', padding:'4px 12px', lineHeight:1.5 } as React.CSSProperties,
   dmBtn:       { fontSize:'9px', padding:'2px 6px', borderRadius:'4px', border:'1px solid var(--color-border)', background:'transparent', color:'var(--color-text-muted)', cursor:'pointer', flexShrink:0, fontFamily:'var(--font-mono)' } as React.CSSProperties,
   stats:       { padding:'8px 12px', borderTop:'1px solid var(--color-border)', background:'var(--color-bg-tertiary)' } as React.CSSProperties,

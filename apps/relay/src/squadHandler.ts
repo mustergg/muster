@@ -36,6 +36,32 @@ export function forwardToSquad(squadId: string, msg: Record<string, unknown>, ex
   broadcastToSquad(squadId, msg, excludeWs);
 }
 
+/** Broadcast the squad's online roster (subscribed members) to its
+ *  subscribers. Invisible users are masked (reported as not online). Offline
+ *  members are derived client-side from the full member list. */
+export function broadcastSquadPresence(squadId: string, clients: Map<WebSocket, RelayClient>): void {
+  const subs = squadChannels.get(squadId);
+  if (!subs) return;
+  const online: Array<{ publicKey: string; username: string; status: string; mood?: string }> = [];
+  for (const ws of subs) {
+    const c = clients.get(ws);
+    if (!c?.authenticated) continue;
+    const status = c.status || 'online';
+    if (status === 'invisible') continue; // masked
+    online.push({ publicKey: c.publicKey, username: c.username, status, mood: c.mood });
+  }
+  const payload = JSON.stringify({ type: 'SQUAD_PRESENCE', payload: { squadId, online }, timestamp: Date.now() });
+  for (const ws of subs) { if (ws.readyState === WebSocket.OPEN) ws.send(payload); }
+}
+
+/** Re-broadcast presence for every squad a given connection belongs to
+ *  (used when that user changes availability). */
+export function broadcastSquadPresenceForWs(ws: WebSocket, clients: Map<WebSocket, RelayClient>): void {
+  for (const [squadId, subs] of squadChannels) {
+    if (subs.has(ws)) broadcastSquadPresence(squadId, clients);
+  }
+}
+
 export function handleSquadMessage(
   client: RelayClient,
   msg: any,
@@ -53,17 +79,18 @@ export function handleSquadMessage(
     case 'KICK_FROM_SQUAD':       handleKick(client, msg, squadDB, sendToClient, clients); break;
     case 'DELETE_SQUAD':          handleDelete(client, msg, squadDB, sendToClient); break;
     case 'GET_SQUAD_MEMBERS':     handleGetMembers(client, msg, squadDB, sendToClient); break;
-    case 'SUBSCRIBE_SQUAD':       handleSubscribe(client, msg, squadDB); break;
+    case 'SUBSCRIBE_SQUAD':       handleSubscribe(client, msg, squadDB, clients); break;
     case 'SEND_SQUAD_MESSAGE':    handleSendMessage(client, msg, squadDB, sendToClient); break;
     case 'SQUAD_HISTORY_REQUEST': handleHistory(client, msg, squadDB, sendToClient); break;
   }
 }
 
 /** Clean up squad subscriptions when client disconnects. */
-export function cleanupSquadSubscriptions(ws: WebSocket): void {
+export function cleanupSquadSubscriptions(ws: WebSocket, clients?: Map<WebSocket, RelayClient>): void {
   for (const [squadId, subs] of squadChannels) {
-    subs.delete(ws);
+    if (!subs.delete(ws)) continue;
     if (subs.size === 0) squadChannels.delete(squadId);
+    else if (clients) broadcastSquadPresence(squadId, clients);
   }
 }
 
@@ -244,6 +271,7 @@ function handleKick(
     sendToClient(kickedClient, { type: 'SQUAD_DELETED', payload: { squadId, communityId: '' }, timestamp: Date.now() });
     squadChannels.get(squadId)?.delete(kickedClient.ws);
   }
+  broadcastSquadPresence(squadId, clients);
 }
 
 function handleDelete(
@@ -282,7 +310,7 @@ function handleGetMembers(
   sendToClient(client, { type: 'SQUAD_MEMBER_LIST', payload: { squadId, members }, timestamp: Date.now() });
 }
 
-function handleSubscribe(client: RelayClient, msg: any, squadDB: SquadDB): void {
+function handleSubscribe(client: RelayClient, msg: any, squadDB: SquadDB, clients: Map<WebSocket, RelayClient>): void {
   const { squadId } = msg.payload || {};
   if (!squadId) return;
 
@@ -290,6 +318,9 @@ function handleSubscribe(client: RelayClient, msg: any, squadDB: SquadDB): void 
 
   if (!squadChannels.has(squadId)) squadChannels.set(squadId, new Set());
   squadChannels.get(squadId)!.add(client.ws);
+
+  // Tell the squad (and the joiner) the updated online roster.
+  broadcastSquadPresence(squadId, clients);
 }
 
 function handleSendMessage(
