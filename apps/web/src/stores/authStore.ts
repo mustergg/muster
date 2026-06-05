@@ -180,6 +180,9 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
     const keypair = await deriveKeyPair(username, password);
     const entry   = await createKeystoreEntry(keypair, username, password);
 
+    // Wipe any previous account's cached data before adopting the new identity.
+    await import('./resetStores').then((m) => m.resetUserStores());
+
     // Don't save to IDB yet — wait for relay to confirm
     set({
       isAuthenticated: true,
@@ -219,6 +222,9 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
         publicKey:  publicKeyBytes,
       };
 
+      // Wipe any previous account's cached data before adopting the new identity.
+      await import('./resetStores').then((m) => m.resetUserStores());
+
       set({
         isAuthenticated: true,
         username,
@@ -233,6 +239,9 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
       // Don't save keystore yet — wait for relay to confirm account exists
       const keypair = await deriveKeyPair(username, password);
       const newEntry = await createKeystoreEntry(keypair, username, password);
+
+      // Wipe any previous account's cached data before adopting the new identity.
+      await import('./resetStores').then((m) => m.resetUserStores());
 
       set({
         isAuthenticated: true,
@@ -283,8 +292,12 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
 
   logout: () => {
     clearSession();
+    // Wipe all per-user store + cache data so the next account starts clean.
+    void import('./resetStores').then((m) => m.resetUserStores());
     set({
       isAuthenticated: false,
+      username: null,
+      publicKeyHex: null,
       _keypair: null,
       _authMode: null,
       _pendingKeystore: null,
