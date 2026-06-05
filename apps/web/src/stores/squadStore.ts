@@ -49,6 +49,18 @@ export interface SquadMessage {
   isOwn: boolean;
 }
 
+/** A squad has two independent text streams: its main text chat ('text') and
+ *  the text chat dedicated to its voice channel ('voice') — mirroring how
+ *  community voice channels each get their own text chat. Both rooms share the
+ *  squad's membership + group key; only storage/routing is partitioned. */
+export type SquadRoom = 'text' | 'voice';
+
+/** Local message-map key for a squad room. Text keeps the bare squadId for
+ *  backward compatibility; voice is suffixed. */
+export function squadRoomKey(squadId: string, room: SquadRoom = 'text'): string {
+  return room === 'voice' ? `${squadId}::voice` : squadId;
+}
+
 interface SquadState {
   /** Squads keyed by communityId */
   squads: Record<string, Squad[]>;
@@ -79,9 +91,12 @@ interface SquadState {
   leaveSquad: (squadId: string) => void;
   loadMembers: (squadId: string) => void;
   openSquad: (squadId: string) => void;
-  sendMessage: (squadId: string, content: string) => void;
-  /** Send a file/voice attachment to a squad (blob + descriptor marker). */
-  sendSquadFile: (squadId: string, file: File) => Promise<void>;
+  /** Subscribe + load history for a specific squad room (e.g. the voice
+   *  channel's dedicated text chat). */
+  loadRoom: (squadId: string, room: SquadRoom) => void;
+  sendMessage: (squadId: string, content: string, room?: SquadRoom) => void;
+  /** Send a file/voice attachment to a squad room (blob + descriptor marker). */
+  sendSquadFile: (squadId: string, file: File, room?: SquadRoom) => Promise<void>;
   clearMessage: () => void;
   init: () => () => void;
 }
@@ -196,23 +211,33 @@ export const useSquadStore = create<SquadState>((set, get) => ({
     transport.send({ type: 'SUBSCRIBE_SQUAD', payload: { squadId }, timestamp: Date.now() });
     // E2E: fetch the squad group key(s) so messages decrypt.
     useGroupCryptoStore.getState().requestKeys(squadId);
-    // Load history
-    transport.send({ type: 'SQUAD_HISTORY_REQUEST', payload: { squadId, since: 0 }, timestamp: Date.now() });
+    // Load history (main text room)
+    transport.send({ type: 'SQUAD_HISTORY_REQUEST', payload: { squadId, since: 0, room: 'text' }, timestamp: Date.now() });
     // Load members
     get().loadMembers(squadId);
   },
 
-  sendMessage: (squadId: string, content: string) => {
+  loadRoom: (squadId: string, room: SquadRoom) => {
+    const { transport } = useNetworkStore.getState();
+    if (!transport?.isConnected) return;
+    // Subscription is per-squad (idempotent) and covers all rooms.
+    transport.send({ type: 'SUBSCRIBE_SQUAD', payload: { squadId }, timestamp: Date.now() });
+    useGroupCryptoStore.getState().requestKeys(squadId);
+    transport.send({ type: 'SQUAD_HISTORY_REQUEST', payload: { squadId, since: 0, room }, timestamp: Date.now() });
+  },
+
+  sendMessage: (squadId: string, content: string, room: SquadRoom = 'text') => {
     const { transport, publicKey, username } = useNetworkStore.getState();
     if (!transport?.isConnected) return;
     const messageId = uuid();
     const timestamp = Date.now();
+    const key = squadRoomKey(squadId, room);
 
     // Optimistic update — sender sees plaintext locally.
     set((s) => ({
       messages: {
         ...s.messages,
-        [squadId]: [...(s.messages[squadId] || []), { messageId, squadId, content, senderPublicKey: publicKey, senderUsername: username, timestamp, isOwn: true }],
+        [key]: [...(s.messages[key] || []), { messageId, squadId, content, senderPublicKey: publicKey, senderUsername: username, timestamp, isOwn: true }],
       },
     }));
 
@@ -220,13 +245,13 @@ export const useSquadStore = create<SquadState>((set, get) => ({
     const groupCrypto = useGroupCryptoStore.getState();
     void groupCrypto.encrypt(squadId, content).then((enc) => {
       const wire = enc ? packEnc(enc) : content; // fallback plaintext only if no key yet
-      transport.send({ type: 'SEND_SQUAD_MESSAGE', payload: { squadId, content: wire, messageId }, timestamp: Date.now() });
+      transport.send({ type: 'SEND_SQUAD_MESSAGE', payload: { squadId, content: wire, messageId, room }, timestamp: Date.now() });
     }).catch(() => {
-      transport.send({ type: 'SEND_SQUAD_MESSAGE', payload: { squadId, content, messageId }, timestamp: Date.now() });
+      transport.send({ type: 'SEND_SQUAD_MESSAGE', payload: { squadId, content, messageId, room }, timestamp: Date.now() });
     });
   },
 
-  sendSquadFile: async (squadId: string, file: File) => {
+  sendSquadFile: async (squadId: string, file: File, room: SquadRoom = 'text') => {
     const network = useNetworkStore.getState();
     if (!network.transport?.isConnected) return;
     const mime = file.type || 'application/octet-stream';
@@ -243,7 +268,7 @@ export const useSquadStore = create<SquadState>((set, get) => ({
     const descriptor = SQUAD_BLOB_PREFIX + JSON.stringify({
       root: up.rootHex, size: up.size, mime, name: file.name, pieceCount: up.pieceCount, key: up.keyHex,
     });
-    get().sendMessage(squadId, descriptor);
+    get().sendMessage(squadId, descriptor, room);
   },
 
   clearMessage: () => set({ lastMessage: '' }),
@@ -252,7 +277,9 @@ export const useSquadStore = create<SquadState>((set, get) => ({
     const myKey = useNetworkStore.getState().publicKey;
 
     // Decrypt an E2E squad message and patch its content into state.
-    const decryptInto = (squadId: string, messageId: string, raw: string): void => {
+    // Crypto is keyed by squadId (shared group key); `key` is the room's
+    // message-map key the plaintext gets patched into.
+    const decryptInto = (squadId: string, key: string, messageId: string, raw: string): void => {
       if (!raw.startsWith(SQUAD_ENC_PREFIX)) return;
       try {
         const { c, n, e } = JSON.parse(raw.slice(SQUAD_ENC_PREFIX.length));
@@ -261,7 +288,7 @@ export const useSquadStore = create<SquadState>((set, get) => ({
           set((s) => ({
             messages: {
               ...s.messages,
-              [squadId]: (s.messages[squadId] || []).map((m) => m.messageId === messageId ? { ...m, content: plain } : m),
+              [key]: (s.messages[key] || []).map((m) => m.messageId === messageId ? { ...m, content: plain } : m),
             },
           }));
         });
@@ -339,27 +366,31 @@ export const useSquadStore = create<SquadState>((set, get) => ({
         }
         case 'SQUAD_MESSAGE': {
           const p = msg.payload as any;
+          const room: SquadRoom = p.room === 'voice' ? 'voice' : 'text';
+          const key = squadRoomKey(p.squadId, room);
           const raw: string = p.content || '';
           const enc = raw.startsWith(SQUAD_ENC_PREFIX);
           const squadMsg: SquadMessage = { ...p, content: enc ? '\u{1F512}…' : raw, isOwn: p.senderPublicKey === myKey };
           set((s) => {
-            const existing = s.messages[p.squadId] || [];
+            const existing = s.messages[key] || [];
             if (existing.some((m) => m.messageId === p.messageId)) return s;
-            return { messages: { ...s.messages, [p.squadId]: [...existing, squadMsg].sort((a, b) => a.timestamp - b.timestamp) } };
+            return { messages: { ...s.messages, [key]: [...existing, squadMsg].sort((a, b) => a.timestamp - b.timestamp) } };
           });
-          if (enc) decryptInto(p.squadId, p.messageId, raw);
+          if (enc) decryptInto(p.squadId, key, p.messageId, raw);
           break;
         }
         case 'SQUAD_HISTORY_RESPONSE': {
           const p = msg.payload as any;
+          const room: SquadRoom = p.room === 'voice' ? 'voice' : 'text';
+          const key = squadRoomKey(p.squadId, room);
           const msgs: SquadMessage[] = (p.messages || []).map((m: any) => {
             const raw: string = m.content || '';
             const enc = raw.startsWith(SQUAD_ENC_PREFIX);
             return { ...m, squadId: p.squadId, content: enc ? '\u{1F512}…' : raw, isOwn: m.senderPublicKey === myKey };
           });
-          set((s) => ({ messages: { ...s.messages, [p.squadId]: msgs } }));
+          set((s) => ({ messages: { ...s.messages, [key]: msgs } }));
           for (const m of (p.messages || [])) {
-            if ((m.content || '').startsWith(SQUAD_ENC_PREFIX)) decryptInto(p.squadId, m.messageId, m.content);
+            if ((m.content || '').startsWith(SQUAD_ENC_PREFIX)) decryptInto(p.squadId, key, m.messageId, m.content);
           }
           break;
         }

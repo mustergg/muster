@@ -83,17 +83,21 @@ export interface SubscribeSquadMsg {
   timestamp: number;
 }
 
+/** A squad's text streams: 'text' (main chat) or 'voice' (the voice channel's
+ *  dedicated text chat). Defaults to 'text' when omitted (backward compat). */
+export type SquadRoom = 'text' | 'voice';
+
 /** Send a message in a squad text channel. */
 export interface SendSquadMessageMsg {
   type: 'SEND_SQUAD_MESSAGE';
-  payload: { squadId: string; content: string; messageId: string };
+  payload: { squadId: string; content: string; messageId: string; room?: SquadRoom };
   timestamp: number;
 }
 
 /** Request message history for a squad text channel. */
 export interface SquadHistoryRequestMsg {
   type: 'SQUAD_HISTORY_REQUEST';
-  payload: { squadId: string; since: number };
+  payload: { squadId: string; since: number; room?: SquadRoom };
   timestamp: number;
 }
 
@@ -146,6 +150,7 @@ export interface SquadMessageMsg {
     senderPublicKey: string;
     senderUsername: string;
     timestamp: number;
+    room?: SquadRoom;
   };
   timestamp: number;
 }
@@ -154,6 +159,7 @@ export interface SquadHistoryResponseMsg {
   type: 'SQUAD_HISTORY_RESPONSE';
   payload: {
     squadId: string;
+    room?: SquadRoom;
     messages: Array<{
       messageId: string;
       content: string;

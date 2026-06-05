@@ -36,6 +36,8 @@ export interface DBSquadMessage {
   senderPublicKey: string;
   senderUsername: string;
   timestamp: number;
+  /** 'text' (main chat) or 'voice' (voice channel's dedicated text chat). */
+  room?: string;
 }
 
 function initSquadTables(db: Database.Database): void {
@@ -71,11 +73,18 @@ function initSquadTables(db: Database.Database): void {
       content         TEXT NOT NULL,
       senderPublicKey TEXT NOT NULL,
       senderUsername  TEXT NOT NULL,
-      timestamp       INTEGER NOT NULL
+      timestamp       INTEGER NOT NULL,
+      room            TEXT NOT NULL DEFAULT 'text'
     );
 
     CREATE INDEX IF NOT EXISTS idx_squad_msgs ON squad_messages (squadId, timestamp);
   `);
+
+  // Migration: add the `room` column to pre-existing squad_messages tables.
+  const cols = db.prepare(`PRAGMA table_info(squad_messages)`).all() as Array<{ name: string }>;
+  if (!cols.some((c) => c.name === 'room')) {
+    db.exec(`ALTER TABLE squad_messages ADD COLUMN room TEXT NOT NULL DEFAULT 'text'`);
+  }
 }
 
 export class SquadDB {
@@ -198,15 +207,15 @@ export class SquadDB {
 
   storeMessage(msg: DBSquadMessage): void {
     this.db.prepare(`
-      INSERT OR IGNORE INTO squad_messages (messageId, squadId, content, senderPublicKey, senderUsername, timestamp)
-      VALUES (@messageId, @squadId, @content, @senderPublicKey, @senderUsername, @timestamp)
-    `).run(msg);
+      INSERT OR IGNORE INTO squad_messages (messageId, squadId, content, senderPublicKey, senderUsername, timestamp, room)
+      VALUES (@messageId, @squadId, @content, @senderPublicKey, @senderUsername, @timestamp, @room)
+    `).run({ ...msg, room: msg.room || 'text' });
   }
 
-  getMessagesSince(squadId: string, since: number, limit = 200): DBSquadMessage[] {
+  getMessagesSince(squadId: string, since: number, room = 'text', limit = 200): DBSquadMessage[] {
     return this.db.prepare(
-      'SELECT * FROM squad_messages WHERE squadId = ? AND timestamp > ? ORDER BY timestamp ASC LIMIT ?'
-    ).all(squadId, since, limit) as DBSquadMessage[];
+      'SELECT * FROM squad_messages WHERE squadId = ? AND room = ? AND timestamp > ? ORDER BY timestamp ASC LIMIT ?'
+    ).all(squadId, room, since, limit) as DBSquadMessage[];
   }
 
   getSquadCount(): number {

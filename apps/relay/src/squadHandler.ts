@@ -298,15 +298,16 @@ function handleSendMessage(
 ): void {
   const { squadId, content, messageId } = msg.payload || {};
   if (!squadId || !content || !messageId) return;
+  const room = msg.payload?.room === 'voice' ? 'voice' : 'text';
 
   if (!squadDB.isMember(squadId, client.publicKey)) return;
 
   const timestamp = Date.now();
-  squadDB.storeMessage({ messageId, squadId, content, senderPublicKey: client.publicKey, senderUsername: client.username, timestamp });
+  squadDB.storeMessage({ messageId, squadId, content, senderPublicKey: client.publicKey, senderUsername: client.username, timestamp, room });
 
   const outgoing = {
     type: 'SQUAD_MESSAGE',
-    payload: { squadId, messageId, content, senderPublicKey: client.publicKey, senderUsername: client.username, timestamp },
+    payload: { squadId, messageId, content, senderPublicKey: client.publicKey, senderUsername: client.username, timestamp, room },
     timestamp,
   };
 
@@ -320,14 +321,16 @@ function handleHistory(
 ): void {
   const { squadId, since } = msg.payload || {};
   if (!squadId) return;
+  const room = msg.payload?.room === 'voice' ? 'voice' : 'text';
 
   if (!squadDB.isMember(squadId, client.publicKey)) return;
 
-  const messages = squadDB.getMessagesSince(squadId, since || 0);
+  const messages = squadDB.getMessagesSince(squadId, since || 0, room);
   sendToClient(client, {
     type: 'SQUAD_HISTORY_RESPONSE',
     payload: {
       squadId,
+      room,
       messages: messages.map((m) => ({
         messageId: m.messageId, content: m.content,
         senderPublicKey: m.senderPublicKey, senderUsername: m.senderUsername,

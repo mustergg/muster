@@ -6,7 +6,7 @@
  */
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { useSquadStore, SQUAD_BLOB_PREFIX } from '../stores/squadStore.js';
+import { useSquadStore, SQUAD_BLOB_PREFIX, squadRoomKey, type SquadRoom } from '../stores/squadStore.js';
 import { useNetworkStore } from '../stores/networkStore.js';
 import { fetchAndDecryptBlob } from '../lib/blobUpload.js';
 import EmojiPicker from './EmojiPicker.js';
@@ -97,9 +97,11 @@ const fs = {
   dl: { width: '28px', height: '28px', borderRadius: '6px', border: '1px solid var(--color-border)', background: 'transparent', color: 'var(--color-text-secondary)', cursor: 'pointer', fontSize: '14px', flexShrink: 0 } as React.CSSProperties,
 } as const;
 
-export default function SquadChatArea({ squadId, mode }: Props): React.JSX.Element {
-  const { messages, members, sendMessage, sendSquadFile, openSquad, inviteMember, kickMember, leaveSquad, deleteSquad, lastMessage, clearMessage, loadMembers } = useSquadStore();
+/** The full squad chat UI for one room ('text' or 'voice'). */
+function SquadBody({ squadId, room }: { squadId: string; room: SquadRoom }): React.JSX.Element {
+  const { messages, members, sendMessage, sendSquadFile, openSquad, loadRoom, inviteMember, kickMember, leaveSquad, deleteSquad, lastMessage, clearMessage, loadMembers } = useSquadStore();
   const { publicKey: myKey } = useNetworkStore();
+  const msgKey = squadRoomKey(squadId, room);
   const [input, setInput] = useState('');
   const [showSettings, setShowSettings] = useState(false);
   const [inviteUsername, setInviteUsername] = useState('');
@@ -110,12 +112,12 @@ export default function SquadChatArea({ squadId, mode }: Props): React.JSX.Eleme
   const uploadFile = useCallback(async (file: File) => {
     if (file.size > MAX_SQUAD_FILE) { alert(`File too large. Max ${formatSize(MAX_SQUAD_FILE)}.`); return; }
     setUploading(true);
-    try { await sendSquadFile(squadId, file); }
+    try { await sendSquadFile(squadId, file, room); }
     catch (err) { console.error('[squad] upload failed:', err); alert('Failed to send file.'); }
     finally { setUploading(false); }
-  }, [squadId, sendSquadFile]);
+  }, [squadId, room, sendSquadFile]);
 
-  const squadMessages = messages[squadId] || [];
+  const squadMessages = messages[msgKey] || [];
   const squadMembers = members[squadId] || [];
 
   // Find squad info
@@ -128,8 +130,12 @@ export default function SquadChatArea({ squadId, mode }: Props): React.JSX.Eleme
   const isOwner = squad?.ownerPublicKey === myKey;
 
   useEffect(() => {
-    if (squadId) openSquad(squadId);
-  }, [squadId]);
+    if (!squadId) return;
+    // Always open the squad (subscribe + members + group key + text history).
+    openSquad(squadId);
+    // Voice room needs its own dedicated text-chat history.
+    if (room === 'voice') loadRoom(squadId, 'voice');
+  }, [squadId, room]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -139,9 +145,9 @@ export default function SquadChatArea({ squadId, mode }: Props): React.JSX.Eleme
   useEffect(() => {
     const ack = useReadReceiptStore.getState().ack;
     for (const m of squadMessages) {
-      if (!m.isOwn) ack('squad', squadId, m.messageId, m.timestamp);
+      if (!m.isOwn) ack('squad', msgKey, m.messageId, m.timestamp);
     }
-  }, [squadId, squadMessages.length]);
+  }, [msgKey, squadMessages.length]);
 
   useEffect(() => {
     if (lastMessage) {
@@ -153,7 +159,7 @@ export default function SquadChatArea({ squadId, mode }: Props): React.JSX.Eleme
 
   const handleSend = () => {
     if (!input.trim()) return;
-    sendMessage(squadId, input.trim());
+    sendMessage(squadId, input.trim(), room);
     setInput('');
   };
 
@@ -164,19 +170,14 @@ export default function SquadChatArea({ squadId, mode }: Props): React.JSX.Eleme
     }
   };
 
-  if (mode === 'voice') {
-    const voiceChannelId = squad?.voiceChannelId || `sq-voice-${squadId}`;
-    return <VoicePanel channelId={voiceChannelId} channelName={`${squad?.name || 'Squad'} Voice`} />;
-  }
-
   return (
     <div style={s.container}>
       {/* Header */}
       <div style={s.header}>
         <span style={s.headerIcon}>#</span>
-        <span style={s.headerTitle}>{squad?.name || 'Squad'}</span>
+        <span style={s.headerTitle}>{squad?.name || 'Squad'}{room === 'voice' ? ' · voice' : ''}</span>
         <span style={s.memberCount}>{squadMembers.length} members</span>
-        <ReceiptToggle context="squad" contextId={squadId} />
+        <ReceiptToggle context="squad" contextId={msgKey} />
         <button onClick={() => { setShowSettings(!showSettings); if (!showSettings) loadMembers(squadId); }} style={s.settingsBtn} title="Squad settings">
           {'\u2699'}
         </button>
@@ -238,8 +239,8 @@ export default function SquadChatArea({ squadId, mode }: Props): React.JSX.Eleme
               {blob ? <SquadAttachment desc={blob} /> : <span style={s.msgContent}>{m.content}</span>}
               <span style={s.msgTime}>{new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
               {m.isOwn
-                ? <SeenIndicator context="squad" contextId={squadId} messageId={m.messageId} />
-                : <MarkSeenButton context="squad" contextId={squadId} messageId={m.messageId} />}
+                ? <SeenIndicator context="squad" contextId={msgKey} messageId={m.messageId} />
+                : <MarkSeenButton context="squad" contextId={msgKey} messageId={m.messageId} />}
             </div>
           );
         })}
@@ -266,6 +267,43 @@ export default function SquadChatArea({ squadId, mode }: Props): React.JSX.Eleme
     </div>
   );
 }
+
+/**
+ * SquadChatArea — picks the room layout.
+ *  - text:  the squad's main text chat.
+ *  - voice: the voice panel stacked on top of the voice channel's dedicated
+ *           text chat (mirrors community voice channels).
+ */
+export default function SquadChatArea({ squadId, mode }: Props): React.JSX.Element {
+  const allSquads = useSquadStore((st) => st.squads);
+
+  if (mode === 'voice') {
+    let squad: any = null;
+    for (const list of Object.values(allSquads)) {
+      const found = list.find((sq) => sq.id === squadId);
+      if (found) { squad = found; break; }
+    }
+    const voiceChannelId = squad?.voiceChannelId || `sq-voice-${squadId}`;
+    return (
+      <div style={vstyle.stack}>
+        <div style={vstyle.top}>
+          <VoicePanel channelId={voiceChannelId} channelName={`${squad?.name || 'Squad'} Voice`} />
+        </div>
+        <div style={vstyle.bottom}>
+          <SquadBody squadId={squadId} room="voice" />
+        </div>
+      </div>
+    );
+  }
+
+  return <SquadBody squadId={squadId} room="text" />;
+}
+
+const vstyle = {
+  stack: { flex: 1, display: 'flex', flexDirection: 'column' as const, minHeight: 0, overflow: 'hidden' } as React.CSSProperties,
+  top: { flex: '0 0 45%', minHeight: 0, borderBottom: '1px solid var(--color-border)', overflow: 'hidden' } as React.CSSProperties,
+  bottom: { flex: '1 1 55%', minHeight: 0, display: 'flex', overflow: 'hidden' } as React.CSSProperties,
+} as const;
 
 const s = {
   container: { display: 'flex', flexDirection: 'column' as const, height: '100%', background: 'var(--color-bg-primary)' } as React.CSSProperties,
