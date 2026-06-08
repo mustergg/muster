@@ -1,6 +1,6 @@
 {
   "name": "muster",
-  "version": "0.0.5",
+  "version": "0.0.6",
   "private": true,
   "description": "Muster — Decentralized P2P community communication platform",
   "engines": {

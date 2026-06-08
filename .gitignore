@@ -46,3 +46,6 @@ pnpm-debug.log*
 coverage/
 .nyc_output/
 apps/desktop/src-tauri/target/
+
+# Graphify knowledge graph output
+graphify-out/
