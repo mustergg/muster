@@ -32,7 +32,7 @@ import { FriendDB } from './friendDB';
 import { handleFriendMessage } from './friendHandler';
 import { NodeDB } from './nodeDB';
 import { PeerManager } from './peerManager';
-import { AdminBot, NODE_BOT_KEY } from './adminBot';
+import { AdminBot, NODE_BOT_KEY, NODE_BOT_USERNAME } from './adminBot';
 import { getCurrentVersion, getBuildNumber, getGitBranch, getGitCommit } from './nodeUpdater';
 import { enforceTier } from './tierEnforcement';
 import { initCrypto, verifySig as verifySignature } from './relayCrypto';
@@ -358,8 +358,23 @@ function handleMessage(client: RelayClient, msg: any): void {
       }
     }
     handleDMMessage(client, msg, dmDB, sendToClient, clients);
-    // R16: After DM conversations load, inject bot welcome for admin
+    // R16: After DM conversations load, pin the node bot for the admin so it's
+    // always in the chat list (not only after a welcome/status message), then
+    // send the welcome once per process.
     if (msg.type === 'DM_CONVERSATIONS_REQUEST' && adminBot.isAdmin(client.publicKey)) {
+      sendToClient(client, {
+        type: 'DM_CONVERSATIONS_RESPONSE',
+        payload: {
+          conversations: [{
+            publicKey: NODE_BOT_KEY,
+            username: NODE_BOT_USERNAME,
+            lastMessage: 'Type /help for node commands',
+            lastTimestamp: Date.now(),
+            unreadCount: 0,
+          }],
+        },
+        timestamp: Date.now(),
+      });
       setTimeout(() => adminBot.sendWelcome(client), 200);
     }
     return;
