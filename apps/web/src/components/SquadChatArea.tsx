@@ -306,7 +306,7 @@ const vstyle = {
 } as const;
 
 const s = {
-  container: { display: 'flex', flexDirection: 'column' as const, height: '100%', background: 'var(--color-bg-primary)' } as React.CSSProperties,
+  container: { flex: 1, minWidth: 0, width: '100%', display: 'flex', flexDirection: 'column' as const, height: '100%', background: 'var(--color-bg-primary)' } as React.CSSProperties,
   header: { display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 16px', borderBottom: '1px solid var(--color-border)', flexShrink: 0 } as React.CSSProperties,
   headerIcon: { fontSize: '16px', color: 'var(--color-text-muted)' } as React.CSSProperties,
   headerTitle: { fontSize: '15px', fontWeight: 600, flex: 1 } as React.CSSProperties,
