@@ -96,6 +96,8 @@ interface SquadState {
   setSquadOrder: (ids: string[]) => void;
   createSquad: (communityId: string, name: string) => void;
   deleteSquad: (squadId: string) => void;
+  /** Detach a community squad → personal (squad owner or community owner/admin). */
+  detachSquad: (squadId: string) => void;
   inviteMember: (squadId: string, username: string) => void;
   kickMember: (squadId: string, publicKey: string) => void;
   leaveSquad: (squadId: string) => void;
@@ -188,6 +190,12 @@ export const useSquadStore = create<SquadState>((set, get) => ({
     const { transport } = useNetworkStore.getState();
     if (!transport?.isConnected) return;
     transport.send({ type: 'DELETE_SQUAD', payload: { squadId }, timestamp: Date.now() });
+  },
+
+  detachSquad: (squadId: string) => {
+    const { transport } = useNetworkStore.getState();
+    if (!transport?.isConnected) return;
+    transport.send({ type: 'DETACH_SQUAD', payload: { squadId }, timestamp: Date.now() });
   },
 
   inviteMember: (squadId: string, username: string) => {
@@ -403,6 +411,22 @@ export const useSquadStore = create<SquadState>((set, get) => ({
           for (const m of (p.messages || [])) {
             if ((m.content || '').startsWith(SQUAD_ENC_PREFIX)) decryptInto(p.squadId, key, m.messageId, m.content);
           }
+          break;
+        }
+        case 'SQUAD_DETACHED': {
+          const p = msg.payload as any;
+          const squad = p.squad as Squad;
+          const oldCid = p.oldCommunityId as string;
+          set((s) => {
+            const squads = { ...s.squads };
+            // Remove from old community list.
+            if (squads[oldCid]) squads[oldCid] = squads[oldCid].filter((sq) => sq.id !== p.squadId);
+            // Add to the new (personal) community list.
+            const newCid = squad.communityId;
+            const list = (squads[newCid] || []).filter((sq) => sq.id !== p.squadId);
+            squads[newCid] = [...list, squad];
+            return { squads };
+          });
           break;
         }
         case 'SQUAD_PRESENCE': {

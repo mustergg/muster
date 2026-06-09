@@ -8,6 +8,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useSquadStore, SQUAD_BLOB_PREFIX, squadRoomKey, type SquadRoom } from '../stores/squadStore.js';
 import { useNetworkStore } from '../stores/networkStore.js';
+import { useCommunityStore } from '../stores/communityStore.js';
 import { fetchAndDecryptBlob } from '../lib/blobUpload.js';
 import EmojiPicker from './EmojiPicker.js';
 import VoiceRecorder from './VoiceRecorder.js';
@@ -99,8 +100,9 @@ const fs = {
 
 /** The full squad chat UI for one room ('text' or 'voice'). */
 function SquadBody({ squadId, room }: { squadId: string; room: SquadRoom }): React.JSX.Element {
-  const { messages, members, sendMessage, sendSquadFile, openSquad, loadRoom, inviteMember, kickMember, leaveSquad, deleteSquad, lastMessage, clearMessage, loadMembers } = useSquadStore();
+  const { messages, members, sendMessage, sendSquadFile, openSquad, loadRoom, inviteMember, kickMember, leaveSquad, deleteSquad, detachSquad, lastMessage, clearMessage, loadMembers } = useSquadStore();
   const { publicKey: myKey } = useNetworkStore();
+  const myCommunityRoles = useCommunityStore((st) => st.myRoles);
   const msgKey = squadRoomKey(squadId, room);
   const [input, setInput] = useState('');
   const [showSettings, setShowSettings] = useState(false);
@@ -128,6 +130,10 @@ function SquadBody({ squadId, room }: { squadId: string; room: SquadRoom }): Rea
     if (found) { squad = found; break; }
   }
   const isOwner = squad?.ownerPublicKey === myKey;
+  const cid: string = squad?.communityId || '';
+  const isCommunitySquad = !!cid && !cid.startsWith('personal:');
+  const myCommRole = isCommunitySquad ? myCommunityRoles[cid] : undefined;
+  const canDetach = isCommunitySquad && (isOwner || myCommRole === 'owner' || myCommRole === 'admin');
 
   useEffect(() => {
     if (!squadId) return;
@@ -217,6 +223,14 @@ function SquadBody({ squadId, room }: { squadId: string; room: SquadRoom }): Rea
           )}
 
           <div style={s.settingsSection}>
+            {canDetach && (
+              <button
+                onClick={() => { if (confirm('Detach this squad from the community? It becomes a personal squad and community staff lose access.')) detachSquad(squadId); }}
+                style={s.dangerBtn}
+              >
+                Detach from community
+              </button>
+            )}
             {isOwner ? (
               <button onClick={() => { if (confirm('Delete this squad? This cannot be undone.')) deleteSquad(squadId); }} style={s.dangerBtn}>Delete squad</button>
             ) : (

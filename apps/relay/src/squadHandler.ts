@@ -78,6 +78,7 @@ export function handleSquadMessage(
     case 'LEAVE_SQUAD':           handleLeave(client, msg, squadDB, sendToClient); break;
     case 'KICK_FROM_SQUAD':       handleKick(client, msg, squadDB, sendToClient, clients); break;
     case 'DELETE_SQUAD':          handleDelete(client, msg, squadDB, sendToClient); break;
+    case 'DETACH_SQUAD':          handleDetach(client, msg, squadDB, communityDB, sendToClient); break;
     case 'GET_SQUAD_MEMBERS':     handleGetMembers(client, msg, squadDB, sendToClient); break;
     case 'SUBSCRIBE_SQUAD':       handleSubscribe(client, msg, squadDB, clients); break;
     case 'SEND_SQUAD_MESSAGE':    handleSendMessage(client, msg, squadDB, sendToClient); break;
@@ -126,11 +127,11 @@ function handleCreate(
       return;
     }
   } else {
-    // Must be a member of the community
-    const members = communityDB.getMembers(communityId);
-    const isMember = members.some((m) => m.publicKey === client.publicKey);
-    if (!isMember) {
-      sendToClient(client, { type: 'SQUAD_RESULT', payload: { action: 'CREATE_SQUAD', success: false, message: 'You must be a community member to create a squad.' }, timestamp: Date.now() });
+    // Community squads can only be created by community staff (moderator+).
+    const role = communityDB.getMemberRole(communityId, client.publicKey);
+    const isStaff = role === 'owner' || role === 'admin' || role === 'moderator';
+    if (!isStaff) {
+      sendToClient(client, { type: 'SQUAD_RESULT', payload: { action: 'CREATE_SQUAD', success: false, message: 'Only community moderators and above can create squads in this community.' }, timestamp: Date.now() });
       return;
     }
   }
@@ -295,6 +296,41 @@ function handleDelete(
 
   squadDB.deleteSquad(squadId);
   squadChannels.delete(squadId);
+}
+
+function handleDetach(
+  client: RelayClient, msg: any, squadDB: SquadDB, communityDB: CommunityDB,
+  sendToClient: (c: RelayClient, m: Record<string, unknown>) => void,
+): void {
+  const { squadId } = msg.payload || {};
+  if (!squadId) return;
+  const squad = squadDB.getSquad(squadId);
+  if (!squad) return;
+
+  if (squad.communityId.startsWith('personal:')) {
+    sendToClient(client, { type: 'SQUAD_RESULT', payload: { action: 'DETACH_SQUAD', success: false, message: 'Squad is already personal.' }, timestamp: Date.now() });
+    return;
+  }
+
+  // Allowed: the squad owner, or the community owner/admins.
+  const isSquadOwner = squad.ownerPublicKey === client.publicKey;
+  const role = communityDB.getMemberRole(squad.communityId, client.publicKey);
+  const isCommunityStaff = role === 'owner' || role === 'admin';
+  if (!isSquadOwner && !isCommunityStaff) {
+    sendToClient(client, { type: 'SQUAD_RESULT', payload: { action: 'DETACH_SQUAD', success: false, message: 'Only the squad owner or the community owner/admins can detach this squad.' }, timestamp: Date.now() });
+    return;
+  }
+
+  const oldCommunityId = squad.communityId;
+  const personalId = `personal:${squad.ownerPublicKey}`;
+  squadDB.setCommunityId(squadId, personalId);
+
+  const updated = { ...squad, communityId: personalId, memberCount: squadDB.getMemberCount(squadId) };
+  const payload = { type: 'SQUAD_DETACHED', payload: { squadId, oldCommunityId, squad: updated }, timestamp: Date.now() };
+  broadcastToSquad(squadId, payload);
+  // Ensure the actor receives it even if not currently subscribed to the squad.
+  sendToClient(client, payload);
+  console.log(`[squad] ${client.username} detached squad ${squadId.slice(0, 12)} from community ${oldCommunityId.slice(0, 8)} → personal`);
 }
 
 function handleGetMembers(

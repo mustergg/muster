@@ -124,6 +124,12 @@ export class SquadDB {
     return this.db.prepare('SELECT * FROM squads WHERE id = ?').get(squadId) as DBSquad | undefined;
   }
 
+  /** Reparent a squad to a new community (used to detach a community squad into
+   *  the owner's personal space: `personal:<ownerPublicKey>`). */
+  setCommunityId(squadId: string, communityId: string): void {
+    this.db.prepare('UPDATE squads SET communityId = ? WHERE id = ?').run(communityId, squadId);
+  }
+
   getSquadsForCommunity(communityId: string): Array<DBSquad & { memberCount: number }> {
     const squads = this.db.prepare('SELECT * FROM squads WHERE communityId = ? ORDER BY createdAt ASC').all(communityId) as DBSquad[];
     return squads.map((s) => ({

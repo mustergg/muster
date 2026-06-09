@@ -70,6 +70,15 @@ export interface DeleteSquadMsg {
   timestamp: number;
 }
 
+/** Detach a community squad — it becomes a personal squad of its owner and
+ *  leaves the community (community staff lose access). Allowed for the squad
+ *  owner or the community owner/admins. */
+export interface DetachSquadMsg {
+  type: 'DETACH_SQUAD';
+  payload: { squadId: string };
+  timestamp: number;
+}
+
 export interface GetSquadMembersMsg {
   type: 'GET_SQUAD_MEMBERS';
   payload: { squadId: string };
@@ -120,6 +129,14 @@ export interface SquadListMsg {
 export interface SquadDeletedMsg {
   type: 'SQUAD_DELETED';
   payload: { squadId: string; communityId: string };
+  timestamp: number;
+}
+
+/** A squad was detached from its community → now personal. `oldCommunityId`
+ *  is where it left; the squad payload carries the new (personal) communityId. */
+export interface SquadDetachedMsg {
+  type: 'SQUAD_DETACHED';
+  payload: { squadId: string; oldCommunityId: string; squad: Squad };
   timestamp: number;
 }
 
