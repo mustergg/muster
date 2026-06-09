@@ -7,9 +7,10 @@
  * column; squads show them here instead.)
  */
 
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { useSquadStore, type SquadRoom } from '../stores/squadStore.js';
 import { useNetworkStore } from '../stores/networkStore.js';
+import { useCommunityStore } from '../stores/communityStore.js';
 import { statusMeta } from '../stores/statusStore.js';
 import UserPanel from './UserPanel.js';
 
@@ -17,19 +18,52 @@ interface Props {
   squadId: string;
   activeMode: SquadRoom;
   onSelectMode: (mode: SquadRoom) => void;
+  /** Called after the user joins the squad's parent community. */
+  onJoinCommunity?: (communityId: string) => void;
 }
 
-export default function SquadSidebar({ squadId, activeMode, onSelectMode }: Props): React.JSX.Element {
+export default function SquadSidebar({ squadId, activeMode, onSelectMode, onJoinCommunity }: Props): React.JSX.Element {
   const { publicKey: myKey } = useNetworkStore();
   const squads = useSquadStore((s) => s.squads);
   const members = useSquadStore((s) => s.members[squadId]) || [];
   const online = useSquadStore((s) => s.squadOnline[squadId]) || [];
+  const communities = useCommunityStore((s) => s.communities);
+  const previewCommunities = useCommunityStore((s) => s.previewCommunities);
+  const fetchCommunity = useCommunityStore((s) => s.fetchCommunity);
+  const joinCommunity = useCommunityStore((s) => s.joinCommunity);
+  const [joining, setJoining] = useState(false);
 
   let squad: any = null;
   for (const list of Object.values(squads)) {
     const found = list.find((sq) => sq.id === squadId);
     if (found) { squad = found; break; }
   }
+
+  // Parent community the user is NOT a member of → offer to join instead of
+  // exposing its channels.
+  const cid: string = squad?.communityId || '';
+  const isRealCommunity = !!cid && !cid.startsWith('personal:');
+  const isMember = isRealCommunity && !!communities[cid];
+  const showJoin = isRealCommunity && !isMember;
+  const communityName = communities[cid]?.name || previewCommunities[cid]?.name || '';
+
+  // Fetch the community name (preview only) for the Join CTA.
+  useEffect(() => {
+    if (showJoin && !communityName) fetchCommunity(cid);
+  }, [showJoin, communityName, cid]);
+
+  const handleJoin = async (): Promise<void> => {
+    if (joining) return;
+    setJoining(true);
+    try {
+      await joinCommunity(cid);
+      onJoinCommunity?.(cid);
+    } catch (err) {
+      console.warn('[squad] join community failed:', err);
+    } finally {
+      setJoining(false);
+    }
+  };
 
   const onlineByKey = new Map(online.map((o) => [o.publicKey, o]));
   const offline = members.filter((m) => !onlineByKey.has(m.publicKey));
@@ -39,6 +73,17 @@ export default function SquadSidebar({ squadId, activeMode, onSelectMode }: Prop
       <div style={s.header}>
         <span style={s.title}>{squad?.name || 'Squad'}</span>
       </div>
+
+      {showJoin && (
+        <div style={s.joinBanner}>
+          <span style={s.joinText}>
+            Part of {communityName ? `“${communityName}”` : 'a community'} — you only have access to this squad.
+          </span>
+          <button style={{ ...s.joinBtn, opacity: joining ? 0.6 : 1 }} onClick={handleJoin} disabled={joining}>
+            {joining ? 'Joining…' : 'Join community'}
+          </button>
+        </div>
+      )}
 
       <div style={s.list}>
         {/* Channels */}
@@ -93,6 +138,9 @@ const s = {
   sidebar:      { width: 'var(--sidebar-channels-w)', background: 'var(--color-bg-secondary)', display: 'flex', flexDirection: 'column' as const, borderRight: '1px solid var(--color-border)', flexShrink: 0 } as React.CSSProperties,
   header:       { padding: '14px 14px 10px', borderBottom: '1px solid var(--color-border)', display: 'flex', alignItems: 'center' } as React.CSSProperties,
   title:        { fontSize: '14px', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const } as React.CSSProperties,
+  joinBanner:   { padding: '10px 14px', borderBottom: '1px solid var(--color-border)', background: 'var(--color-bg-tertiary)', display: 'flex', flexDirection: 'column' as const, gap: '8px', flexShrink: 0 } as React.CSSProperties,
+  joinText:     { fontSize: '11px', color: 'var(--color-text-muted)', lineHeight: 1.4 } as React.CSSProperties,
+  joinBtn:      { padding: '7px 12px', borderRadius: 'var(--radius-md)', border: 'none', background: 'var(--color-accent)', color: '#fff', fontSize: '12px', fontWeight: 600, cursor: 'pointer' } as React.CSSProperties,
   list:         { flex: 1, overflowY: 'auto' as const, padding: '8px 0' } as React.CSSProperties,
   sectionLabel: { fontSize: '10px', fontWeight: 600, color: 'var(--color-text-muted)', letterSpacing: '0.1em', textTransform: 'uppercase' as const, padding: '10px 14px 4px' } as React.CSSProperties,
   channelItem:  { display: 'flex', alignItems: 'center', gap: '6px', padding: '5px 14px', width: '100%', background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--color-text-muted)', textAlign: 'left' as const } as React.CSSProperties,

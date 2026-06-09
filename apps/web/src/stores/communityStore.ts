@@ -120,6 +120,11 @@ export interface CommunityMember {
 
 interface CommunityState {
   communities: Record<string, StoredCommunity>;
+  /** Communities the user is NOT a member of but has visibility into via a
+   *  squad (preview only — name/metadata for the "Join community" CTA). Kept
+   *  out of `communities` so they don't show as joined guilds or expose
+   *  channels. */
+  previewCommunities: Record<string, StoredCommunity>;
   onlineMembers: Record<string, OnlineMember[]>;
   /** Full member list per community (populated from COMMUNITY_DATA / COMMUNITY_MEMBER_UPDATE). */
   members: Record<string, CommunityMember[]>;
@@ -209,18 +214,32 @@ export const useCommunityStore = create<CommunityState>()((set, get) => {
         // Track current user's role
         const myKey = useNetworkStore.getState().publicKey;
         const myMember = members?.find((m) => m.publicKey === myKey);
+        const isOwner = community.ownerPublicKey === myKey;
+        const amMember = !!myMember || isOwner;
 
         set((state) => {
+          // Non-members (e.g. a squad-only user fetching the parent community
+          // for the "Join" CTA) get the data in previewCommunities ONLY — never
+          // in `communities`, so it doesn't appear as a joined guild or expose
+          // channels.
+          if (!amMember) {
+            return {
+              previewCommunities: { ...state.previewCommunities, [community.id]: community },
+            };
+          }
           const updated = { ...state.communities, [community.id]: community };
           saveToLocalStorage(updated);
+          const previews = { ...state.previewCommunities };
+          delete previews[community.id];
           return {
             communities: updated,
+            previewCommunities: previews,
             members: members
               ? { ...state.members, [community.id]: members }
               : state.members,
             myRoles: myMember
               ? { ...state.myRoles, [community.id]: myMember.role }
-              : state.myRoles,
+              : { ...state.myRoles, [community.id]: 'owner' },
           };
         });
 
@@ -434,6 +453,7 @@ export const useCommunityStore = create<CommunityState>()((set, get) => {
 
   return {
     communities: {},
+    previewCommunities: {},
     onlineMembers: {},
     members: {},
     myRoles: {},

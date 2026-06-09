@@ -37,7 +37,7 @@ const LS_USER_KEYS = [
 export function resetUserStores(): void {
   // In-memory store data (keep methods — merge, don't replace).
   useSquadStore.setState({ squads: {}, members: {}, squadOnline: {}, messages: {}, activeSquadId: null, lastMessage: '', loading: false, squadOrder: [] });
-  useCommunityStore.setState({ communities: {}, onlineMembers: {}, members: {}, myRoles: {}, communityOrder: [] });
+  useCommunityStore.setState({ communities: {}, previewCommunities: {}, onlineMembers: {}, members: {}, myRoles: {}, communityOrder: [] });
   useDMStore.setState({ messages: {}, conversations: [], activeConversation: null });
   useFriendStore.setState({ friends: [], incomingRequests: [], outgoingRequests: [], blockedUsers: [], lastMessage: '', loading: false });
   usePostStore.setState({ posts: {}, comments: {}, expandedPostId: null, lastMessage: '', loading: false });

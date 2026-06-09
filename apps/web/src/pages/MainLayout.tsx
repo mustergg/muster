@@ -116,10 +116,12 @@ export default function MainLayout(): React.JSX.Element {
   const handleSelectSquad = (squadId: string) => {
     const squad = useSquadStore.getState().allMySquads().find((s) => s.id === squadId);
     const cid = squad?.communityId || '';
+    // Member of the parent community? Only members get the in-community view
+    // with its channels. Squad-only users (and personal squads) get the
+    // standalone squad view — they see just the squad until they choose to join.
+    const isCommunityMember = !!cid && !cid.startsWith('personal:') && !!useCommunityStore.getState().communities[cid];
     setActiveDMPartner(null);
-    // Community squad → open inside its community (sidebar + squad chat).
-    // Personal/friends squad → standalone squad view.
-    if (cid && !cid.startsWith('personal:')) {
+    if (cid && !cid.startsWith('personal:') && isCommunityMember) {
       setViewMode('community');
       setActiveCommunityId(cid);
       setActiveSquad(null);
@@ -171,7 +173,7 @@ export default function MainLayout(): React.JSX.Element {
           <SettingsPanel />
         ) : viewMode === 'squad' && activeSquad ? (
           <>
-            <SquadSidebar squadId={activeSquad} activeMode={squadMode} onSelectMode={setSquadMode} />
+            <SquadSidebar squadId={activeSquad} activeMode={squadMode} onSelectMode={setSquadMode} onJoinCommunity={handleSelectCommunity} />
             <div style={styles.main}>
               <SquadChatArea squadId={activeSquad} mode={squadMode} />
             </div>
