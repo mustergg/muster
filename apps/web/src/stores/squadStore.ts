@@ -37,6 +37,8 @@ export interface SquadMember {
   username: string;
   role: string;
   joinedAt: number;
+  /** 1 = community-staff "ghost" member (badge in list, hidden in presence). */
+  ghost?: number;
 }
 
 export interface SquadMessage {
@@ -363,6 +365,11 @@ export const useSquadStore = create<SquadState>((set, get) => ({
         case 'SQUAD_MEMBER_LIST': {
           const p = msg.payload as any;
           set((s) => ({ members: { ...s.members, [p.squadId]: p.members || [] } }));
+          // If I own this squad and encryption isn't set up yet, initialise the
+          // group key for the full member set (incl. community-staff ghosts).
+          // Later membership changes rotate via SQUAD_MEMBER_JOINED/LEFT, so we
+          // don't re-key on every list load.
+          if (!useGroupCryptoStore.getState().isEncrypted(p.squadId)) ownerSyncKey(p.squadId);
           break;
         }
         case 'SQUAD_MEMBER_JOINED': {

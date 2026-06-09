@@ -15,6 +15,10 @@ import { WebSocket } from 'ws';
 /** Map of squadId → subscribed WebSockets (for real-time messaging). */
 const squadChannels = new Map<string, Set<WebSocket>>();
 
+/** Last-seen SquadDB handle, so presence broadcasts (which don't take squadDB
+ *  as a param) can check ghost membership. Set on every squad message. */
+let lastSquadDB: SquadDB | null = null;
+
 function findClientByKey(clients: Map<WebSocket, RelayClient>, publicKey: string): RelayClient | undefined {
   for (const c of clients.values()) {
     if (c.authenticated && c.publicKey === publicKey) return c;
@@ -48,6 +52,9 @@ export function broadcastSquadPresence(squadId: string, clients: Map<WebSocket, 
     if (!c?.authenticated) continue;
     const status = c.status || 'online';
     if (status === 'invisible') continue; // masked
+    // Ghost (community-staff) members are hidden from presence — they show in
+    // the member list with a badge but never as "online".
+    if (lastSquadDB?.getMember(squadId, c.publicKey)?.ghost) continue;
     online.push({ publicKey: c.publicKey, username: c.username, status, mood: c.mood });
   }
   const payload = JSON.stringify({ type: 'SQUAD_PRESENCE', payload: { squadId, online }, timestamp: Date.now() });
@@ -71,9 +78,10 @@ export function handleSquadMessage(
   sendToClient: (client: RelayClient, msg: Record<string, unknown>) => void,
   clients: Map<WebSocket, RelayClient>,
 ): void {
+  lastSquadDB = squadDB;
   switch (msg.type) {
     case 'CREATE_SQUAD':          handleCreate(client, msg, squadDB, communityDB, userDB, sendToClient, clients); break;
-    case 'GET_SQUADS':            handleGetSquads(client, msg, squadDB, sendToClient); break;
+    case 'GET_SQUADS':            handleGetSquads(client, msg, squadDB, communityDB, sendToClient); break;
     case 'INVITE_TO_SQUAD':       handleInvite(client, msg, squadDB, userDB, sendToClient, clients); break;
     case 'LEAVE_SQUAD':           handleLeave(client, msg, squadDB, sendToClient); break;
     case 'KICK_FROM_SQUAD':       handleKick(client, msg, squadDB, sendToClient, clients); break;
@@ -142,20 +150,55 @@ function handleCreate(
   }
 
   const squad = squadDB.createSquad(communityId, name.trim(), client.publicKey, client.username);
-  const payload = { ...squad, memberCount: 1 };
 
+  // Community staff (mods/admins/owner) become ghost members so they can
+  // moderate + hold the group key. Skipped for personal squads.
+  if (!isPersonal) {
+    addCommunityStaffAsGhosts(squad.id, communityId, squadDB, communityDB, client.publicKey);
+  }
+
+  const payload = { ...squad, memberCount: squadDB.getMemberCount(squad.id) };
   sendToClient(client, { type: 'SQUAD_CREATED', payload, timestamp: Date.now() });
 }
 
+/** Add a community's staff (owner/admin/moderator) as ghost members of a squad
+ *  and announce each newly-added ghost so the squad owner can hand them the
+ *  group key. `excludeKey` skips the squad owner (already a real member). */
+function addCommunityStaffAsGhosts(
+  squadId: string, communityId: string, squadDB: SquadDB, communityDB: CommunityDB, excludeKey: string,
+): void {
+  const staff = communityDB.getMembers(communityId)
+    .filter((m) => (m.role === 'owner' || m.role === 'admin' || m.role === 'moderator') && m.publicKey !== excludeKey)
+    .map((m) => ({ publicKey: m.publicKey, username: m.username, role: m.role }));
+  const added = squadDB.ensureGhostStaff(squadId, staff);
+  for (const g of added) {
+    broadcastToSquad(squadId, { type: 'SQUAD_MEMBER_JOINED', payload: { squadId, member: { publicKey: g.publicKey, username: g.username, role: g.role, ghost: 1, joinedAt: g.joinedAt } }, timestamp: Date.now() });
+  }
+}
+
 function handleGetSquads(
-  client: RelayClient, msg: any, squadDB: SquadDB,
+  client: RelayClient, msg: any, squadDB: SquadDB, communityDB: CommunityDB,
   sendToClient: (c: RelayClient, m: Record<string, unknown>) => void,
 ): void {
   const { communityId } = msg.payload || {};
   if (!communityId) return;
 
   const squads = squadDB.getSquadsForCommunity(communityId);
-  // Only return squads where user is a member
+
+  // Backfill: if the requester is community staff, ensure they're a ghost
+  // member of every squad here (covers squads created before they were staff,
+  // or before this feature). This is what gives staff moderation access.
+  const role = communityDB.getMemberRole(communityId, client.publicKey);
+  if (role === 'owner' || role === 'admin' || role === 'moderator') {
+    for (const s of squads) {
+      const added = squadDB.ensureGhostStaff(s.id, [{ publicKey: client.publicKey, username: client.username, role }]);
+      for (const g of added) {
+        broadcastToSquad(s.id, { type: 'SQUAD_MEMBER_JOINED', payload: { squadId: s.id, member: { publicKey: g.publicKey, username: g.username, role: g.role, ghost: 1, joinedAt: g.joinedAt } }, timestamp: Date.now() });
+      }
+    }
+  }
+
+  // Only return squads where user is a member (now includes ghost staff).
   const mySquads = squads.filter((s) => squadDB.isMember(s.id, client.publicKey));
   sendToClient(client, { type: 'SQUAD_LIST', payload: { communityId, squads: mySquads }, timestamp: Date.now() });
 }
@@ -324,6 +367,9 @@ function handleDetach(
   const oldCommunityId = squad.communityId;
   const personalId = `personal:${squad.ownerPublicKey}`;
   squadDB.setCommunityId(squadId, personalId);
+  // Community staff lose access — drop their ghost memberships. (The squad
+  // owner should rotate the group key after detach to fully revoke.)
+  squadDB.removeGhosts(squadId);
 
   const updated = { ...squad, communityId: personalId, memberCount: squadDB.getMemberCount(squadId) };
   const payload = { type: 'SQUAD_DETACHED', payload: { squadId, oldCommunityId, squad: updated }, timestamp: Date.now() };

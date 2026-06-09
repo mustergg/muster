@@ -22,6 +22,18 @@ interface Props {
   onJoinCommunity?: (communityId: string) => void;
 }
 
+const ROLE_BADGE: Record<string, { label: string; color: string }> = {
+  owner: { label: 'owner', color: '#FFD700' },
+  admin: { label: 'admin', color: '#3B82F6' },
+  moderator: { label: 'mod', color: '#8B5CF6' },
+};
+
+function roleBadge(role?: string): React.JSX.Element | null {
+  const b = role ? ROLE_BADGE[role] : undefined;
+  if (!b) return null;
+  return <span style={{ fontSize: '9px', fontWeight: 700, color: b.color, border: `1px solid ${b.color}`, borderRadius: '3px', padding: '0 4px', flexShrink: 0, textTransform: 'uppercase' }}>{b.label}</span>;
+}
+
 export default function SquadSidebar({ squadId, activeMode, onSelectMode, onJoinCommunity }: Props): React.JSX.Element {
   const { publicKey: myKey } = useNetworkStore();
   const squads = useSquadStore((s) => s.squads);
@@ -67,6 +79,7 @@ export default function SquadSidebar({ squadId, activeMode, onSelectMode, onJoin
 
   const onlineByKey = new Map(online.map((o) => [o.publicKey, o]));
   const offline = members.filter((m) => !onlineByKey.has(m.publicKey));
+  const roleByKey = new Map(members.map((m) => [m.publicKey, m]));
 
   return (
     <div style={s.sidebar}>
@@ -114,6 +127,7 @@ export default function SquadSidebar({ squadId, activeMode, onSelectMode, onJoin
                 <span style={s.memberName}>{m.username}{m.publicKey === myKey ? ' (you)' : ''}</span>
                 {m.mood && <span style={s.memberMood}>{m.mood}</span>}
               </div>
+              {roleBadge(roleByKey.get(m.publicKey)?.role)}
             </div>
           );
         })}
@@ -123,8 +137,9 @@ export default function SquadSidebar({ squadId, activeMode, onSelectMode, onJoin
           <div key={m.publicKey} style={{ ...s.memberItem, opacity: 0.5 }}>
             <span style={{ ...s.dot, background: '#747F8D' }} />
             <div style={s.memberMeta}>
-              <span style={s.memberName}>{m.username}</span>
+              <span style={s.memberName}>{m.username}{m.ghost ? ' · staff' : ''}</span>
             </div>
+            {roleBadge(m.role)}
           </div>
         ))}
       </div>

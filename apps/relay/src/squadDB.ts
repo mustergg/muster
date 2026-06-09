@@ -27,6 +27,9 @@ export interface DBSquadMember {
   username: string;
   role: string;
   joinedAt: number;
+  /** 1 = community-staff "ghost" member (auto-added for moderation; hidden in
+   *  presence, shown with a role badge). 0 = a real squad member. */
+  ghost?: number;
 }
 
 export interface DBSquadMessage {
@@ -61,6 +64,7 @@ function initSquadTables(db: Database.Database): void {
       username        TEXT NOT NULL,
       role            TEXT NOT NULL DEFAULT 'member',
       joinedAt        INTEGER NOT NULL,
+      ghost           INTEGER NOT NULL DEFAULT 0,
       PRIMARY KEY (squadId, publicKey)
     );
 
@@ -79,6 +83,12 @@ function initSquadTables(db: Database.Database): void {
 
     CREATE INDEX IF NOT EXISTS idx_squad_msgs ON squad_messages (squadId, timestamp);
   `);
+
+  // Migration: add the `ghost` column to pre-existing squad_members tables.
+  const mcols = db.prepare(`PRAGMA table_info(squad_members)`).all() as Array<{ name: string }>;
+  if (!mcols.some((c) => c.name === 'ghost')) {
+    db.exec(`ALTER TABLE squad_members ADD COLUMN ghost INTEGER NOT NULL DEFAULT 0`);
+  }
 
   // Migration: add the `room` column to pre-existing squad_messages tables.
   const cols = db.prepare(`PRAGMA table_info(squad_messages)`).all() as Array<{ name: string }>;
@@ -159,16 +169,35 @@ export class SquadDB {
   // Members
   // =================================================================
 
-  addMember(squadId: string, publicKey: string, username: string, role = 'member'): boolean {
+  addMember(squadId: string, publicKey: string, username: string, role = 'member', ghost = false): boolean {
     try {
       this.db.prepare(`
-        INSERT INTO squad_members (squadId, publicKey, username, role, joinedAt)
-        VALUES (?, ?, ?, ?, ?)
-      `).run(squadId, publicKey, username, role, Date.now());
+        INSERT INTO squad_members (squadId, publicKey, username, role, joinedAt, ghost)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `).run(squadId, publicKey, username, role, Date.now(), ghost ? 1 : 0);
       return true;
     } catch {
       return false; // already a member
     }
+  }
+
+  /** Ensure each community-staff entry is a ghost member of the squad. Real
+   *  members (ghost=0) are left untouched. Returns the members that were newly
+   *  added as ghosts (so the caller can announce them for key distribution). */
+  ensureGhostStaff(squadId: string, staff: Array<{ publicKey: string; username: string; role: string }>): DBSquadMember[] {
+    const added: DBSquadMember[] = [];
+    for (const s of staff) {
+      const existing = this.getMember(squadId, s.publicKey);
+      if (existing) continue; // already a member (real or ghost)
+      const ok = this.addMember(squadId, s.publicKey, s.username, s.role, true);
+      if (ok) added.push({ squadId, publicKey: s.publicKey, username: s.username, role: s.role, joinedAt: Date.now(), ghost: 1 });
+    }
+    return added;
+  }
+
+  /** Remove all ghost (community-staff) members from a squad — used on detach. */
+  removeGhosts(squadId: string): number {
+    return this.db.prepare('DELETE FROM squad_members WHERE squadId = ? AND ghost = 1').run(squadId).changes;
   }
 
   removeMember(squadId: string, publicKey: string): boolean {

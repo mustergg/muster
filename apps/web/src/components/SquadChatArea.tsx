@@ -198,9 +198,11 @@ function SquadBody({ squadId, room }: { squadId: string; room: SquadRoom }): Rea
             <div style={s.settingsLabel}>Members</div>
             {squadMembers.map((m) => (
               <div key={m.publicKey} style={s.memberRow}>
-                <span style={s.memberName}>{m.username}</span>
-                {m.role === 'owner' && <span style={s.ownerBadge}>owner</span>}
-                {isOwner && m.publicKey !== myKey && (
+                <span style={s.memberName}>{m.username}{m.ghost ? ' · staff' : ''}</span>
+                {(m.role === 'owner' || m.role === 'admin' || m.role === 'moderator') && (
+                  <span style={s.ownerBadge}>{m.role === 'moderator' ? 'mod' : m.role}</span>
+                )}
+                {isOwner && m.publicKey !== myKey && !m.ghost && (
                   <button onClick={() => kickMember(squadId, m.publicKey)} style={s.kickBtn} title="Kick">&#x2715;</button>
                 )}
               </div>
