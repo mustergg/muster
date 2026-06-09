@@ -17,6 +17,7 @@
 import { create } from 'zustand';
 import { useNetworkStore } from './networkStore';
 import type { TransportMessage } from '@muster/transport';
+import { edPrivateToX25519, edPublicToX25519, computeSharedSecret, deriveMessageKey } from '@muster/crypto/e2e';
 
 // =================================================================
 // Types
@@ -95,15 +96,19 @@ function fromHex(hex: string): Uint8Array {
   return bytes;
 }
 
-/** Derive a shared encryption key from two X25519 keys using Web Crypto ECDH + HKDF. */
+/** Derive a shared AES-GCM key between two Ed25519 identities via real X25519
+ *  ECDH + HKDF-SHA256 (same primitives as DM E2E). ECDH is symmetric, so the
+ *  distributor (myPriv, theirPub) and the recipient (theirPriv, myPub) derive
+ *  the identical secret — which the previous SHA-256(concat) placeholder did
+ *  NOT, so group keys never reached members. `privateKeyHex` is the caller's
+ *  Ed25519 seed; `publicKeyHex` is the peer's Ed25519 public key. */
 async function deriveSharedKey(privateKeyHex: string, publicKeyHex: string): Promise<CryptoKey> {
-  // We use a simpler approach: SHA-256 hash of concatenated keys as shared secret
-  // In production, use proper X25519 ECDH from @muster/crypto/e2e
-  // For now, use PBKDF2 with the combined keys as a deterministic derivation
-  const encoder = new TextEncoder();
-  const combined = encoder.encode(privateKeyHex + publicKeyHex);
-  const hashBuffer = await crypto.subtle.digest('SHA-256', combined);
-  return crypto.subtle.importKey('raw', hashBuffer, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
+  const xPriv = edPrivateToX25519(fromHex(privateKeyHex));
+  const xPub = edPublicToX25519(fromHex(publicKeyHex));
+  const secret = computeSharedSecret(xPriv, xPub);
+  const keyBytes = deriveMessageKey(secret); // HKDF-SHA256 → 32 bytes
+  const buf = keyBytes.buffer.slice(keyBytes.byteOffset, keyBytes.byteOffset + keyBytes.byteLength) as ArrayBuffer;
+  return crypto.subtle.importKey('raw', buf, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
 }
 
 /** Encrypt data with AES-256-GCM. */
