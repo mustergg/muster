@@ -11,6 +11,7 @@ import { randomUUID } from 'crypto';
 import { fromHex, toHex } from '@muster/crypto';
 import { CommunityDB } from './communityDB';
 import { UserDB } from './userDB';
+import type { SquadDB } from './squadDB';
 import type { ManifestDB } from './manifestDB';
 import type { RelayClient } from './types';
 
@@ -28,6 +29,7 @@ export function handleCommunityMessage(
   broadcastPresence: (channelId: string) => void,
   userDB?: UserDB,
   manifestDB?: ManifestDB | null,
+  squadDB?: SquadDB,
 ): void {
   switch (msg.type) {
     case 'CREATE_COMMUNITY':
@@ -43,7 +45,7 @@ export function handleCommunityMessage(
       handleList(client, communityDB, sendToClient);
       break;
     case 'GET_COMMUNITY':
-      handleGet(client, msg, communityDB, sendToClient);
+      handleGet(client, msg, communityDB, sendToClient, squadDB);
       break;
   }
 }
@@ -240,12 +242,39 @@ function handleList(
 function handleGet(
   client: RelayClient, msg: any, communityDB: CommunityDB,
   sendToClient: (client: RelayClient, msg: Record<string, unknown>) => void,
+  squadDB?: SquadDB,
 ): void {
   const { communityId } = msg.payload || {};
   if (!communityId) return;
   const community = communityDB.getCommunity(communityId);
   if (!community) { sendToClient(client, { type: 'ERROR', payload: { code: 'NOT_FOUND', message: 'Community not found' }, timestamp: Date.now() }); return; }
-  const dbChannels = communityDB.getChannels(communityId);
-  const members = communityDB.getMembers(communityId);
-  sendToClient(client, { type: 'COMMUNITY_DATA', payload: { community: { ...community, channels: dbChannels, memberCount: members.length }, members }, timestamp: Date.now() });
+
+  const isMember = communityDB.isMember(communityId, client.publicKey) || community.ownerPublicKey === client.publicKey;
+
+  if (isMember) {
+    const dbChannels = communityDB.getChannels(communityId);
+    const members = communityDB.getMembers(communityId);
+    sendToClient(client, { type: 'COMMUNITY_DATA', payload: { community: { ...community, channels: dbChannels, memberCount: members.length }, members }, timestamp: Date.now() });
+    return;
+  }
+
+  // Non-member: only reveal a name-only preview, and only to users who belong
+  // to a squad inside this community (so the client can render the "Join
+  // community" CTA). Everyone else gets nothing — no channels, no member list,
+  // no existence confirmation.
+  const inSquad = !!squadDB && squadDB.getUserSquads(communityId, client.publicKey).length > 0;
+  if (!inSquad) {
+    sendToClient(client, { type: 'ERROR', payload: { code: 'NOT_AUTHORIZED', message: 'Not a member of this community' }, timestamp: Date.now() });
+    return;
+  }
+
+  const memberCount = communityDB.getMembers(communityId).length;
+  sendToClient(client, {
+    type: 'COMMUNITY_DATA',
+    payload: {
+      community: { id: community.id, name: community.name, description: community.description, ownerPublicKey: community.ownerPublicKey, channels: [], memberCount },
+      members: [],
+    },
+    timestamp: Date.now(),
+  });
 }
