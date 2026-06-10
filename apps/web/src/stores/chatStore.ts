@@ -32,6 +32,40 @@ const BLOB_PREFIX = '__BLOB__';
 // VITE_TWO_LAYER flag was retired with Phase 10.
 const TWO_LAYER_ENABLED = true;
 
+// E2E group encryption for community channel messages. When a channel group key
+// exists, the message `content` carried by PUBLISH is wrapped — the relay only
+// ever stores ciphertext. Recipients without the key see a lock placeholder
+// until it arrives. No key yet (rollout) → plaintext fallback.
+const CHAN_ENC_PREFIX = '__CHENC__';
+function packChanEnc(enc: { ciphertext: string; nonce: string; epoch: number }): string {
+  return CHAN_ENC_PREFIX + JSON.stringify({ c: enc.ciphertext, n: enc.nonce, e: enc.epoch });
+}
+function isChanEnc(s: string | undefined): boolean {
+  return typeof s === 'string' && s.startsWith(CHAN_ENC_PREFIX);
+}
+/** Re-derive a ChatMessage's display fields from decrypted plaintext (which may
+ *  itself be a file/blob marker). */
+function applyDecrypted(m: ChatMessage, plain: string): ChatMessage {
+  const blob = decodeBlobContent(plain);
+  if (blob) return { ...m, content: '', fileName: blob.fileName, mimeType: blob.mimeType, fileSize: blob.fileSize, blobRoot: blob.blobRoot, envelopeId: blob.envelopeId, blobStatus: 'pending' };
+  const file = decodeFileContent(plain);
+  if (file) return { ...m, content: file.text || '', fileId: file.fileId, fileName: file.fileName, mimeType: file.mimeType, fileSize: file.fileSize };
+  return { ...m, content: plain };
+}
+/** Async-decrypt a ciphertext channel message and patch it into state. */
+function decryptChannelInto(channel: string, messageId: string, raw: string): void {
+  if (!isChanEnc(raw)) return;
+  try {
+    const { c, n, e } = JSON.parse(raw.slice(CHAN_ENC_PREFIX.length));
+    void useGroupCryptoStore.getState().decrypt(channel, c, n, e).then((plain) => {
+      if (plain == null) return;
+      useChatStore.setState((s) => ({
+        messages: { ...s.messages, [channel]: (s.messages[channel] || []).map((m) => m.messageId === messageId ? applyDecrypted(m, plain) : m) },
+      }));
+    });
+  } catch { /* leave placeholder */ }
+}
+
 async function signPayload(payload: string, privateKey: Uint8Array): Promise<string> {
   const sigBytes = await ed25519Sign(encoder.encode(payload), privateKey);
   return toHex(sigBytes);
@@ -155,6 +189,14 @@ const browserDB = new BrowserDB();
 
 /** Convert a DB message to a ChatMessage, detecting file messages. */
 function dbMsgToChatMsg(msg: DBMessage, myKey: string): ChatMessage {
+  // Encrypted content → show a lock placeholder; caller triggers async decrypt.
+  if (isChanEnc(msg.content)) {
+    return {
+      messageId: msg.messageId, channel: msg.channel, content: '\u{1F512}…',
+      senderPublicKey: msg.senderPublicKey, senderUsername: msg.senderUsername,
+      timestamp: msg.timestamp, isOwn: msg.senderPublicKey === myKey,
+    };
+  }
   const blobData = decodeBlobContent(msg.content);
   if (blobData) {
     return {
@@ -262,9 +304,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
       // R25 — Phase 4. Index channelId hash → channel string so incoming
       // blob envelopes can be routed back to this channel.
       channelIdIndex.set(toHex(channelIdBytes(channelId)), channelId);
+      // E2E: fetch this channel's group key so encrypted messages decrypt.
+      useGroupCryptoStore.getState().requestKeys(channelId);
       browserDB.getMessages(channelId).then((dbMsgs) => {
         if (dbMsgs.length > 0) {
           set((state) => ({ messages: { ...state.messages, [channelId]: dbMsgs.map((m) => dbMsgToChatMsg(m, myKey)) } }));
+          for (const m of dbMsgs) { if (isChanEnc(m.content)) decryptChannelInto(channelId, m.messageId, m.content); }
         }
       });
       browserDB.getLatestTimestamp(channelId).then((since) => {
@@ -285,31 +330,33 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     const messageId = uuid();
     const timestamp = Date.now();
-    const payload = { channel, content, messageId, timestamp };
-    const payloadStr = JSON.stringify(payload);
+    const privateKey = getPrivateKey();
 
-    const dbMsg: DBMessage = { messageId, channel, content, senderPublicKey: network.publicKey, senderUsername: network.username, timestamp, signature: '' };
-    browserDB.addMessage(dbMsg);
-    browserDB.setLastSyncTimestamp(channel, timestamp);
-
+    // Optimistic local display in plaintext.
     set((state) => ({
       messages: { ...state.messages, [channel]: [...(state.messages[channel] || []), { messageId, channel, content, senderPublicKey: network.publicKey, senderUsername: network.username, timestamp, isOwn: true }] },
     }));
 
-    const privateKey = getPrivateKey();
-    if (privateKey) {
-      signPayload(payloadStr, privateKey).then((signature) => {
-        network.transport!.send({ type: 'PUBLISH', payload, timestamp, signature, senderPublicKey: network.publicKey });
-      }).catch(() => {
-        network.transport!.send({ type: 'PUBLISH', payload, timestamp, signature: '', senderPublicKey: network.publicKey });
-      });
-    } else {
-      network.transport!.send({ type: 'PUBLISH', payload, timestamp, signature: '', senderPublicKey: network.publicKey });
-    }
+    // E2E: wrap the content with the channel group key if one exists. The wire
+    // + on-disk copy hold ciphertext; the relay never sees plaintext. Without a
+    // key yet (rollout) fall back to plaintext.
+    void useGroupCryptoStore.getState().encrypt(channel, content).then((enc) => {
+      const wire = enc ? packChanEnc(enc) : content;
+      const payload = { channel, content: wire, messageId, timestamp };
 
-    // R25 — Phase 1: dual-write through the envelope path so the relay can
-    // exercise verification + storage. Legacy PUBLISH stays the source of
-    // truth until the migration cutover (Phase 10).
+      // Persist the (possibly encrypted) wire form so reloads stay consistent.
+      browserDB.addMessage({ messageId, channel, content: wire, senderPublicKey: network.publicKey, senderUsername: network.username, timestamp, signature: '' });
+      browserDB.setLastSyncTimestamp(channel, timestamp);
+
+      const publish = (signature: string) => network.transport!.send({ type: 'PUBLISH', payload, timestamp, signature, senderPublicKey: network.publicKey });
+      if (privateKey) {
+        signPayload(JSON.stringify(payload), privateKey).then(publish).catch(() => publish(''));
+      } else {
+        publish('');
+      }
+    });
+
+    // R25 — Phase 1: dual-write through the envelope path (group-encrypted body).
     if (TWO_LAYER_ENABLED && privateKey) {
       void sendAsEnvelope(channel, content, network.publicKey, privateKey).catch((err) => {
         console.warn('[chat] envelope dual-write failed:', err);
@@ -453,7 +500,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
       switch (msg.type) {
         case 'MESSAGE': {
           const p = msg.payload as any;
-          const chatMsg: ChatMessage = { messageId: p.messageId, channel: p.channel, content: p.content, senderPublicKey: p.senderPublicKey, senderUsername: p.senderUsername, timestamp: p.timestamp, isOwn: p.senderPublicKey === myKey };
+          const enc = isChanEnc(p.content);
+          const chatMsg: ChatMessage = { messageId: p.messageId, channel: p.channel, content: enc ? '\u{1F512}…' : p.content, senderPublicKey: p.senderPublicKey, senderUsername: p.senderUsername, timestamp: p.timestamp, isOwn: p.senderPublicKey === myKey };
+          // Store the wire form (ciphertext if encrypted) so reloads decrypt too.
           browserDB.addMessage({ messageId: p.messageId, channel: p.channel, content: p.content, senderPublicKey: p.senderPublicKey, senderUsername: p.senderUsername, timestamp: p.timestamp, signature: (msg as any).signature || '' });
           browserDB.setLastSyncTimestamp(p.channel, p.timestamp);
           set((state) => {
@@ -461,6 +510,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             if (existing.some((m) => m.messageId === chatMsg.messageId)) return state;
             return { messages: { ...state.messages, [p.channel]: [...existing, chatMsg].sort((a, b) => a.timestamp - b.timestamp) } };
           });
+          if (enc) decryptChannelInto(p.channel, p.messageId, p.content);
           break;
         }
 
@@ -509,6 +559,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             if (newMsgs.length === 0) return state;
             return { messages: { ...state.messages, [p.channel]: [...existing, ...newMsgs].sort((a, b) => a.timestamp - b.timestamp) } };
           });
+          for (const m of synced) { if (isChanEnc(m.content)) decryptChannelInto(p.channel, m.messageId, m.content); }
           break;
         }
 

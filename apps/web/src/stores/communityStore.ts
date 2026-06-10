@@ -11,6 +11,7 @@ import { create } from 'zustand';
 import { useNetworkStore } from './networkStore';
 import { useAuthStore } from './authStore';
 import { useManifestStore } from './manifestStore';
+import { useGroupCryptoStore } from './groupCryptoStore';
 import { buildGenesisManifest, publishManifest } from '../lib/manifest';
 import { toHex, sha256 } from '@muster/crypto';
 import type { ManifestChannel } from '@muster/protocol';
@@ -163,6 +164,23 @@ interface CommunityState {
 
 export const useCommunityStore = create<CommunityState>()((set, get) => {
   const pendingCreates = new Map<string, { resolve: (c: StoredCommunity) => void; reject: (e: Error) => void }>();
+
+  // E2E: the community OWNER is the single distributor of each text channel's
+  // group key. On data load it sets up keys that don't exist yet; on a
+  // membership change it rotates them (admitting/revoking the new member set).
+  // Only the owner runs this to avoid competing distributors.
+  function syncCommunityChannelKeys(community: any, members: CommunityMember[] | undefined, rotate: boolean): void {
+    const myKey = useNetworkStore.getState().publicKey;
+    if (!community || community.ownerPublicKey !== myKey) return;
+    const memberKeys = (members || []).map((m) => m.publicKey);
+    const keys = memberKeys.length > 0 ? memberKeys : [myKey];
+    const gc = useGroupCryptoStore.getState();
+    for (const ch of (community.channels || [])) {
+      if (ch.type === 'voice' || ch.type === 'voice-temp') continue; // text channels only
+      if (!gc.isEncrypted(ch.id)) gc.setupEncryption(ch.id, community.id, keys, 'from_join').catch(() => {});
+      else if (rotate) gc.rotateKey(ch.id, keys, 'community-membership').catch(() => {});
+    }
+  }
   const pendingJoins = new Map<string, { resolve: (c: StoredCommunity) => void; reject: (e: Error) => void }>();
   let messageHandlerRegistered = false;
 
@@ -242,6 +260,9 @@ export const useCommunityStore = create<CommunityState>()((set, get) => {
               : { ...state.myRoles, [community.id]: 'owner' },
           };
         });
+
+        // E2E: owner ensures each text channel has a group key for the members.
+        if (amMember) syncCommunityChannelKeys(community, members, false);
 
         // Resolve pending create promises (relay responds with COMMUNITY_DATA, not COMMUNITY_CREATED)
         for (const [key, pending] of pendingCreates) {
@@ -332,6 +353,8 @@ export const useCommunityStore = create<CommunityState>()((set, get) => {
             ? { ...state.myRoles, [communityId]: myMember.role }
             : state.myRoles,
         }));
+        // E2E: owner rotates channel keys to the new member set (admit/revoke).
+        syncCommunityChannelKeys(get().communities[communityId], members, true);
         break;
       }
 
