@@ -247,6 +247,14 @@ export class SquadDB {
     `).run({ ...msg, room: msg.room || 'text' });
   }
 
+  getMessage(messageId: string): DBSquadMessage | undefined {
+    return this.db.prepare('SELECT * FROM squad_messages WHERE messageId = ?').get(messageId) as DBSquadMessage | undefined;
+  }
+
+  deleteMessage(messageId: string): boolean {
+    return this.db.prepare('DELETE FROM squad_messages WHERE messageId = ?').run(messageId).changes > 0;
+  }
+
   getMessagesSince(squadId: string, since: number, room = 'text', limit = 200): DBSquadMessage[] {
     return this.db.prepare(
       'SELECT * FROM squad_messages WHERE squadId = ? AND room = ? AND timestamp > ? ORDER BY timestamp ASC LIMIT ?'

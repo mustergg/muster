@@ -109,6 +109,8 @@ interface SquadState {
    *  channel's dedicated text chat). */
   loadRoom: (squadId: string, room: SquadRoom) => void;
   sendMessage: (squadId: string, content: string, room?: SquadRoom) => void;
+  /** Delete a squad message (author within window, squad owner, or staff). */
+  deleteSquadMessage: (squadId: string, messageId: string, room?: SquadRoom) => void;
   /** Send a file/voice attachment to a squad room (blob + descriptor marker). */
   sendSquadFile: (squadId: string, file: File, room?: SquadRoom) => Promise<void>;
   clearMessage: () => void;
@@ -292,6 +294,12 @@ export const useSquadStore = create<SquadState>((set, get) => ({
     get().sendMessage(squadId, descriptor, room);
   },
 
+  deleteSquadMessage: (squadId, messageId, room = 'text') => {
+    const { transport } = useNetworkStore.getState();
+    if (!transport?.isConnected) return;
+    transport.send({ type: 'DELETE_SQUAD_MESSAGE', payload: { squadId, messageId, room }, timestamp: Date.now() });
+  },
+
   clearMessage: () => set({ lastMessage: '' }),
 
   init: () => {
@@ -315,6 +323,10 @@ export const useSquadStore = create<SquadState>((set, get) => ({
         });
       } catch { /* leave placeholder */ }
     };
+
+    // Squads whose key the owner must rotate once the post-change member list
+    // arrives (e.g. after detach drops ghost staff — rotation revokes them).
+    const pendingRotate = new Set<string>();
 
     // Owner: (re)distribute the squad group key to the current member set so
     // every member can decrypt. Rotates on membership change.
@@ -369,7 +381,12 @@ export const useSquadStore = create<SquadState>((set, get) => ({
           // group key for the full member set (incl. community-staff ghosts).
           // Later membership changes rotate via SQUAD_MEMBER_JOINED/LEFT, so we
           // don't re-key on every list load.
-          if (!useGroupCryptoStore.getState().isEncrypted(p.squadId)) ownerSyncKey(p.squadId);
+          if (pendingRotate.has(p.squadId)) {
+            pendingRotate.delete(p.squadId);
+            ownerSyncKey(p.squadId); // rotates (encrypted) → revokes removed staff
+          } else if (!useGroupCryptoStore.getState().isEncrypted(p.squadId)) {
+            ownerSyncKey(p.squadId);
+          }
           break;
         }
         case 'SQUAD_MEMBER_JOINED': {
@@ -420,6 +437,15 @@ export const useSquadStore = create<SquadState>((set, get) => ({
           }
           break;
         }
+        case 'SQUAD_MESSAGE_DELETED': {
+          const p = msg.payload as any;
+          const room: SquadRoom = p.room === 'voice' ? 'voice' : 'text';
+          const key = squadRoomKey(p.squadId, room);
+          set((s) => ({
+            messages: { ...s.messages, [key]: (s.messages[key] || []).filter((m) => m.messageId !== p.messageId) },
+          }));
+          break;
+        }
         case 'SQUAD_DETACHED': {
           const p = msg.payload as any;
           const squad = p.squad as Squad;
@@ -434,6 +460,12 @@ export const useSquadStore = create<SquadState>((set, get) => ({
             squads[newCid] = [...list, squad];
             return { squads };
           });
+          // Owner rotates the group key to revoke the (now-removed) community
+          // staff. Refresh members first; rotation happens on SQUAD_MEMBER_LIST.
+          if (squad.ownerPublicKey === myKey) {
+            pendingRotate.add(p.squadId);
+            get().loadMembers(p.squadId);
+          }
           break;
         }
         case 'SQUAD_PRESENCE': {

@@ -90,6 +90,7 @@ export function handleSquadMessage(
     case 'GET_SQUAD_MEMBERS':     handleGetMembers(client, msg, squadDB, sendToClient); break;
     case 'SUBSCRIBE_SQUAD':       handleSubscribe(client, msg, squadDB, clients); break;
     case 'SEND_SQUAD_MESSAGE':    handleSendMessage(client, msg, squadDB, sendToClient); break;
+    case 'DELETE_SQUAD_MESSAGE':  handleDeleteMessage(client, msg, squadDB, sendToClient); break;
     case 'SQUAD_HISTORY_REQUEST': handleHistory(client, msg, squadDB, sendToClient); break;
   }
 }
@@ -293,13 +294,28 @@ function handleKick(
   const { squadId, publicKey } = msg.payload || {};
   if (!squadId || !publicKey) return;
 
-  if (!squadDB.isOwner(squadId, client.publicKey)) {
-    sendToClient(client, { type: 'SQUAD_RESULT', payload: { action: 'KICK_FROM_SQUAD', success: false, message: 'Only the squad owner can kick members.' }, timestamp: Date.now() });
+  // Allowed: squad owner, or community staff (ghost admin/moderator).
+  const me = squadDB.getMember(squadId, client.publicKey);
+  const canModerate = squadDB.isOwner(squadId, client.publicKey) || me?.role === 'admin' || me?.role === 'moderator';
+  if (!canModerate) {
+    sendToClient(client, { type: 'SQUAD_RESULT', payload: { action: 'KICK_FROM_SQUAD', success: false, message: 'Only the squad owner or community staff can kick members.' }, timestamp: Date.now() });
     return;
   }
 
   if (publicKey === client.publicKey) {
     sendToClient(client, { type: 'SQUAD_RESULT', payload: { action: 'KICK_FROM_SQUAD', success: false, message: 'Cannot kick yourself.' }, timestamp: Date.now() });
+    return;
+  }
+
+  // Can't kick the squad owner or other community staff (ghosts).
+  const target = squadDB.getMember(squadId, publicKey);
+  if (!target) return;
+  if (squadDB.isOwner(squadId, publicKey)) {
+    sendToClient(client, { type: 'SQUAD_RESULT', payload: { action: 'KICK_FROM_SQUAD', success: false, message: 'Cannot kick the squad owner.' }, timestamp: Date.now() });
+    return;
+  }
+  if (target.ghost) {
+    sendToClient(client, { type: 'SQUAD_RESULT', payload: { action: 'KICK_FROM_SQUAD', success: false, message: 'Cannot kick community staff.' }, timestamp: Date.now() });
     return;
   }
 
@@ -426,6 +442,31 @@ function handleSendMessage(
 
   // Broadcast to all subscribed (including sender for confirmation)
   broadcastToSquad(squadId, outgoing, client.ws);
+}
+
+const SQUAD_EDIT_WINDOW_MS = 15 * 60 * 1000;
+
+function handleDeleteMessage(
+  client: RelayClient, msg: any, squadDB: SquadDB,
+  sendToClient: (c: RelayClient, m: Record<string, unknown>) => void,
+): void {
+  const { squadId, messageId } = msg.payload || {};
+  if (!squadId || !messageId) return;
+  if (!squadDB.isMember(squadId, client.publicKey)) return;
+
+  const message = squadDB.getMessage(messageId);
+  if (!message || message.squadId !== squadId) return;
+
+  const me = squadDB.getMember(squadId, client.publicKey);
+  const isStaff = squadDB.isOwner(squadId, client.publicKey) || me?.role === 'admin' || me?.role === 'moderator';
+  const isAuthorInWindow = message.senderPublicKey === client.publicKey && (Date.now() - message.timestamp) <= SQUAD_EDIT_WINDOW_MS;
+  if (!isStaff && !isAuthorInWindow) {
+    sendToClient(client, { type: 'SQUAD_RESULT', payload: { action: 'DELETE_SQUAD_MESSAGE', success: false, message: 'You can only delete your own recent messages (or moderate as staff).' }, timestamp: Date.now() });
+    return;
+  }
+
+  squadDB.deleteMessage(messageId);
+  broadcastToSquad(squadId, { type: 'SQUAD_MESSAGE_DELETED', payload: { squadId, messageId, room: message.room || 'text' }, timestamp: Date.now() });
 }
 
 function handleHistory(

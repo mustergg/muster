@@ -110,6 +110,14 @@ export interface SquadHistoryRequestMsg {
   timestamp: number;
 }
 
+/** Delete a squad message. Allowed for the author (within the edit window), the
+ *  squad owner, or community staff (ghost admin/moderator). */
+export interface DeleteSquadMessageMsg {
+  type: 'DELETE_SQUAD_MESSAGE';
+  payload: { squadId: string; messageId: string; room?: SquadRoom };
+  timestamp: number;
+}
+
 // =================================================================
 // Relay → Client
 // =================================================================
@@ -191,6 +199,13 @@ export interface SquadHistoryResponseMsg {
 export interface SquadResultMsg {
   type: 'SQUAD_RESULT';
   payload: { action: string; success: boolean; message?: string };
+  timestamp: number;
+}
+
+/** A squad message was deleted (broadcast to subscribers). */
+export interface SquadMessageDeletedMsg {
+  type: 'SQUAD_MESSAGE_DELETED';
+  payload: { squadId: string; messageId: string; room?: SquadRoom };
   timestamp: number;
 }
 

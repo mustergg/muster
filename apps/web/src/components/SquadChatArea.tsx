@@ -100,7 +100,7 @@ const fs = {
 
 /** The full squad chat UI for one room ('text' or 'voice'). */
 function SquadBody({ squadId, room }: { squadId: string; room: SquadRoom }): React.JSX.Element {
-  const { messages, members, sendMessage, sendSquadFile, openSquad, loadRoom, inviteMember, kickMember, leaveSquad, deleteSquad, detachSquad, lastMessage, clearMessage, loadMembers } = useSquadStore();
+  const { messages, members, sendMessage, sendSquadFile, openSquad, loadRoom, inviteMember, kickMember, leaveSquad, deleteSquad, detachSquad, deleteSquadMessage, lastMessage, clearMessage, loadMembers } = useSquadStore();
   const { publicKey: myKey } = useNetworkStore();
   const myCommunityRoles = useCommunityStore((st) => st.myRoles);
   const msgKey = squadRoomKey(squadId, room);
@@ -134,6 +134,8 @@ function SquadBody({ squadId, room }: { squadId: string; room: SquadRoom }): Rea
   const isCommunitySquad = !!cid && !cid.startsWith('personal:');
   const myCommRole = isCommunitySquad ? myCommunityRoles[cid] : undefined;
   const canDetach = isCommunitySquad && (isOwner || myCommRole === 'owner' || myCommRole === 'admin');
+  const myMember = (members[squadId] || []).find((m) => m.publicKey === myKey);
+  const canModerate = isOwner || myMember?.role === 'admin' || myMember?.role === 'moderator';
 
   useEffect(() => {
     if (!squadId) return;
@@ -257,6 +259,15 @@ function SquadBody({ squadId, room }: { squadId: string; room: SquadRoom }): Rea
               {m.isOwn
                 ? <SeenIndicator context="squad" contextId={msgKey} messageId={m.messageId} />
                 : <MarkSeenButton context="squad" contextId={msgKey} messageId={m.messageId} />}
+              {(m.isOwn || canModerate) && (
+                <button
+                  onClick={() => { if (confirm('Delete this message?')) deleteSquadMessage(squadId, m.messageId, room); }}
+                  style={s.delMsgBtn}
+                  title="Delete message"
+                >
+                  {'\u{1F5D1}'}
+                </button>
+              )}
             </div>
           );
         })}
@@ -346,6 +357,7 @@ const s = {
   msgAuthor: { fontSize: '13px', fontWeight: 600, flexShrink: 0 } as React.CSSProperties,
   msgContent: { fontSize: '13px', color: 'var(--color-text-secondary)', wordBreak: 'break-word' as const } as React.CSSProperties,
   msgTime: { fontSize: '10px', color: 'var(--color-text-muted)', marginLeft: 'auto', flexShrink: 0 } as React.CSSProperties,
+  delMsgBtn: { background: 'transparent', border: 'none', color: 'var(--color-text-muted)', cursor: 'pointer', fontSize: '11px', padding: '0 2px', flexShrink: 0, opacity: 0.6 } as React.CSSProperties,
   inputBar: { display: 'flex', gap: '6px', padding: '10px 16px', borderTop: '1px solid var(--color-border)', flexShrink: 0, alignItems: 'center' } as React.CSSProperties,
   iconBtn: { width: '30px', height: '30px', borderRadius: '6px', background: 'transparent', border: 'none', color: 'var(--color-text-muted)', cursor: 'pointer', fontSize: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 } as React.CSSProperties,
   chatInput: { flex: 1, padding: '8px 12px', background: 'var(--color-bg-input)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', fontSize: '13px', outline: 'none', fontFamily: 'inherit' } as React.CSSProperties,
