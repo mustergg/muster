@@ -42,9 +42,26 @@ function shellQuote(p: string): string {
   return p.includes(' ') || p.includes('/') ? `"${p}"` : p;
 }
 
-/** Verify a pnpm invocation actually runs. `cmd` may be quoted path or `corepack pnpm`. */
-function pnpmWorks(cmd: string, cwd: string): boolean {
-  try { execSync(`${cmd} --version`, { cwd, stdio: 'pipe', timeout: 20000 }); return true; }
+/** The node binary's directory (from stored nodePath or the running process). */
+function nodeBinDir(nodeDB?: NodeDB): string {
+  const np = nodeDB?.getConfig('nodePath') || process.execPath || '';
+  return np ? np.replace(/[\\/][^\\/]*$/, '') : '';
+}
+
+/** Build a process env with the node bin dir prepended to PATH. pnpm is a JS
+ *  script whose `#!/usr/bin/env node` shebang needs `node` on PATH — and the
+ *  systemd unit's PATH usually lacks the nvm/fnm node, so we add it. */
+function execEnvWithNode(nodeDB?: NodeDB): NodeJS.ProcessEnv {
+  const dir = nodeBinDir(nodeDB);
+  if (!dir) return process.env;
+  const sep = process.platform === 'win32' ? ';' : ':';
+  return { ...process.env, PATH: `${dir}${sep}${process.env.PATH || ''}` };
+}
+
+/** Verify a pnpm/git invocation actually runs. `cmd` may be a quoted path or
+ *  `corepack pnpm`. Runs with node on PATH so script shebangs resolve. */
+function pnpmWorks(cmd: string, cwd: string, env?: NodeJS.ProcessEnv): boolean {
+  try { execSync(`${cmd} --version`, { cwd, stdio: 'pipe', timeout: 20000, env: env || process.env }); return true; }
   catch { return false; }
 }
 
@@ -58,25 +75,24 @@ function pnpmWorks(cmd: string, cwd: string): boolean {
  *  different servers, so this is intentionally configurable, not hardcoded. */
 function resolvePnpmCmd(cwd: string, nodeDB?: NodeDB): string {
   const persist = (cmd: string): string => { try { nodeDB?.setConfig('pnpmPath', cmd); } catch { /* ignore */ } return cmd; };
+  const env = execEnvWithNode(nodeDB); // node on PATH so pnpm's shebang resolves
 
   // 1. Admin-set / previously-discovered value (highest priority).
   const stored = nodeDB?.getConfig('pnpmPath');
   if (stored) {
     const cmd = stored.includes(' ') ? stored : shellQuote(stored); // 'corepack pnpm' has a space → use verbatim
-    if (pnpmWorks(cmd, cwd)) return cmd;
+    if (pnpmWorks(cmd, cwd, env)) return cmd;
   }
 
   // 2. Sibling of the node binary — nvm/fnm install pnpm next to node
   //    (e.g. ~/.nvm/versions/node/vX/bin/node → .../bin/pnpm). Most reliable
   //    when node was resolved but PATH lacks pnpm.
-  const nodePath = nodeDB?.getConfig('nodePath') || process.execPath;
-  if (nodePath) {
-    const binDir = nodePath.replace(/[\\/][^\\/]*$/, ''); // dirname
-    const sibling = `${binDir}/pnpm`;
-    if (pnpmWorks(shellQuote(sibling), cwd)) return persist(shellQuote(sibling));
-    // corepack ships next to node too
-    const corepack = `${binDir}/corepack`;
-    if (pnpmWorks(`${shellQuote(corepack)} pnpm`, cwd)) return persist(`${shellQuote(corepack)} pnpm`);
+  const dir = nodeBinDir(nodeDB);
+  if (dir) {
+    const sibling = `${dir}/pnpm`;
+    if (pnpmWorks(shellQuote(sibling), cwd, env)) return persist(shellQuote(sibling));
+    const corepack = `${dir}/corepack`;
+    if (pnpmWorks(`${shellQuote(corepack)} pnpm`, cwd, env)) return persist(`${shellQuote(corepack)} pnpm`);
   }
 
   // 3. Common absolute locations.
@@ -91,19 +107,19 @@ function resolvePnpmCmd(cwd: string, nodeDB?: NodeDB): string {
   ];
   for (const p of direct) {
     const q = shellQuote(p);
-    if (pnpmWorks(q, cwd)) return persist(q);
+    if (pnpmWorks(q, cwd, env)) return persist(q);
   }
 
-  // 3. Login shell PATH (covers nvm/fnm/corepack shims in the user's profile).
+  // 4. Login shell PATH (covers nvm/fnm/corepack shims in the user's profile).
   for (const probe of [`bash -lc 'command -v pnpm'`, `bash -lic 'command -v pnpm' 2>/dev/null`]) {
     try {
       const found = execSync(probe, { cwd, encoding: 'utf-8', timeout: 20000 }).trim().split('\n').pop()?.trim();
-      if (found && pnpmWorks(shellQuote(found), cwd)) return persist(shellQuote(found));
+      if (found && pnpmWorks(shellQuote(found), cwd, env)) return persist(shellQuote(found));
     } catch { /* next */ }
   }
 
-  // 4. Corepack (ships with Node).
-  if (pnpmWorks('corepack pnpm', cwd)) return persist('corepack pnpm');
+  // 5. Corepack (ships with Node).
+  if (pnpmWorks('corepack pnpm', cwd, env)) return persist('corepack pnpm');
 
   return 'pnpm';
 }
@@ -309,6 +325,7 @@ export function executeUpdate(nodeDB: NodeDB): Promise<{ success: boolean; log: 
     // that's already on PATH, so `corepack pnpm` is the reliable fallback.
     const pnpm = resolvePnpmCmd(gitRoot, nodeDB);
     const git = resolveGitCmd(gitRoot, nodeDB);
+    const stepEnv = execEnvWithNode(nodeDB); // node on PATH for all steps
     log.push(`Using git: ${git}`);
     log.push(`Using pnpm: ${pnpm}`);
 
@@ -344,6 +361,7 @@ export function executeUpdate(nodeDB: NodeDB): Promise<{ success: boolean; log: 
           encoding: 'utf-8',
           timeout: 120000, // 2 min per step
           stdio: 'pipe',
+          env: stepEnv, // node on PATH so pnpm's shebang resolves
         });
 
         // Only include last few lines of output
