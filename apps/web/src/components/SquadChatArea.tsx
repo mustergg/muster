@@ -9,6 +9,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useSquadStore, SQUAD_BLOB_PREFIX, squadRoomKey, type SquadRoom } from '../stores/squadStore.js';
 import { useNetworkStore } from '../stores/networkStore.js';
 import { useCommunityStore } from '../stores/communityStore.js';
+import { useComposerStore, appendMention, handleMentionBackspace } from '../stores/composerStore.js';
 import { fetchAndDecryptBlob } from '../lib/blobUpload.js';
 import EmojiPicker from './EmojiPicker.js';
 import VoiceRecorder from './VoiceRecorder.js';
@@ -165,10 +166,22 @@ function SquadBody({ squadId, room }: { squadId: string; room: SquadRoom }): Rea
     return undefined;
   }, [lastMessage]);
 
+  // Let member-list clicks drop an @mention into this composer.
+  const setComposerHandler = useComposerStore((s) => s.setHandler);
+  useEffect(() => {
+    setComposerHandler((u) => setInput((d) => appendMention(d, u)));
+    return () => setComposerHandler(null);
+  }, [msgKey]);
+
   const handleSend = () => {
     if (!input.trim()) return;
     sendMessage(squadId, input.trim(), room);
     setInput('');
+  };
+
+  const handleInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>): void => {
+    if (handleMentionBackspace(e, input, setInput)) return;
+    if (e.key === 'Enter') handleSend();
   };
 
   const handleInvite = () => {
@@ -283,7 +296,7 @@ function SquadBody({ squadId, room }: { squadId: string; room: SquadRoom }): Rea
         <input
           type="text" value={input}
           onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && handleSend()}
+          onKeyDown={handleInputKeyDown}
           placeholder={`Message ${squad?.name || 'squad'}...`}
           style={s.chatInput}
         />

@@ -3,6 +3,8 @@ import { useTranslation } from 'react-i18next';
 import { useNetworkStore } from '../stores/networkStore.js';
 import { useCommunityStore } from '../stores/communityStore.js';
 import { statusMeta } from '../stores/statusStore.js';
+import { useComposerStore } from '../stores/composerStore.js';
+import ContextMenu from './ContextMenu.js';
 
 interface Props {
   communityId: string | null;
@@ -18,8 +20,15 @@ const ROLE_BADGE: Record<string, { label: string; color: string }> = {
 
 export default function MembersSidebar({ communityId, onOpenDM }: Props): React.JSX.Element {
   const { t } = useTranslation();
-  const { peerCount, status, publicKey: myKey } = useNetworkStore();
+  const { peerCount, status, publicKey: myKey, accountInfo } = useNetworkStore();
   const { onlineMembers } = useCommunityStore();
+  const mention = useComposerStore((s) => s.mention);
+  const canDM = accountInfo?.emailVerified ?? false;
+
+  const startDM = (key: string): void => {
+    if (!canDM) { alert('Verify your email to start direct messages.'); return; }
+    onOpenDM?.(key);
+  };
 
   const members = communityId ? (onlineMembers[communityId] ?? []) : [];
 
@@ -38,28 +47,38 @@ export default function MembersSidebar({ communityId, onOpenDM }: Props): React.
               const isMe = key === myKey;
 
               const dotColor = statusMeta(m.status).color;
+              const menuItems = [
+                { label: `Mention @${m.username}`, icon: '@', onClick: () => mention(m.username) },
+                ...(!isMe ? [{ label: 'Send DM', icon: '\u{1F4AC}', onClick: () => startDM(key) }] : []),
+              ];
               return (
-                <div key={key} style={styles.memberItem}>
-                  <div style={{ ...styles.avatar, background: `hsl(${hue},40%,20%)`, color: `hsl(${hue},70%,65%)`, position: 'relative' as const }}>
-                    {(m.username || '??').slice(0, 2).toUpperCase()}
-                    <div style={{ ...styles.onlineDot, background: dotColor }} title={statusMeta(m.status).label} />
+                <ContextMenu key={key} items={menuItems}>
+                  <div
+                    style={{ ...styles.memberItem, cursor: 'pointer' }}
+                    onClick={() => mention(m.username)}
+                    title={`Click to mention @${m.username} · right-click for more`}
+                  >
+                    <div style={{ ...styles.avatar, background: `hsl(${hue},40%,20%)`, color: `hsl(${hue},70%,65%)`, position: 'relative' as const }}>
+                      {(m.username || '??').slice(0, 2).toUpperCase()}
+                      <div style={{ ...styles.onlineDot, background: dotColor }} title={statusMeta(m.status).label} />
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <span style={styles.memberName}>
+                        {m.username}{isMe ? ' (you)' : ''}
+                      </span>
+                      {m.mood && <span style={styles.memberMood}>{m.mood}</span>}
+                    </div>
+                    {!isMe && (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); startDM(key); }}
+                        style={styles.dmBtn}
+                        title={`DM ${m.username}`}
+                      >
+                        DM
+                      </button>
+                    )}
                   </div>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <span style={styles.memberName}>
-                      {m.username}{isMe ? ' (you)' : ''}
-                    </span>
-                    {m.mood && <span style={styles.memberMood}>{m.mood}</span>}
-                  </div>
-                  {!isMe && onOpenDM && (
-                    <button
-                      onClick={() => onOpenDM(key)}
-                      style={styles.dmBtn}
-                      title={`DM ${m.username}`}
-                    >
-                      DM
-                    </button>
-                  )}
-                </div>
+                </ContextMenu>
               );
             })}
           </>

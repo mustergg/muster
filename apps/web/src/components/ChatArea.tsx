@@ -17,6 +17,7 @@ import EmojiPicker from './EmojiPicker.js';
 import VoiceRecorder from './VoiceRecorder.js';
 import { ReceiptToggle, SeenIndicator, MarkSeenButton } from './ReadReceiptUI.js';
 import { useReadReceiptStore } from '../stores/readReceiptStore.js';
+import { useComposerStore, appendMention, handleMentionBackspace } from '../stores/composerStore.js';
 import type { ActiveLocation } from '../pages/MainLayout.js';
 import type { TransportMessage } from '@muster/transport';
 
@@ -327,7 +328,15 @@ export default function ChatArea({ active }: Props): React.JSX.Element {
     await sendMessage(active.channelId, content);
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent): void => {
+  // Let member-list clicks drop an @mention into this composer.
+  const setComposerHandler = useComposerStore((s) => s.setHandler);
+  useEffect(() => {
+    setComposerHandler((u) => setDraft((d) => appendMention(d, u)));
+    return () => setComposerHandler(null);
+  }, []);
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>): void => {
+    if (handleMentionBackspace(e, draft, setDraft)) return; // atomic @mention delete
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSend();

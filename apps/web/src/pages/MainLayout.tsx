@@ -173,7 +173,7 @@ export default function MainLayout(): React.JSX.Element {
           <SettingsPanel />
         ) : viewMode === 'squad' && activeSquad ? (
           <>
-            <SquadSidebar squadId={activeSquad} activeMode={squadMode} onSelectMode={setSquadMode} onJoinCommunity={handleSelectCommunity} />
+            <SquadSidebar squadId={activeSquad} activeMode={squadMode} onSelectMode={setSquadMode} onJoinCommunity={handleSelectCommunity} onOpenDM={handleOpenDM} />
             <div style={styles.main}>
               <SquadChatArea squadId={activeSquad} mode={squadMode} />
             </div>

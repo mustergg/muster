@@ -12,6 +12,8 @@ import { useSquadStore, type SquadRoom } from '../stores/squadStore.js';
 import { useNetworkStore } from '../stores/networkStore.js';
 import { useCommunityStore } from '../stores/communityStore.js';
 import { statusMeta } from '../stores/statusStore.js';
+import { useComposerStore } from '../stores/composerStore.js';
+import ContextMenu from './ContextMenu.js';
 import UserPanel from './UserPanel.js';
 
 interface Props {
@@ -20,6 +22,8 @@ interface Props {
   onSelectMode: (mode: SquadRoom) => void;
   /** Called after the user joins the squad's parent community. */
   onJoinCommunity?: (communityId: string) => void;
+  /** Open a DM with a member (gated to verified accounts). */
+  onOpenDM?: (publicKey: string) => void;
 }
 
 const ROLE_BADGE: Record<string, { label: string; color: string }> = {
@@ -34,8 +38,18 @@ function roleBadge(role?: string): React.JSX.Element | null {
   return <span style={{ fontSize: '9px', fontWeight: 700, color: b.color, border: `1px solid ${b.color}`, borderRadius: '3px', padding: '0 4px', flexShrink: 0, textTransform: 'uppercase' }}>{b.label}</span>;
 }
 
-export default function SquadSidebar({ squadId, activeMode, onSelectMode, onJoinCommunity }: Props): React.JSX.Element {
-  const { publicKey: myKey } = useNetworkStore();
+export default function SquadSidebar({ squadId, activeMode, onSelectMode, onJoinCommunity, onOpenDM }: Props): React.JSX.Element {
+  const { publicKey: myKey, accountInfo } = useNetworkStore();
+  const mention = useComposerStore((s) => s.mention);
+  const canDM = accountInfo?.emailVerified ?? false;
+
+  const memberMenu = (publicKey: string, username: string) => [
+    { label: `Mention @${username}`, icon: '@', onClick: () => mention(username) },
+    ...(publicKey !== myKey ? [{ label: 'Send DM', icon: '\u{1F4AC}', onClick: () => {
+      if (!canDM) { alert('Verify your email to start direct messages.'); return; }
+      onOpenDM?.(publicKey);
+    } }] : []),
+  ];
   const squads = useSquadStore((s) => s.squads);
   const members = useSquadStore((s) => s.members[squadId]) || [];
   const online = useSquadStore((s) => s.squadOnline[squadId]) || [];
@@ -121,26 +135,30 @@ export default function SquadSidebar({ squadId, activeMode, onSelectMode, onJoin
         {online.map((m) => {
           const meta = statusMeta(m.status);
           return (
-            <div key={m.publicKey} style={s.memberItem}>
-              <span style={{ ...s.dot, background: meta.color }} title={meta.label} />
-              <div style={s.memberMeta}>
-                <span style={s.memberName}>{m.username}{m.publicKey === myKey ? ' (you)' : ''}</span>
-                {m.mood && <span style={s.memberMood}>{m.mood}</span>}
+            <ContextMenu key={m.publicKey} items={memberMenu(m.publicKey, m.username)}>
+              <div style={{ ...s.memberItem, cursor: 'pointer' }} onClick={() => mention(m.username)} title={`Mention @${m.username} · right-click for more`}>
+                <span style={{ ...s.dot, background: meta.color }} title={meta.label} />
+                <div style={s.memberMeta}>
+                  <span style={s.memberName}>{m.username}{m.publicKey === myKey ? ' (you)' : ''}</span>
+                  {m.mood && <span style={s.memberMood}>{m.mood}</span>}
+                </div>
+                {roleBadge(roleByKey.get(m.publicKey)?.role)}
               </div>
-              {roleBadge(roleByKey.get(m.publicKey)?.role)}
-            </div>
+            </ContextMenu>
           );
         })}
 
         {offline.length > 0 && <div style={s.sectionLabel}>Offline — {offline.length}</div>}
         {offline.map((m) => (
-          <div key={m.publicKey} style={{ ...s.memberItem, opacity: 0.5 }}>
-            <span style={{ ...s.dot, background: '#747F8D' }} />
-            <div style={s.memberMeta}>
-              <span style={s.memberName}>{m.username}{m.ghost ? ' · staff' : ''}</span>
+          <ContextMenu key={m.publicKey} items={memberMenu(m.publicKey, m.username)}>
+            <div style={{ ...s.memberItem, opacity: 0.5, cursor: 'pointer' }} onClick={() => mention(m.username)} title={`Mention @${m.username} · right-click for more`}>
+              <span style={{ ...s.dot, background: '#747F8D' }} />
+              <div style={s.memberMeta}>
+                <span style={s.memberName}>{m.username}{m.ghost ? ' · staff' : ''}</span>
+              </div>
+              {roleBadge(m.role)}
             </div>
-            {roleBadge(m.role)}
-          </div>
+          </ContextMenu>
         ))}
       </div>
 
