@@ -104,7 +104,7 @@ export class UserDB {
       VALUES (@publicKey, @username, @tier, @emailHash, @verificationCode, @verificationExpiry, @createdAt, @lastSeen, @displayName, @displayNameType, @bio, @linksJson, @avatarFileId)
     `).run(user);
 
-    console.log(`[user-db] New basic user: ${username} (30-day timer started)`);
+    console.log(`[user-db] New basic user: ${username} (30-day verify timer + 30-day login grace)`);
     return user as DBUser;
   }
 
@@ -223,24 +223,45 @@ export class UserDB {
     return this.getTier(publicKey) === 'verified';
   }
 
+  /**
+   * Two-phase lifetime for unverified (basic) accounts:
+   *   Phase 1 ("verify"): 30 days from creation to verify the email.
+   *   Phase 2 ("grace"):  after that, 30 more days of access that RESET on every
+   *                       login. The account is purged 30 days after the later
+   *                       of (createdAt + 30d) and the last login.
+   * Net: up to ~60 days, but only if the user keeps signing in during phase 2.
+   */
+  private accountStatus(user: DBUser): { phase: 'verified' | 'verify' | 'grace'; daysRemaining: number; purgeAt: number } {
+    if (user.tier === 'verified') return { phase: 'verified', daysRemaining: 0, purgeAt: 0 };
+    const DAY = 24 * 60 * 60 * 1000;
+    const THIRTY = 30 * DAY;
+    const now = Date.now();
+    const phase1End = user.createdAt + THIRTY;
+    const purgeAt = Math.max(phase1End, user.lastSeen) + THIRTY;
+    if (now < phase1End) {
+      return { phase: 'verify', daysRemaining: Math.max(0, Math.ceil((phase1End - now) / DAY)), purgeAt };
+    }
+    return { phase: 'grace', daysRemaining: Math.max(0, Math.ceil((purgeAt - now) / DAY)), purgeAt };
+  }
+
   getDaysRemaining(publicKey: string): number {
     const user = this.getUser(publicKey);
-    if (!user || user.tier === 'verified') return 0;
-    const elapsed = Date.now() - user.createdAt;
-    const remaining = Math.ceil((30 * 24 * 60 * 60 * 1000 - elapsed) / (24 * 60 * 60 * 1000));
-    return Math.max(0, remaining);
+    if (!user) return 0;
+    return this.accountStatus(user).daysRemaining;
   }
 
   getAccountInfo(publicKey: string): {
     publicKey: string; username: string; tier: string;
     emailVerified: boolean; createdAt: number; daysRemaining: number;
+    phase: 'verified' | 'verify' | 'grace'; purgeAt: number;
   } {
     const user = this.getUser(publicKey);
-    if (!user) return { publicKey, username: '', tier: 'basic', emailVerified: false, createdAt: 0, daysRemaining: 30 };
+    if (!user) return { publicKey, username: '', tier: 'basic', emailVerified: false, createdAt: 0, daysRemaining: 30, phase: 'verify', purgeAt: 0 };
+    const st = this.accountStatus(user);
     return {
       publicKey: user.publicKey, username: user.username, tier: user.tier,
       emailVerified: user.tier === 'verified', createdAt: user.createdAt,
-      daysRemaining: this.getDaysRemaining(publicKey),
+      daysRemaining: st.daysRemaining, phase: st.phase, purgeAt: st.purgeAt,
     };
   }
 
@@ -249,10 +270,15 @@ export class UserDB {
   // =================================================================
 
   deleteExpiredAccounts(): number {
-    const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
+    // Purge an unverified account only once BOTH phases are exhausted:
+    //   purgeAt = max(createdAt + 30d, lastSeen) + 30d  <=  now
+    // i.e. 30 days to verify, then a 30-day grace window that the user resets by
+    // logging in (lastSeen). No login in that final window → purged.
+    const THIRTY = 30 * 24 * 60 * 60 * 1000;
+    const now = Date.now();
     const expired = this.db.prepare(
-      "SELECT publicKey, username FROM users WHERE tier = 'basic' AND createdAt < ?"
-    ).all(cutoff) as Array<{ publicKey: string; username: string }>;
+      "SELECT publicKey, username FROM users WHERE tier = 'basic' AND (MAX(createdAt + ?, lastSeen) + ?) <= ?"
+    ).all(THIRTY, THIRTY, now) as Array<{ publicKey: string; username: string }>;
     if (expired.length === 0) return 0;
 
     // Purge the account everywhere EXCEPT the DM history: deleting the user

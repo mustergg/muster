@@ -31,6 +31,9 @@ export interface AccountInfo {
   emailVerified: boolean;
   createdAt: number;
   daysRemaining: number;
+  /** 'verify' = 30-day window to verify; 'grace' = post-verify-window 30-day
+   *  access that resets on each login; 'verified' = no countdown. */
+  phase?: 'verified' | 'verify' | 'grace';
 }
 
 interface NetworkState {
@@ -194,7 +197,7 @@ export const useNetworkStore = create<NetworkState>((set, get) => {
         if (p.success) {
           set((state) => ({
             accountInfo: state.accountInfo
-              ? { ...state.accountInfo, tier: 'verified', emailVerified: true, daysRemaining: 0 }
+              ? { ...state.accountInfo, tier: 'verified', emailVerified: true, daysRemaining: 0, phase: 'verified' as const }
               : null,
           }));
         }

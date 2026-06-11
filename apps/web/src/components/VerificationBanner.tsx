@@ -16,7 +16,18 @@ export default function VerificationBanner(): React.JSX.Element | null {
   if (!accountInfo || accountInfo.tier === 'verified' || dismissed) return null;
 
   const days = accountInfo.daysRemaining;
-  const urgent = days <= 7;
+  const phase = accountInfo.phase ?? 'verify';
+  const grace = phase === 'grace';
+  const d = (n: number) => `${n} day${n !== 1 ? 's' : ''}`;
+  // Grace phase is always urgent (verification window already lapsed); verify
+  // phase turns urgent in the last week.
+  const urgent = grace || days <= 7;
+
+  const message = grace
+    ? `Verification window ended — ${d(days)} of access left. Sign in regularly to keep it, or verify your email to keep your account for good.`
+    : urgent
+      ? `Only ${d(days)} left to verify your email! After that you get a 30-day grace period, then the account is deleted.`
+      : `Unverified account — ${d(days)} to verify your email. Some features are restricted.`;
 
   return (
     <>
@@ -25,12 +36,7 @@ export default function VerificationBanner(): React.JSX.Element | null {
           <span style={{ ...styles.icon, color: urgent ? '#E24B4A' : '#EF9F27' }}>
             {urgent ? '!' : 'i'}
           </span>
-          <span style={styles.text}>
-            {urgent
-              ? `Your account will be deleted in ${days} day${days !== 1 ? 's' : ''}! Verify your email to keep your account.`
-              : `Unverified account — ${days} days remaining. Some features are restricted.`
-            }
-          </span>
+          <span style={styles.text}>{message}</span>
           <button onClick={() => setShowVerify(true)} style={styles.verifyBtn}>
             Verify email
           </button>
@@ -41,7 +47,7 @@ export default function VerificationBanner(): React.JSX.Element | null {
 
         {/* Feature restrictions info */}
         <div style={styles.restrictions}>
-          Cannot: create communities • start DMs • delete conversations
+          Cannot: create communities or squads • start DMs • delete conversations
         </div>
       </div>
 
