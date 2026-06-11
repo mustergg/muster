@@ -179,7 +179,7 @@ export class AdminBot {
       '/restart         — Restart the node',
       '/help            — This message',
       '',
-      'Configurable keys: nodeName, retentionDays, maxFileSize',
+      'Configurable keys: nodeName, retentionDays, maxFileSize, pnpmPath',
     ].join('\n'));
   }
 
@@ -285,7 +285,7 @@ export class AdminBot {
     if (args[0] === 'set' && args.length >= 3) {
       const key = args[1]!;
       const value = args.slice(2).join(' ');
-      const allowed = ['nodeName', 'retentionDays', 'maxFileSize', 'adminPublicKey'];
+      const allowed = ['nodeName', 'retentionDays', 'maxFileSize', 'adminPublicKey', 'pnpmPath'];
       if (!allowed.includes(key)) {
         this.reply(client, `❌ Unknown config key: ${key}\nAllowed: ${allowed.join(', ')}`);
         return;
@@ -301,6 +301,7 @@ export class AdminBot {
     const retention = this.nodeDB.getConfig('retentionDays') || '30';
     const maxFile = this.nodeDB.getConfig('maxFileSize') || '1048576';
     const adminKey = this.nodeDB.getConfig('adminPublicKey') || 'not set';
+    const pnpmPath = this.nodeDB.getConfig('pnpmPath') || 'auto-detect';
 
     this.reply(client, [
       '⚙️ Node Configuration:',
@@ -309,8 +310,10 @@ export class AdminBot {
       `retentionDays:  ${retention}`,
       `maxFileSize:    ${maxFile} bytes (${Math.round(parseInt(maxFile) / 1024)} KB)`,
       `adminPublicKey: ${adminKey.slice(0, 20)}...`,
+      `pnpmPath:       ${pnpmPath}`,
       '',
       'To change: /config set <key> <value>',
+      'If /update can\'t find pnpm: /config set pnpmPath <full-path>',
     ].join('\n'));
   }
 

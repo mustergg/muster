@@ -37,37 +37,61 @@ export function getCurrentVersion(): string {
   return '0.0.0';
 }
 
+/** Quote a command/path for the shell if it contains a path separator or space. */
+function shellQuote(p: string): string {
+  return p.includes(' ') || p.includes('/') ? `"${p}"` : p;
+}
+
+/** Verify a pnpm invocation actually runs. `cmd` may be quoted path or `corepack pnpm`. */
+function pnpmWorks(cmd: string, cwd: string): boolean {
+  try { execSync(`${cmd} --version`, { cwd, stdio: 'pipe', timeout: 20000 }); return true; }
+  catch { return false; }
+}
+
 /** Find a pnpm command that actually runs in the service's environment.
- *  The systemd unit's PATH often lacks the user-installed pnpm/corepack, so
- *  we probe absolute paths and a login shell before giving up. */
-function resolvePnpmCmd(cwd: string): string {
+ *
+ *  Order: an admin-provided / previously-discovered value stored in node config
+ *  (`pnpmPath`), then common absolute install locations, then a login shell's
+ *  PATH, then corepack. The first working result is persisted to config so the
+ *  next update is instant — and so the node admin can inspect/override it via
+ *  the bot (`/config set pnpmPath <path>`). pnpm lives in different places on
+ *  different servers, so this is intentionally configurable, not hardcoded. */
+function resolvePnpmCmd(cwd: string, nodeDB?: NodeDB): string {
+  const persist = (cmd: string): string => { try { nodeDB?.setConfig('pnpmPath', cmd); } catch { /* ignore */ } return cmd; };
+
+  // 1. Admin-set / previously-discovered value (highest priority).
+  const stored = nodeDB?.getConfig('pnpmPath');
+  if (stored) {
+    const cmd = stored.includes(' ') ? stored : shellQuote(stored); // 'corepack pnpm' has a space → use verbatim
+    if (pnpmWorks(cmd, cwd)) return cmd;
+  }
+
+  // 2. Common absolute locations.
   const home = process.env.HOME || process.env.USERPROFILE || '/home/pi';
   const direct = [
-    'pnpm',
     `${home}/.local/share/pnpm/pnpm`,
     `${home}/.npm-global/bin/pnpm`,
+    `${home}/.nvm/current/bin/pnpm`,
     '/usr/local/bin/pnpm',
     '/usr/bin/pnpm',
+    'pnpm',
   ];
   for (const p of direct) {
+    const q = shellQuote(p);
+    if (pnpmWorks(q, cwd)) return persist(q);
+  }
+
+  // 3. Login shell PATH (covers nvm/fnm/corepack shims in the user's profile).
+  for (const probe of [`bash -lc 'command -v pnpm'`, `bash -lic 'command -v pnpm' 2>/dev/null`]) {
     try {
-      execSync(`"${p}" --version`, { cwd, stdio: 'pipe', timeout: 20000 });
-      return p.includes(' ') || p.includes('/') ? `"${p}"` : p;
+      const found = execSync(probe, { cwd, encoding: 'utf-8', timeout: 20000 }).trim().split('\n').pop()?.trim();
+      if (found && pnpmWorks(shellQuote(found), cwd)) return persist(shellQuote(found));
     } catch { /* next */ }
   }
-  // Ask an interactive login shell where pnpm lives (loads the user's PATH).
-  try {
-    const found = execSync(`bash -lic 'command -v pnpm' 2>/dev/null`, { cwd, encoding: 'utf-8', timeout: 20000 }).trim().split('\n').pop()?.trim();
-    if (found) {
-      execSync(`"${found}" --version`, { cwd, stdio: 'pipe', timeout: 20000 });
-      return `"${found}"`;
-    }
-  } catch { /* next */ }
-  // Corepack (bundled with Node) — only if actually present.
-  try {
-    execSync('corepack --version', { cwd, stdio: 'pipe', timeout: 20000 });
-    return 'corepack pnpm';
-  } catch { /* next */ }
+
+  // 4. Corepack (ships with Node).
+  if (pnpmWorks('corepack pnpm', cwd)) return persist('corepack pnpm');
+
   return 'pnpm';
 }
 
@@ -177,7 +201,7 @@ export function executeUpdate(nodeDB: NodeDB): Promise<{ success: boolean; log: 
     // service whose PATH lacks a user-installed pnpm (`/bin/sh: pnpm: not
     // found`). corepack ships with Node and lives next to the node binary
     // that's already on PATH, so `corepack pnpm` is the reliable fallback.
-    const pnpm = resolvePnpmCmd(gitRoot);
+    const pnpm = resolvePnpmCmd(gitRoot, nodeDB);
     log.push(`Using pnpm: ${pnpm}`);
 
     const steps = [
@@ -228,6 +252,12 @@ export function executeUpdate(nodeDB: NodeDB): Promise<{ success: boolean; log: 
         const errMsg = err.stderr?.trim()?.split('\n').slice(-3).join('\n') || err.message || 'Unknown error';
         log.push(`  ✗ ${step.name} FAILED`);
         log.push(`  ${errMsg.slice(0, 200)}`);
+        if (/pnpm: not found|command not found|not recognized/i.test(errMsg)) {
+          log.push('');
+          log.push('💡 pnpm was not found on this server. Find it with `which pnpm`');
+          log.push('   then tell me: /config set pnpmPath <full-path>');
+          log.push('   (e.g. /config set pnpmPath /home/pi/.local/share/pnpm/pnpm)');
+        }
         resolve({ success: false, log });
       }
     };
