@@ -148,6 +148,7 @@ export class AdminBot {
       case '/purge':      this.cmdPurge(client, parts.slice(1)); break;
       case '/restart':    this.cmdRestart(client, parts.slice(1)); break;
       case '/version':    this.cmdVersion(client); break;
+      case '/owner':      this.cmdOwner(client, parts.slice(1)); break;
       case '/update':     this.cmdUpdate(client, parts.slice(1)); break;
       default:
         if (trimmed.startsWith('/')) {
@@ -174,6 +175,7 @@ export class AdminBot {
       '  /users             — Registered user counts',
       '',
       '⚙️ Config',
+      '  /owner             — Show / transfer relay ownership',
       '  /config            — View node configuration',
       '  /config set <key> <value> — Change a setting',
       '    keys: nodeName, retentionDays, maxFileSize, pnpmPath, gitPath, nodePath',
@@ -327,6 +329,55 @@ export class AdminBot {
       'To change: /config set <key> <value>',
       'Auto-detect tool paths: /update autoconf',
     ].join('\n'));
+  }
+
+  /** Show or transfer relay ownership. The relay owner is the single account
+   *  with bot access (stored as `adminPublicKey`). */
+  private cmdOwner(client: RelayClient, args: string[]): void {
+    const current = this.nodeDB.getConfig('adminPublicKey');
+
+    if (!args[0]) {
+      const u = current ? this.userDB.getUser(current) : undefined;
+      this.reply(client, [
+        '👑 Relay Owner',
+        '━━━━━━━━━━━━━━━━━━━━',
+        current ? `Owner: ${u?.username || '(unknown user)'}` : 'Owner: not set (first to message the bot claims it)',
+        ...(current ? [`Key:   ${current.slice(0, 24)}...`] : []),
+        '',
+        'Transfer ownership:',
+        '  /owner set <username>',
+        '  /owner set <publicKeyHex>',
+        '',
+        '⚠️ After transfer you lose bot access — only the new owner keeps it.',
+      ].join('\n'));
+      return;
+    }
+
+    if (args[0] === 'set' && args[1]) {
+      const target = args[1].trim();
+      let user;
+      if (/^[0-9a-fA-F]{64}$/.test(target)) {
+        user = this.userDB.getUser(target);
+        if (!user) { this.reply(client, '❌ No registered user has that public key.'); return; }
+      } else {
+        user = this.userDB.getUserByUsername(target);
+        if (!user) { this.reply(client, `❌ User "${target}" not found. They must have logged into this node at least once.`); return; }
+      }
+
+      if (user.publicKey === current) { this.reply(client, `ℹ️ ${user.username} is already the owner.`); return; }
+
+      this.nodeDB.setConfig('adminPublicKey', user.publicKey);
+      console.log(`[admin-bot] Ownership transferred: ${client.username} → ${user.username} (${user.publicKey.slice(0, 16)}...)`);
+      this.reply(client, [
+        `✅ Ownership transferred to ${user.username}.`,
+        `Key: ${user.publicKey.slice(0, 24)}...`,
+        '',
+        'You no longer have bot access. The new owner does.',
+      ].join('\n'));
+      return;
+    }
+
+    this.reply(client, 'Usage:\n  /owner                          — show current owner\n  /owner set <username|publicKeyHex>  — transfer ownership');
   }
 
   private cmdPurge(client: RelayClient, args: string[]): void {
