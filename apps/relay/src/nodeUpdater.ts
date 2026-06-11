@@ -6,7 +6,7 @@
  */
 
 import { execSync, exec } from 'child_process';
-import { readFileSync, existsSync } from 'fs';
+import { readFileSync, existsSync, writeFileSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { NodeDB } from './nodeDB';
 
@@ -93,6 +93,98 @@ function resolvePnpmCmd(cwd: string, nodeDB?: NodeDB): string {
   if (pnpmWorks('corepack pnpm', cwd)) return persist('corepack pnpm');
 
   return 'pnpm';
+}
+
+/** Resolve a working `git` invocation (config gitPath → common paths → PATH). */
+function resolveGitCmd(cwd: string, nodeDB?: NodeDB): string {
+  const persist = (c: string): string => { try { nodeDB?.setConfig('gitPath', c); } catch { /* ignore */ } return c; };
+  const stored = nodeDB?.getConfig('gitPath');
+  if (stored) { const cmd = shellQuote(stored); if (pnpmWorks(cmd, cwd)) return cmd; }
+  const home = process.env.HOME || process.env.USERPROFILE || '/home/pi';
+  for (const p of ['git', '/usr/bin/git', '/usr/local/bin/git', `${home}/bin/git`]) {
+    const q = shellQuote(p);
+    if (pnpmWorks(q, cwd)) return persist(q);
+  }
+  try {
+    const found = execSync(`bash -lc 'command -v git'`, { cwd, encoding: 'utf-8', timeout: 20000 }).trim().split('\n').pop()?.trim();
+    if (found && pnpmWorks(shellQuote(found), cwd)) return persist(shellQuote(found));
+  } catch { /* next */ }
+  return 'git';
+}
+
+/** Resolve the node binary path (config nodePath → the running interpreter). */
+function resolveNodePath(nodeDB?: NodeDB): string {
+  const stored = nodeDB?.getConfig('nodePath');
+  if (stored && existsSync(stored)) return stored;
+  // The interpreter running this very process is the most reliable answer.
+  if (process.execPath && existsSync(process.execPath)) {
+    try { nodeDB?.setConfig('nodePath', process.execPath); } catch { /* ignore */ }
+    return process.execPath;
+  }
+  return 'node';
+}
+
+/** Where the auto-config snapshot is written (next to the relay DB). */
+function updateConfigPath(): string {
+  const home = process.env.HOME || process.env.USERPROFILE || '/home/pi';
+  return join(home, '.muster-relay', 'update-config.json');
+}
+
+/**
+ * `/update autoconf` — probe + persist every tool/location the self-update
+ * needs (git, node, pnpm), write a snapshot file the admin can read/edit, and
+ * store the resolved paths in node config (gitPath/nodePath/pnpmPath) so the
+ * next `/update` just works. Admin overrides via `/config set <key> <path>`.
+ */
+export function autoconfigure(nodeDB: NodeDB): { success: boolean; log: string[] } {
+  const log: string[] = [];
+  const gitRoot = findGitRoot() || process.cwd();
+  log.push('🔧 Auto-configuring update toolchain…');
+  log.push(`Git root: ${gitRoot}`);
+  log.push('');
+
+  const git = resolveGitCmd(gitRoot, nodeDB);
+  const pnpm = resolvePnpmCmd(gitRoot, nodeDB);
+  const node = resolveNodePath(nodeDB);
+  const branch = getGitBranch();
+
+  const gitOk = pnpmWorks(git, gitRoot);
+  const pnpmOk = pnpmWorks(pnpm, gitRoot);
+  const nodeOk = node === 'node' ? false : existsSync(node.replace(/^"|"$/g, ''));
+
+  const cfg = {
+    detectedAt: new Date().toISOString(),
+    gitRoot, branch, git, node, pnpm,
+    steps: [
+      `${git} pull origin ${branch}`,
+      `${pnpm} install --frozen-lockfile`,
+      `${pnpm} --filter './packages/**' build`,
+      `${pnpm} --filter @muster/relay build`,
+    ],
+  };
+
+  const path = updateConfigPath();
+  try {
+    mkdirSync(join(path, '..'), { recursive: true });
+    writeFileSync(path, JSON.stringify(cfg, null, 2));
+  } catch {
+    log.push(`⚠️ Could not write ${path}`);
+  }
+
+  log.push(`git:   ${git}   ${gitOk ? '✓' : '✗ NOT WORKING'}`);
+  log.push(`pnpm:  ${pnpm}   ${pnpmOk ? '✓' : '✗ NOT WORKING'}`);
+  log.push(`node:  ${node}   ${nodeOk ? '✓' : '(using PATH)'}`);
+  log.push('');
+  log.push(`Saved → ${path}`);
+  log.push('Stored in config: gitPath, pnpmPath, nodePath');
+  log.push('');
+  log.push('Wrong path? Override it:');
+  log.push('  /config set pnpmPath <full-path>');
+  log.push('  /config set gitPath <full-path>');
+  log.push('  /config set nodePath <full-path>');
+  if (!pnpmOk) { log.push(''); log.push('⚠️ pnpm not found. Run `which pnpm` on the server, then'); log.push('   /config set pnpmPath <that path>'); }
+
+  return { success: gitOk && pnpmOk, log };
 }
 
 /** Read the monotonic build number from version.json (best-effort). The
@@ -202,10 +294,12 @@ export function executeUpdate(nodeDB: NodeDB): Promise<{ success: boolean; log: 
     // found`). corepack ships with Node and lives next to the node binary
     // that's already on PATH, so `corepack pnpm` is the reliable fallback.
     const pnpm = resolvePnpmCmd(gitRoot, nodeDB);
+    const git = resolveGitCmd(gitRoot, nodeDB);
+    log.push(`Using git: ${git}`);
     log.push(`Using pnpm: ${pnpm}`);
 
     const steps = [
-      { name: 'git pull', cmd: `git pull origin ${branch}` },
+      { name: 'git pull', cmd: `${git} pull origin ${branch}` },
       { name: 'pnpm install', cmd: `${pnpm} install --frozen-lockfile` },
       { name: 'build packages', cmd: `${pnpm} --filter './packages/**' build` },
       { name: 'build relay', cmd: `${pnpm} --filter @muster/relay build` },

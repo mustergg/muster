@@ -28,7 +28,7 @@ import { SquadDB } from './squadDB';
 import type { RelayClient } from './types';
 import { randomBytes } from 'crypto';
 import { freemem, totalmem, uptime as osUptime, hostname, platform, arch } from 'os';
-import { getCurrentVersion, getGitBranch, getGitCommit, checkForUpdates, executeUpdate, compareVersions } from './nodeUpdater';
+import { getCurrentVersion, getGitBranch, getGitCommit, checkForUpdates, executeUpdate, compareVersions, autoconfigure } from './nodeUpdater';
 
 /** Reserved public key for the node bot. */
 export const NODE_BOT_KEY = '__NODE_BOT__';
@@ -176,11 +176,12 @@ export class AdminBot {
       '⚙️ Config',
       '  /config            — View node configuration',
       '  /config set <key> <value> — Change a setting',
-      '    keys: nodeName, retentionDays, maxFileSize, pnpmPath',
+      '    keys: nodeName, retentionDays, maxFileSize, pnpmPath, gitPath, nodePath',
       '    e.g. /config set nodeName My Node',
       '    e.g. /config set pnpmPath /home/pi/.local/share/pnpm/pnpm',
       '',
       '🔄 Maintenance',
+      '  /update autoconf   — Detect + save tool paths (git, node, pnpm)',
       '  /update check      — Check remote for updates (git fetch)',
       '  /update confirm    — Update now (git pull + install + build + restart)',
       '  /purge <days>      — Delete messages older than N days (whole node)',
@@ -292,7 +293,7 @@ export class AdminBot {
     if (args[0] === 'set' && args.length >= 3) {
       const key = args[1]!;
       const value = args.slice(2).join(' ');
-      const allowed = ['nodeName', 'retentionDays', 'maxFileSize', 'adminPublicKey', 'pnpmPath'];
+      const allowed = ['nodeName', 'retentionDays', 'maxFileSize', 'adminPublicKey', 'pnpmPath', 'gitPath', 'nodePath'];
       if (!allowed.includes(key)) {
         this.reply(client, `❌ Unknown config key: ${key}\nAllowed: ${allowed.join(', ')}`);
         return;
@@ -309,6 +310,8 @@ export class AdminBot {
     const maxFile = this.nodeDB.getConfig('maxFileSize') || '1048576';
     const adminKey = this.nodeDB.getConfig('adminPublicKey') || 'not set';
     const pnpmPath = this.nodeDB.getConfig('pnpmPath') || 'auto-detect';
+    const gitPath = this.nodeDB.getConfig('gitPath') || 'auto-detect';
+    const nodePath = this.nodeDB.getConfig('nodePath') || 'auto-detect';
 
     this.reply(client, [
       '⚙️ Node Configuration:',
@@ -318,9 +321,11 @@ export class AdminBot {
       `maxFileSize:    ${maxFile} bytes (${Math.round(parseInt(maxFile) / 1024)} KB)`,
       `adminPublicKey: ${adminKey.slice(0, 20)}...`,
       `pnpmPath:       ${pnpmPath}`,
+      `gitPath:        ${gitPath}`,
+      `nodePath:       ${nodePath}`,
       '',
       'To change: /config set <key> <value>',
-      'If /update can\'t find pnpm: /config set pnpmPath <full-path>',
+      'Auto-detect tool paths: /update autoconf',
     ].join('\n'));
   }
 
@@ -413,6 +418,17 @@ export class AdminBot {
   }
 
   private async cmdUpdate(client: RelayClient, args: string[]): Promise<void> {
+    if (args[0] === 'autoconf') {
+      this.reply(client, '🔧 Detecting update toolchain (git, node, pnpm)...');
+      try {
+        const res = autoconfigure(this.nodeDB);
+        this.reply(client, res.log.join('\n'));
+      } catch (err: any) {
+        this.reply(client, `❌ Autoconf failed: ${err.message || 'Unknown error'}`);
+      }
+      return;
+    }
+
     if (args[0] === 'check') {
       this.reply(client, '🔍 Checking for updates...');
       const result = checkForUpdates();
@@ -473,9 +489,11 @@ export class AdminBot {
     this.reply(client, [
       '📦 Update Commands:',
       '',
-      '/update check   — Check if updates are available (git fetch)',
-      '/update confirm — Execute update (git pull + rebuild + restart)',
+      '/update autoconf — Detect + save tool paths (git, node, pnpm)',
+      '/update check    — Check if updates are available (git fetch)',
+      '/update confirm  — Execute update (git pull + rebuild + restart)',
       '',
+      'Run /update autoconf once after setup (or if /update can\'t find pnpm).',
       `Current version: ${getCurrentVersion()} (${getGitBranch()}@${getGitCommit()})`,
     ].join('\n'));
   }
