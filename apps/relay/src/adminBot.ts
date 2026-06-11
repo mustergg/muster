@@ -95,14 +95,36 @@ export class AdminBot {
   // Admin check
   // =================================================================
 
-  /** Check if a public key is the configured admin. */
-  isAdmin(publicKey: string): boolean {
-    const adminKey = this.nodeDB.getConfig('adminPublicKey');
-    if (!adminKey) {
-      // First user to message the bot becomes admin
-      return true;
+  /** 48h ownership-handover window (two owners; then it finalizes). */
+  private static readonly HANDOVER_MS = 48 * 60 * 60 * 1000;
+
+  /** Finalize a pending handover once its 48h window has elapsed: the pending
+   *  owner becomes the sole owner. Idempotent — safe to call on every check. */
+  private resolveOwnership(): void {
+    const pending = this.nodeDB.getConfig('pendingOwner');
+    const sinceStr = this.nodeDB.getConfig('pendingOwnerSince');
+    if (!pending || !sinceStr) return;
+    const since = parseInt(sinceStr) || 0;
+    if (Date.now() - since >= AdminBot.HANDOVER_MS) {
+      this.nodeDB.setConfig('adminPublicKey', pending);
+      this.nodeDB.setConfig('pendingOwner', '');
+      this.nodeDB.setConfig('pendingOwnerSince', '');
+      console.log(`[admin-bot] Ownership handover finalized → ${pending.slice(0, 16)}...`);
     }
-    return adminKey === publicKey;
+  }
+
+  /** Check if a public key may use the bot. During a handover window BOTH the
+   *  previous owner and the pending owner have access. */
+  isAdmin(publicKey: string): boolean {
+    this.resolveOwnership();
+    const adminKey = this.nodeDB.getConfig('adminPublicKey');
+    if (!adminKey) return true; // first user to message the bot claims it
+    if (publicKey === adminKey) return true;
+    // Co-owner during the 48h handover window (resolveOwnership already
+    // promoted it if the window had elapsed).
+    const pending = this.nodeDB.getConfig('pendingOwner');
+    if (pending && publicKey === pending && this.nodeDB.getConfig('pendingOwnerSince')) return true;
+    return false;
   }
 
   /** Set the admin public key (first-time setup). */
@@ -175,7 +197,7 @@ export class AdminBot {
       '  /users             — Registered user counts',
       '',
       '⚙️ Config',
-      '  /owner             — Show / transfer relay ownership',
+      '  /owner             — Owner / handover (set <user> · refuse; 48h, verified only)',
       '  /config            — View node configuration',
       '  /config set <key> <value> — Change a setting',
       '    keys: nodeName, retentionDays, maxFileSize, pnpmPath, gitPath, nodePath',
@@ -331,29 +353,63 @@ export class AdminBot {
     ].join('\n'));
   }
 
-  /** Show or transfer relay ownership. The relay owner is the single account
-   *  with bot access (stored as `adminPublicKey`). */
+  /** Show or transfer relay ownership.
+   *
+   *  Transfer is a 48h handover, not an instant swap:
+   *    - The new owner must be a VERIFIED account.
+   *    - During the 48h both the previous and new owner have bot access.
+   *    - The new (pending) owner can't transfer onward until the window ends.
+   *    - Either party can `/owner refuse` to cancel and revert to the previous
+   *      sole owner.
+   *  After 48h the pending owner becomes sole owner (the previous one loses
+   *  access). Finalization is lazy — see resolveOwnership(). */
   private cmdOwner(client: RelayClient, args: string[]): void {
+    this.resolveOwnership();
     const current = this.nodeDB.getConfig('adminPublicKey');
+    const pending = this.nodeDB.getConfig('pendingOwner');
+    const since = parseInt(this.nodeDB.getConfig('pendingOwnerSince') || '0') || 0;
+    const hoursLeft = pending ? Math.max(0, Math.ceil((AdminBot.HANDOVER_MS - (Date.now() - since)) / (60 * 60 * 1000))) : 0;
 
     if (!args[0]) {
-      const u = current ? this.userDB.getUser(current) : undefined;
-      this.reply(client, [
+      const cu = current ? this.userDB.getUser(current) : undefined;
+      const lines = [
         '👑 Relay Owner',
         '━━━━━━━━━━━━━━━━━━━━',
-        current ? `Owner: ${u?.username || '(unknown user)'}` : 'Owner: not set (first to message the bot claims it)',
+        current ? `Owner: ${cu?.username || '(unknown user)'}` : 'Owner: not set (first to message the bot claims it)',
         ...(current ? [`Key:   ${current.slice(0, 24)}...`] : []),
-        '',
-        'Transfer ownership:',
-        '  /owner set <username>',
-        '  /owner set <publicKeyHex>',
-        '',
-        '⚠️ After transfer you lose bot access — only the new owner keeps it.',
-      ].join('\n'));
+      ];
+      if (pending) {
+        const nu = this.userDB.getUser(pending);
+        lines.push('', `🤝 Handover in progress → ${nu?.username || '(unknown)'} (co-owner)`);
+        lines.push(`   Becomes sole owner in ${hoursLeft}h. /owner refuse to cancel.`);
+      }
+      lines.push('', 'Transfer:  /owner set <username|publicKeyHex>');
+      lines.push('Cancel:    /owner refuse');
+      this.reply(client, lines.join('\n'));
+      return;
+    }
+
+    if (args[0] === 'refuse' || args[0] === 'cancel') {
+      if (!pending) { this.reply(client, 'ℹ️ No pending handover to cancel.'); return; }
+      this.nodeDB.setConfig('pendingOwner', '');
+      this.nodeDB.setConfig('pendingOwnerSince', '');
+      const cu = current ? this.userDB.getUser(current) : undefined;
+      console.log(`[admin-bot] Ownership handover refused by ${client.username}`);
+      this.reply(client, `✅ Handover cancelled. ${cu?.username || 'The previous owner'} remains the sole owner.`);
       return;
     }
 
     if (args[0] === 'set' && args[1]) {
+      // The pending (new) owner can't re-transfer until the window completes.
+      if (pending && client.publicKey === pending) {
+        this.reply(client, `⏳ You can't transfer ownership until the 48h handover completes (${hoursLeft}h left).`);
+        return;
+      }
+      if (pending) {
+        this.reply(client, '⏳ A handover is already in progress. Cancel it with /owner refuse first.');
+        return;
+      }
+
       const target = args[1].trim();
       let user;
       if (/^[0-9a-fA-F]{64}$/.test(target)) {
@@ -365,19 +421,27 @@ export class AdminBot {
       }
 
       if (user.publicKey === current) { this.reply(client, `ℹ️ ${user.username} is already the owner.`); return; }
+      if (!this.userDB.isVerified(user.publicKey)) {
+        this.reply(client, `❌ ${user.username} must be a verified account before they can become owner.`);
+        return;
+      }
 
-      this.nodeDB.setConfig('adminPublicKey', user.publicKey);
-      console.log(`[admin-bot] Ownership transferred: ${client.username} → ${user.username} (${user.publicKey.slice(0, 16)}...)`);
+      this.nodeDB.setConfig('pendingOwner', user.publicKey);
+      this.nodeDB.setConfig('pendingOwnerSince', String(Date.now()));
+      console.log(`[admin-bot] Ownership handover started: ${client.username} → ${user.username} (${user.publicKey.slice(0, 16)}...)`);
       this.reply(client, [
-        `✅ Ownership transferred to ${user.username}.`,
-        `Key: ${user.publicKey.slice(0, 24)}...`,
+        `🤝 Ownership handover started → ${user.username}.`,
         '',
-        'You no longer have bot access. The new owner does.',
+        'For the next 48h the relay has TWO owners (you + them).',
+        'After 48h they become the sole owner and you lose bot access.',
+        'They cannot transfer it onward until then.',
+        '',
+        'Changed your mind? /owner refuse — reverts to you as sole owner.',
       ].join('\n'));
       return;
     }
 
-    this.reply(client, 'Usage:\n  /owner                          — show current owner\n  /owner set <username|publicKeyHex>  — transfer ownership');
+    this.reply(client, 'Usage:\n  /owner                              — show owner / handover status\n  /owner set <username|publicKeyHex>  — start a 48h handover (new owner must be verified)\n  /owner refuse                       — cancel a pending handover');
   }
 
   private cmdPurge(client: RelayClient, args: string[]): void {
