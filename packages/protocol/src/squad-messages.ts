@@ -46,6 +46,15 @@ export interface GetSquadsMsg {
   timestamp: number;
 }
 
+/** Get every squad the user is a member of, across all communities + personal
+ *  (membership-based, independent of community membership). The relay replies
+ *  with one SQUAD_LIST per community group. */
+export interface GetMySquadsMsg {
+  type: 'GET_MY_SQUADS';
+  payload: Record<string, never>;
+  timestamp: number;
+}
+
 export interface InviteToSquadMsg {
   type: 'INVITE_TO_SQUAD';
   payload: { squadId: string; targetUsername: string };

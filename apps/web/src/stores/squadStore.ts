@@ -157,14 +157,9 @@ export const useSquadStore = create<SquadState>((set, get) => ({
   loadMySquads: () => {
     const { transport, publicKey } = useNetworkStore.getState();
     if (!transport?.isConnected || !publicKey) return;
-    transport.send({ type: 'GET_SQUADS', payload: { communityId: `personal:${publicKey}` }, timestamp: Date.now() });
-    // Community squads — query each known community.
-    try {
-      const communities = (window as any).__community?.getState?.().communities || {};
-      for (const cid of Object.keys(communities)) {
-        transport.send({ type: 'GET_SQUADS', payload: { communityId: cid }, timestamp: Date.now() });
-      }
-    } catch { /* ignore */ }
+    // Membership-based: returns every squad we're in (any community + personal),
+    // even ones whose parent community we're not a member of.
+    transport.send({ type: 'GET_MY_SQUADS', payload: {}, timestamp: Date.now() });
   },
 
   allMySquads: () => {
@@ -340,6 +335,19 @@ export const useSquadStore = create<SquadState>((set, get) => ({
       else gc.setupEncryption(squadId, squad.communityId, keys, 'from_join').catch(() => {});
     };
 
+    // Owner-only: make sure every current member holds the CURRENT key (no
+    // rotation) — hands the key to members who joined while the owner was away,
+    // fixing 🔒 messages. Sets up encryption first if not yet enabled.
+    const ownerEnsureKey = (squadId: string): void => {
+      const squad = get().allMySquads().find((sq) => sq.id === squadId);
+      if (!squad || squad.ownerPublicKey !== myKey) return;
+      const memberKeys = (get().members[squadId] || []).map((m) => m.publicKey);
+      const keys = memberKeys.length > 0 ? memberKeys : [myKey];
+      const gc = useGroupCryptoStore.getState();
+      if (gc.isEncrypted(squadId)) gc.redistributeKey(squadId, keys).catch(() => {});
+      else gc.setupEncryption(squadId, squad.communityId, keys, 'from_join').catch(() => {});
+    };
+
     const unsubscribe = useNetworkStore.getState().onMessage((msg: TransportMessage) => {
       switch (msg.type) {
         case 'SQUAD_LIST': {
@@ -384,8 +392,10 @@ export const useSquadStore = create<SquadState>((set, get) => ({
           if (pendingRotate.has(p.squadId)) {
             pendingRotate.delete(p.squadId);
             ownerSyncKey(p.squadId); // rotates (encrypted) → revokes removed staff
-          } else if (!useGroupCryptoStore.getState().isEncrypted(p.squadId)) {
-            ownerSyncKey(p.squadId);
+          } else {
+            // Set up the key (first time) or redistribute the current key to
+            // everyone, so members who joined while we were away can decrypt.
+            ownerEnsureKey(p.squadId);
           }
           break;
         }

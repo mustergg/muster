@@ -226,6 +226,22 @@ export class SquadDB {
     return (this.db.prepare('SELECT COUNT(*) as c FROM squad_members WHERE squadId = ?').get(squadId) as any).c;
   }
 
+  /** Every squad the user is a member of (any community + personal), with
+   *  member counts. Membership-based, so it works even when the user is not a
+   *  member of the squad's parent community. */
+  getAllUserSquads(publicKey: string): Array<DBSquad & { memberCount: number }> {
+    const rows = this.db.prepare(`
+      SELECT s.* FROM squads s
+      JOIN squad_members sm ON sm.squadId = s.id
+      WHERE sm.publicKey = ?
+      ORDER BY s.createdAt ASC
+    `).all(publicKey) as DBSquad[];
+    return rows.map((s) => ({
+      ...s,
+      memberCount: (this.db.prepare('SELECT COUNT(*) as c FROM squad_members WHERE squadId = ?').get(s.id) as any).c,
+    }));
+  }
+
   /** Get all squads a user is a member of (within a community). */
   getUserSquads(communityId: string, publicKey: string): string[] {
     const rows = this.db.prepare(`

@@ -49,6 +49,9 @@ interface GroupCryptoState {
   setupEncryption: (channelId: string, communityId: string, memberPublicKeys: string[], historyAccess?: string) => Promise<void>;
   /** Rotate the group key (after kick). */
   rotateKey: (channelId: string, remainingMemberKeys: string[], reason?: string) => Promise<void>;
+  /** Re-wrap the CURRENT key (no new epoch) for the given members — used to
+   *  hand the existing key to members who joined while the owner was away. */
+  redistributeKey: (channelId: string, memberKeys: string[]) => Promise<void>;
   /** Encrypt a message for a channel. Returns encrypted payload or null if not encrypted. */
   encrypt: (channelId: string, plaintext: string) => Promise<{ ciphertext: string; nonce: string; epoch: number } | null>;
   /** Decrypt a message from a channel. Returns plaintext or null if can't decrypt. */
@@ -264,6 +267,32 @@ export const useGroupCryptoStore = create<GroupCryptoState>((set, get) => ({
     });
 
     console.log(`[group-crypto] Key rotated for ${channelId.slice(0, 12)}: epoch ${newEpoch}, reason: ${reason}`);
+  },
+
+  redistributeKey: async (channelId, memberKeys) => {
+    const { transport, publicKey } = useNetworkStore.getState();
+    if (!transport?.isConnected) return;
+    const ch = get().channels.get(channelId);
+    if (!ch) return; // not set up — caller should setupEncryption instead
+    const current = ch.keys.get(ch.currentEpoch);
+    if (!current) return;
+
+    const auth = (await import('./authStore.js')).useAuthStore.getState();
+    const myPrivateKeyHex = auth.publicKeyHex ? toHex(auth._keypair?.privateKey || new Uint8Array(32)) : '';
+
+    const bundles: Array<{ recipientPublicKey: string; encryptedKey: string; nonce: string }> = [];
+    for (const memberPubKey of memberKeys) {
+      const { encryptedKey, nonce } = await encryptGroupKeyForRecipient(current.key, myPrivateKeyHex, memberPubKey);
+      bundles.push({ recipientPublicKey: memberPubKey, encryptedKey, nonce });
+    }
+    // Same epoch — just (re)deliver the existing key to everyone (incl. members
+    // who joined while we were offline). No rotation, so no churn.
+    transport.send({
+      type: 'GROUP_KEY_DISTRIBUTE',
+      payload: { channelId, epoch: ch.currentEpoch, bundles, distributorPublicKey: publicKey },
+      timestamp: Date.now(),
+    });
+    console.log(`[group-crypto] Key redistributed for ${channelId.slice(0, 12)}: epoch ${ch.currentEpoch}, ${bundles.length} members`);
   },
 
   encrypt: async (channelId, plaintext) => {

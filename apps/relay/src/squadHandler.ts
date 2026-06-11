@@ -82,6 +82,7 @@ export function handleSquadMessage(
   switch (msg.type) {
     case 'CREATE_SQUAD':          handleCreate(client, msg, squadDB, communityDB, userDB, sendToClient, clients); break;
     case 'GET_SQUADS':            handleGetSquads(client, msg, squadDB, communityDB, sendToClient); break;
+    case 'GET_MY_SQUADS':         handleGetMySquads(client, squadDB, sendToClient); break;
     case 'INVITE_TO_SQUAD':       handleInvite(client, msg, squadDB, userDB, sendToClient, clients); break;
     case 'LEAVE_SQUAD':           handleLeave(client, msg, squadDB, sendToClient); break;
     case 'KICK_FROM_SQUAD':       handleKick(client, msg, squadDB, sendToClient, clients); break;
@@ -174,6 +175,24 @@ function addCommunityStaffAsGhosts(
   const added = squadDB.ensureGhostStaff(squadId, staff);
   for (const g of added) {
     broadcastToSquad(squadId, { type: 'SQUAD_MEMBER_JOINED', payload: { squadId, member: { publicKey: g.publicKey, username: g.username, role: g.role, ghost: 1, joinedAt: g.joinedAt } }, timestamp: Date.now() });
+  }
+}
+
+/** Return every squad the requester is a member of (any community + personal),
+ *  grouped into one SQUAD_LIST per community so the client store keys them
+ *  correctly. Works for squad-only users who aren't community members. */
+function handleGetMySquads(
+  client: RelayClient, squadDB: SquadDB,
+  sendToClient: (c: RelayClient, m: Record<string, unknown>) => void,
+): void {
+  const squads = squadDB.getAllUserSquads(client.publicKey);
+  const byCommunity: Record<string, any[]> = {};
+  for (const s of squads) {
+    if (!byCommunity[s.communityId]) byCommunity[s.communityId] = [];
+    byCommunity[s.communityId]!.push(s);
+  }
+  for (const communityId of Object.keys(byCommunity)) {
+    sendToClient(client, { type: 'SQUAD_LIST', payload: { communityId, squads: byCommunity[communityId] }, timestamp: Date.now() });
   }
 }
 
