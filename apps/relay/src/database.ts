@@ -67,6 +67,12 @@ export class RelayDB {
     this.db.prepare('DELETE FROM messages WHERE messageId = ?').run(messageId);
   }
 
+  /** Replace a message's stored content (edit). Content stays opaque to the
+   *  relay (ciphertext for E2E channels). */
+  updateMessageContent(messageId: string, content: string): void {
+    this.db.prepare('UPDATE messages SET content = ? WHERE messageId = ?').run(content, messageId);
+  }
+
   /** Delete all messages in a channel (used when deleting a community). */
   deleteMessagesByChannel(channel: string): void {
     const result = this.db.prepare('DELETE FROM messages WHERE channel = ?').run(channel);

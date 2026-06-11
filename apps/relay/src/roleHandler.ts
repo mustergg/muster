@@ -43,7 +43,50 @@ export function handleRoleMessage(
     case 'DELETE_MESSAGE':
       handleDeleteMessage(client, msg, communityDB, messageDB, sendToClient, channels);
       break;
+    case 'EDIT_MESSAGE':
+      handleEditMessage(client, msg, messageDB, sendToClient, channels);
+      break;
   }
+}
+
+// =================================================================
+// EDIT_MESSAGE
+// =================================================================
+
+function handleEditMessage(
+  client: RelayClient,
+  msg: any,
+  messageDB: RelayDB,
+  sendToClient: (client: RelayClient, msg: Record<string, unknown>) => void,
+  channels: Map<string, Set<WebSocket>>,
+): void {
+  const { channel, messageId, content } = msg.payload || {};
+  if (!channel || !messageId || typeof content !== 'string') return;
+  if (!client.channels.has(channel)) {
+    sendToClient(client, { type: 'ERROR', payload: { code: 'FORBIDDEN', message: 'Cannot edit messages in channels you are not in' }, timestamp: Date.now() });
+    return;
+  }
+  const stored = messageDB.getMessage(messageId);
+  if (!stored) return;
+
+  // Only the author may edit, and only within the 15-minute window.
+  const EDIT_WINDOW_MS = 15 * 60 * 1000;
+  const isAuthor = stored.senderPublicKey === client.publicKey;
+  const withinWindow = (Date.now() - stored.timestamp) <= EDIT_WINDOW_MS;
+  if (!isAuthor || !withinWindow) {
+    sendToClient(client, { type: 'ERROR', payload: { code: 'FORBIDDEN', message: isAuthor ? 'The edit window for this message has passed.' : 'You can only edit your own messages.' }, timestamp: Date.now() });
+    return;
+  }
+
+  messageDB.updateMessageContent(messageId, content);
+
+  const notification = JSON.stringify({
+    type: 'MESSAGE_EDITED',
+    payload: { channel, messageId, content, editedAt: Date.now() },
+    timestamp: Date.now(),
+  });
+  const subs = channels.get(channel);
+  if (subs) { for (const ws of subs) { if (ws.readyState === 1) ws.send(notification); } }
 }
 
 // =================================================================

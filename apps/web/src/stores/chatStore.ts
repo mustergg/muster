@@ -117,6 +117,7 @@ function decodeBlobContent(content: string): { fileName: string; mimeType: strin
 export interface ChatMessage {
   messageId: string; channel: string; content: string;
   senderPublicKey: string; senderUsername: string; timestamp: number; isOwn: boolean;
+  edited?: boolean;
   fileId?: string;
   fileName?: string;
   mimeType?: string;
@@ -146,6 +147,8 @@ interface ChatState {
   /** R25 — Phase 4. Fetch + decrypt a blob attachment and attach its object URL. */
   fetchAttachment: (channel: string, messageId: string) => Promise<void>;
   deleteMessage: (channel: string, messageId: string) => void;
+  /** Edit one's own message (within the edit window); re-encrypts if E2E. */
+  editMessage: (channel: string, messageId: string, content: string) => void;
   setActiveChannel: (channelId: string | null) => void;
   clear: () => void;
   init: () => () => void;
@@ -489,6 +492,20 @@ export const useChatStore = create<ChatState>((set, get) => ({
     transport.send({ type: 'DELETE_MESSAGE', payload: { channel, messageId }, timestamp: Date.now() });
   },
 
+  editMessage: (channel, messageId, content) => {
+    const network = useNetworkStore.getState();
+    if (!network.transport?.isConnected) return;
+    // Optimistic local update.
+    set((state) => ({
+      messages: { ...state.messages, [channel]: (state.messages[channel] || []).map((m) => m.messageId === messageId ? { ...m, content, edited: true } : m) },
+    }));
+    // Re-encrypt with the channel group key if E2E is enabled, then send.
+    void useGroupCryptoStore.getState().encrypt(channel, content).then((enc) => {
+      const wire = enc ? packChanEnc(enc) : content;
+      network.transport!.send({ type: 'EDIT_MESSAGE', payload: { channel, messageId, content: wire }, timestamp: Date.now() });
+    });
+  },
+
   setActiveChannel: (channelId) => set({ activeChannel: channelId }),
   clear: () => { browserDB.clearAll(); set({ messages: {}, presence: {}, activeChannel: null }); },
 
@@ -569,6 +586,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
             const existing = state.messages[p.channel] || [];
             return { messages: { ...state.messages, [p.channel]: existing.filter((m) => m.messageId !== p.messageId) } };
           });
+          break;
+        }
+
+        case 'MESSAGE_EDITED': {
+          const p = msg.payload as any;
+          const enc = isChanEnc(p.content);
+          // Persist the wire form for reload consistency.
+          void browserDB.updateContent(p.messageId, p.content);
+          set((state) => {
+            const existing = state.messages[p.channel] || [];
+            return { messages: { ...state.messages, [p.channel]: existing.map((m) => m.messageId === p.messageId ? { ...m, content: enc ? '\u{1F512}…' : p.content, edited: true } : m) } };
+          });
+          if (enc) decryptChannelInto(p.channel, p.messageId, p.content);
           break;
         }
 

@@ -109,6 +109,12 @@ export class BrowserDB extends Dexie {
     }
   }
 
+  /** Update just the stored content of a message (edit), keeping its order. */
+  async updateContent(messageId: string, content: string): Promise<void> {
+    try { await this.messages.update(messageId, { content }); }
+    catch (err) { console.warn('[db] Failed to update message content:', err); }
+  }
+
   /** Delete all messages for a channel. */
   async clearChannel(channel: string): Promise<void> {
     await this.messages.where('channel').equals(channel).delete();
