@@ -6,6 +6,8 @@
     "active": true,
     "android": {
       "minSdkVersion": 26
-    }
+    },
+    "externalBin": [],
+    "resources": {}
   }
 }
