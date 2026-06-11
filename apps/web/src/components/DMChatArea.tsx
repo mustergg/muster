@@ -84,11 +84,26 @@ function DMAttachment({ msg }: { msg: DMMessage }): React.JSX.Element {
   );
 }
 
+const DM_EDIT_WINDOW_MS = 15 * 60 * 1000;
+
 function DMMessageRow({ msg, ctxId, partnerKey }: { msg: DMMessage; ctxId: string; partnerKey: string }): React.JSX.Element {
   const hue = parseInt((msg.senderPublicKey || '0000').slice(0, 4), 16) % 360;
   const initials = (msg.senderUsername || '??').slice(0, 2).toUpperCase();
   const [hover, setHover] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [editDraft, setEditDraft] = useState('');
+  const deleteDM = useDMStore((s) => s.deleteDM);
+  const editDM = useDMStore((s) => s.editDM);
   const hasAttachment = !!msg._attachment || !!msg.attachmentUrl;
+  const within = (Date.now() - msg.timestamp) <= DM_EDIT_WINDOW_MS;
+  const canDelete = msg.isOwn && within;
+  const canEdit = msg.isOwn && within && !hasAttachment;
+
+  const saveEdit = (): void => {
+    const v = editDraft.trim();
+    setEditing(false);
+    if (v && v !== msg.content) editDM(partnerKey, msg.messageId, v);
+  };
 
   return (
     <div style={styles.msgGroup} onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}>
@@ -100,16 +115,45 @@ function DMMessageRow({ msg, ctxId, partnerKey }: { msg: DMMessage; ctxId: strin
           <span style={{ ...styles.author, color: `hsl(${hue},75%,72%)` }}>
             {msg.senderUsername}
           </span>
-          <span style={styles.time}>{formatTime(msg.timestamp)}</span>
+          <span style={styles.time}>{formatTime(msg.timestamp)}{msg.edited ? ' (edited)' : ''}</span>
           {msg.isOwn && <SeenIndicator context="dm" contextId={ctxId} messageId={msg.messageId} />}
           {!msg.isOwn && hover && <MarkSeenButton context="dm" contextId={ctxId} messageId={msg.messageId} to={partnerKey} />}
         </div>
-        {msg.content && <p style={styles.content}>{msg.content}</p>}
+        {editing ? (
+          <div style={dmEdit.row}>
+            <input
+              autoFocus
+              value={editDraft}
+              onChange={(e) => setEditDraft(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); saveEdit(); } else if (e.key === 'Escape') setEditing(false); }}
+              style={dmEdit.input}
+            />
+            <button onClick={saveEdit} style={dmEdit.save}>Save</button>
+            <button onClick={() => setEditing(false)} style={dmEdit.cancel}>Cancel</button>
+          </div>
+        ) : (
+          msg.content && <p style={styles.content}>{msg.content}</p>
+        )}
         {hasAttachment && <DMAttachment msg={msg} />}
       </div>
+      {!editing && hover && (canEdit || canDelete) && (
+        <div style={dmEdit.actions}>
+          {canEdit && <button onClick={() => { setEditDraft(msg.content); setEditing(true); }} style={dmEdit.actionBtn} title="Edit message">{'✏️'}</button>}
+          {canDelete && <button onClick={() => { if (confirm('Delete this message?')) deleteDM(partnerKey, msg.messageId); }} style={dmEdit.actionBtn} title="Delete message">{'\u{1F5D1}'}</button>}
+        </div>
+      )}
     </div>
   );
 }
+
+const dmEdit = {
+  actions: { position: 'absolute' as const, top: '0', right: '4px', display: 'flex', gap: '3px' } as React.CSSProperties,
+  actionBtn: { width: '24px', height: '24px', borderRadius: '6px', border: '1px solid var(--color-border)', background: 'var(--color-bg-secondary)', color: 'var(--color-text-secondary)', cursor: 'pointer', fontSize: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center' } as React.CSSProperties,
+  row: { display: 'flex', gap: '6px', alignItems: 'center', marginTop: '2px' } as React.CSSProperties,
+  input: { flex: 1, padding: '6px 10px', background: 'var(--color-bg-input)', border: '1px solid var(--color-accent)', borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', fontSize: '14px', outline: 'none', fontFamily: 'inherit' } as React.CSSProperties,
+  save: { padding: '5px 10px', borderRadius: 'var(--radius-md)', border: 'none', background: 'var(--color-accent)', color: '#fff', fontSize: '11px', fontWeight: 600, cursor: 'pointer' } as React.CSSProperties,
+  cancel: { padding: '5px 10px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'transparent', color: 'var(--color-text-muted)', fontSize: '11px', cursor: 'pointer' } as React.CSSProperties,
+} as const;
 
 const fileStyles = {
   placeholder: { padding: '12px', background: 'var(--color-bg-hover)', borderRadius: '8px', fontSize: '12px', color: 'var(--color-text-muted)', marginTop: '4px' } as React.CSSProperties,
@@ -286,7 +330,7 @@ const styles = {
   headerName: { fontSize: '15px', fontWeight: 600 } as React.CSSProperties,
   messages: { flex: 1, overflowY: 'auto' as const, padding: '16px', display: 'flex', flexDirection: 'column' as const, gap: '4px' } as React.CSSProperties,
   emptyChannel: { fontSize: '13px', color: 'var(--color-text-muted)', padding: '8px 0' } as React.CSSProperties,
-  msgGroup: { display: 'flex', gap: '12px', padding: '2px 0', marginBottom: '8px' } as React.CSSProperties,
+  msgGroup: { position: 'relative' as const, display: 'flex', gap: '12px', padding: '2px 0', marginBottom: '8px' } as React.CSSProperties,
   avatar: { width: '36px', height: '36px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', fontWeight: 700, flexShrink: 0, alignSelf: 'flex-start' as const, marginTop: '2px' } as React.CSSProperties,
   msgBody: { flex: 1, minWidth: 0 } as React.CSSProperties,
   msgHeader: { display: 'flex', alignItems: 'baseline', gap: '8px', marginBottom: '2px' } as React.CSSProperties,

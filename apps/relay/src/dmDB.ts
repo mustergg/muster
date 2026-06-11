@@ -79,6 +79,18 @@ export class DMDB {
     } catch { /* ignore duplicates */ }
   }
 
+  getMessage(messageId: string): DBDirectMessage | undefined {
+    return this.db.prepare('SELECT * FROM direct_messages WHERE messageId = ?').get(messageId) as DBDirectMessage | undefined;
+  }
+
+  deleteMessage(messageId: string): boolean {
+    return this.db.prepare('DELETE FROM direct_messages WHERE messageId = ?').run(messageId).changes > 0;
+  }
+
+  updateMessageContent(messageId: string, content: string): boolean {
+    return this.db.prepare('UPDATE direct_messages SET content = ? WHERE messageId = ?').run(content, messageId).changes > 0;
+  }
+
   getHistory(userA: string, userB: string, since: number, limit = 200): DBDirectMessage[] {
     return this.db.prepare(`
       SELECT * FROM direct_messages

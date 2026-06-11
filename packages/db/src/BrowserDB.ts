@@ -115,6 +115,12 @@ export class BrowserDB extends Dexie {
     catch (err) { console.warn('[db] Failed to update message content:', err); }
   }
 
+  /** Delete a single message by id. */
+  async deleteMessage(messageId: string): Promise<void> {
+    try { await this.messages.delete(messageId); }
+    catch (err) { console.warn('[db] Failed to delete message:', err); }
+  }
+
   /** Delete all messages for a channel. */
   async clearChannel(channel: string): Promise<void> {
     await this.messages.where('channel').equals(channel).delete();

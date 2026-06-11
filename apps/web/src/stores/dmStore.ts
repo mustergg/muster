@@ -63,6 +63,7 @@ export interface DMMessage {
   messageId: string; content: string; senderPublicKey: string; senderUsername: string;
   recipientPublicKey: string; timestamp: number; isOwn: boolean;
   encrypted?: boolean;
+  edited?: boolean;
   // R25: blob attachment (file / voice note) carried via sealed DM.
   fileName?: string;
   mimeType?: string;
@@ -89,6 +90,10 @@ interface DMState {
   loadConversations: () => void;
   setActiveConversation: (publicKey: string | null) => void;
   clearConversation: (publicKey: string) => void;
+  /** Delete one of your own DMs (both sides). */
+  deleteDM: (partnerPublicKey: string, messageId: string) => void;
+  /** Edit one of your own DMs within the window (re-encrypts). */
+  editDM: (partnerPublicKey: string, messageId: string, content: string) => void;
   /** R25 — Phase 8. (Re)subscribe to our rotating inbox hashes. */
   subscribeInbox: () => void;
   init: () => () => void;
@@ -364,6 +369,29 @@ export const useDMStore = create<DMState>((set, get) => ({
     dmDB.clearChannel(channelKey);
   },
 
+  deleteDM: (partnerPublicKey, messageId) => {
+    const network = useNetworkStore.getState();
+    if (!network.transport?.isConnected) return;
+    set((state) => ({
+      messages: { ...state.messages, [partnerPublicKey]: (state.messages[partnerPublicKey] || []).filter((m) => m.messageId !== messageId) },
+    }));
+    void dmDB.deleteMessage(messageId);
+    network.transport.send({ type: 'DELETE_DM', payload: { messageId }, timestamp: Date.now() });
+  },
+
+  editDM: (partnerPublicKey, messageId, content) => {
+    const network = useNetworkStore.getState();
+    if (!network.transport?.isConnected) return;
+    const kp = getKeypair();
+    let wire = content;
+    if (kp) { try { wire = encryptDM(content, kp.privateKey, fromHex(partnerPublicKey)); } catch { /* plaintext fallback */ } }
+    set((state) => ({
+      messages: { ...state.messages, [partnerPublicKey]: (state.messages[partnerPublicKey] || []).map((m) => m.messageId === messageId ? { ...m, content, edited: true } : m) },
+    }));
+    void dmDB.updateContent(messageId, wire);
+    network.transport.send({ type: 'EDIT_DM', payload: { messageId, content: wire }, timestamp: Date.now() });
+  },
+
   subscribeInbox: () => sendInboxSubscribe(),
 
   init: () => {
@@ -455,6 +483,25 @@ export const useDMStore = create<DMState>((set, get) => ({
           break;
         }
 
+        case 'DM_DELETED': {
+          const p = msg.payload as any;
+          const otherKey = p.senderPublicKey === myKey ? p.recipientPublicKey : p.senderPublicKey;
+          set((state) => ({
+            messages: { ...state.messages, [otherKey]: (state.messages[otherKey] || []).filter((m) => m.messageId !== p.messageId) },
+          }));
+          void dmDB.deleteMessage(p.messageId);
+          break;
+        }
+        case 'DM_EDITED': {
+          const p = msg.payload as any;
+          const otherKey = p.senderPublicKey === myKey ? p.recipientPublicKey : p.senderPublicKey;
+          const decrypted = tryDecryptDM(p.content, p.senderPublicKey, p.recipientPublicKey, myKey);
+          set((state) => ({
+            messages: { ...state.messages, [otherKey]: (state.messages[otherKey] || []).map((m) => m.messageId === p.messageId ? { ...m, content: decrypted, edited: true } : m) },
+          }));
+          void dmDB.updateContent(p.messageId, p.content);
+          break;
+        }
         case 'DM_HISTORY_RESPONSE': {
           const p = msg.payload as any;
           const histClearedAt = clearedAtFor(p.otherPublicKey);
