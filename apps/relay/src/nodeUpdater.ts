@@ -66,7 +66,20 @@ function resolvePnpmCmd(cwd: string, nodeDB?: NodeDB): string {
     if (pnpmWorks(cmd, cwd)) return cmd;
   }
 
-  // 2. Common absolute locations.
+  // 2. Sibling of the node binary — nvm/fnm install pnpm next to node
+  //    (e.g. ~/.nvm/versions/node/vX/bin/node → .../bin/pnpm). Most reliable
+  //    when node was resolved but PATH lacks pnpm.
+  const nodePath = nodeDB?.getConfig('nodePath') || process.execPath;
+  if (nodePath) {
+    const binDir = nodePath.replace(/[\\/][^\\/]*$/, ''); // dirname
+    const sibling = `${binDir}/pnpm`;
+    if (pnpmWorks(shellQuote(sibling), cwd)) return persist(shellQuote(sibling));
+    // corepack ships next to node too
+    const corepack = `${binDir}/corepack`;
+    if (pnpmWorks(`${shellQuote(corepack)} pnpm`, cwd)) return persist(`${shellQuote(corepack)} pnpm`);
+  }
+
+  // 3. Common absolute locations.
   const home = process.env.HOME || process.env.USERPROFILE || '/home/pi';
   const direct = [
     `${home}/.local/share/pnpm/pnpm`,
@@ -143,9 +156,10 @@ export function autoconfigure(nodeDB: NodeDB): { success: boolean; log: string[]
   log.push(`Git root: ${gitRoot}`);
   log.push('');
 
+  // Resolve node first so the pnpm probe can look next to the node binary.
+  const node = resolveNodePath(nodeDB);
   const git = resolveGitCmd(gitRoot, nodeDB);
   const pnpm = resolvePnpmCmd(gitRoot, nodeDB);
-  const node = resolveNodePath(nodeDB);
   const branch = getGitBranch();
 
   const gitOk = pnpmWorks(git, gitRoot);
