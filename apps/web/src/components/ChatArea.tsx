@@ -19,6 +19,7 @@ import { ReceiptToggle, SeenIndicator, MarkSeenButton } from './ReadReceiptUI.js
 import { useReadReceiptStore } from '../stores/readReceiptStore.js';
 import { useComposerStore, appendMention, handleMentionBackspace } from '../stores/composerStore.js';
 import { parseReply, packReply, replyPreview, mentionsUser, flashMessage, isFirstMentionView } from '../lib/messageFx.js';
+import { useTypeToFocus } from '../lib/useTypeToFocus.js';
 import type { ActiveLocation } from '../pages/MainLayout.js';
 import type { TransportMessage } from '@muster/transport';
 
@@ -341,6 +342,8 @@ export default function ChatArea({ active }: Props): React.JSX.Element {
   const [dragOver, setDragOver] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const textInputRef = useRef<HTMLInputElement>(null);
+  useTypeToFocus(textInputRef);
   // Drag depth counter — dragenter/dragleave fire for every child element, so
   // a plain boolean flickers. Count enters vs leaves and only hide at zero.
   const dragDepthRef = useRef(0);
@@ -534,6 +537,7 @@ export default function ChatArea({ active }: Props): React.JSX.Element {
           </button>
           <VoiceRecorder onSend={(f) => void uploadFile(f)} disabled={uploading} />
           <input
+            ref={textInputRef}
             style={styles.input}
             type="text"
             value={draft}

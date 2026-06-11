@@ -10,6 +10,7 @@ import EmojiPicker from './EmojiPicker.js';
 import VoiceRecorder from './VoiceRecorder.js';
 import { ReceiptToggle, SeenIndicator, MarkSeenButton } from './ReadReceiptUI.js';
 import { parseReply, packReply, replyPreview, mentionsUser, flashMessage, isFirstMentionView } from '../lib/messageFx.js';
+import { useTypeToFocus } from '../lib/useTypeToFocus.js';
 import { useReadReceiptStore } from '../stores/readReceiptStore.js';
 
 interface Props {
@@ -198,6 +199,8 @@ export default function DMChatArea({ partnerPublicKey }: Props): React.JSX.Eleme
   const [dragOver, setDragOver] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const textInputRef = useRef<HTMLInputElement>(null);
+  useTypeToFocus(textInputRef);
   const dragDepthRef = useRef(0);
 
   const uploadFile = useCallback(async (file: File) => {
@@ -330,6 +333,7 @@ export default function DMChatArea({ partnerPublicKey }: Props): React.JSX.Eleme
           </button>
           <VoiceRecorder onSend={(f) => void uploadFile(f)} disabled={uploading} />
           <input
+            ref={textInputRef}
             style={styles.input}
             type="text"
             value={draft}

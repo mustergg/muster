@@ -11,6 +11,7 @@ import { useNetworkStore } from '../stores/networkStore.js';
 import { useCommunityStore } from '../stores/communityStore.js';
 import { useComposerStore, appendMention, handleMentionBackspace } from '../stores/composerStore.js';
 import { parseReply, packReply, replyPreview, mentionsUser, flashMessage, isFirstMentionView } from '../lib/messageFx.js';
+import { useTypeToFocus } from '../lib/useTypeToFocus.js';
 import { fetchAndDecryptBlob } from '../lib/blobUpload.js';
 import EmojiPicker from './EmojiPicker.js';
 import VoiceRecorder from './VoiceRecorder.js';
@@ -116,6 +117,8 @@ function SquadBody({ squadId, room }: { squadId: string; room: SquadRoom }): Rea
   const [uploading, setUploading] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const textInputRef = useRef<HTMLInputElement>(null);
+  useTypeToFocus(textInputRef);
 
   const uploadFile = useCallback(async (file: File) => {
     if (file.size > MAX_SQUAD_FILE) { alert(`File too large. Max ${formatSize(MAX_SQUAD_FILE)}.`); return; }
@@ -357,6 +360,7 @@ function SquadBody({ squadId, room }: { squadId: string; room: SquadRoom }): Rea
         </button>
         <VoiceRecorder onSend={(f) => void uploadFile(f)} disabled={uploading} />
         <input
+          ref={textInputRef}
           type="text" value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={handleInputKeyDown}
