@@ -28,6 +28,8 @@ interface PeerConnection {
 interface VoiceState {
   /** Current voice channel ID (null if not in a call). */
   currentChannel: string | null;
+  /** Display name of the current voice channel (for the universal voice bar). */
+  currentChannelName: string | null;
   /** Participants in the current channel. */
   participants: VoiceParticipant[];
   /** Per-channel rosters (active users) for ALL voice channels, for the
@@ -36,14 +38,19 @@ interface VoiceState {
   rosters: Record<string, VoiceParticipant[]>;
   /** Whether local mic is muted. */
   muted: boolean;
+  /** Whether channel audio output is muted locally (deafen). */
+  deafened: boolean;
   /** Whether voice is connecting. */
   connecting: boolean;
   /** Error message. */
   error: string;
 
-  join: (channelId: string) => Promise<void>;
+  /** Join a voice channel. Switching channels auto-leaves the current one. */
+  join: (channelId: string, channelName?: string) => Promise<void>;
   leave: () => void;
   toggleMute: () => void;
+  /** Mute/unmute all incoming channel audio (deafen). */
+  toggleDeafen: () => void;
   /** Ask the relay for current rosters of the given voice channels. */
   requestRosters: (channelIds: string[]) => void;
   init: () => () => void;
@@ -70,6 +77,7 @@ function playRemoteStream(stream: MediaStream, publicKey: string): void {
   audio.srcObject = stream;
   audio.autoplay = true;
   audio.style.display = 'none';
+  audio.muted = useVoiceStore.getState().deafened; // respect deafen for new peers
   document.body.appendChild(audio);
   audio.play().catch(() => { /* autoplay might be blocked */ });
 }
@@ -169,19 +177,22 @@ function createPeerConnection(
 
 export const useVoiceStore = create<VoiceState>((set, get) => ({
   currentChannel: null,
+  currentChannelName: null,
   participants: [],
   rosters: {},
   muted: false,
+  deafened: false,
   connecting: false,
   error: '',
 
-  join: async (channelId: string) => {
+  join: async (channelId: string, channelName?: string) => {
     const { transport } = useNetworkStore.getState();
     if (!transport?.isConnected) return;
 
-    // Leave current channel if in one
+    // Switching channels: leave the current one first (auto-switch).
     const current = get().currentChannel;
-    if (current) get().leave();
+    if (current && current !== channelId) get().leave();
+    else if (current === channelId) return; // already here
 
     set({ connecting: true, error: '' });
 
@@ -212,7 +223,7 @@ export const useVoiceStore = create<VoiceState>((set, get) => ({
         timestamp: Date.now(),
       });
 
-      set({ currentChannel: channelId, connecting: false, muted: false });
+      set({ currentChannel: channelId, currentChannelName: channelName ?? get().currentChannelName ?? 'Voice', connecting: false, muted: false });
       console.log(`[voice] Joined channel ${channelId.slice(0, 12)}`);
     } catch (err: any) {
       set({ connecting: false, error: err.message || 'Failed to access microphone' });
@@ -235,7 +246,7 @@ export const useVoiceStore = create<VoiceState>((set, get) => ({
     }
 
     closeAll();
-    set({ currentChannel: null, participants: [], muted: false, error: '' });
+    set({ currentChannel: null, currentChannelName: null, participants: [], muted: false, deafened: false, error: '' });
     console.log(`[voice] Left channel`);
   },
 
@@ -261,6 +272,15 @@ export const useVoiceStore = create<VoiceState>((set, get) => ({
     }
 
     set({ muted: newMuted });
+  },
+
+  toggleDeafen: () => {
+    const newDeafened = !get().deafened;
+    // Mute/unmute every remote audio element.
+    document.querySelectorAll('audio[id^="voice-audio-"]').forEach((el) => {
+      (el as HTMLAudioElement).muted = newDeafened;
+    });
+    set({ deafened: newDeafened });
   },
 
   requestRosters: (channelIds: string[]) => {

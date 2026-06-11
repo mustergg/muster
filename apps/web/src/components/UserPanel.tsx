@@ -12,12 +12,20 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useAuthStore } from '../stores/authStore.js';
 import { useNetworkStore } from '../stores/networkStore.js';
 import { useStatusStore, STATUS_OPTIONS, statusMeta, type UserAvailability } from '../stores/statusStore.js';
+import { useVoiceStore } from '../stores/voiceStore.js';
 import EditProfileModal from '../pages/EditProfileModal.js';
 
 export default function UserPanel(): React.JSX.Element {
   const { username, logout } = useAuthStore();
   const { status: conn, disconnect } = useNetworkStore();
   const { status, mood, setStatus, setMood } = useStatusStore();
+  const voiceChannel = useVoiceStore((s) => s.currentChannel);
+  const voiceChannelName = useVoiceStore((s) => s.currentChannelName);
+  const voiceMuted = useVoiceStore((s) => s.muted);
+  const voiceDeafened = useVoiceStore((s) => s.deafened);
+  const voiceToggleMute = useVoiceStore((s) => s.toggleMute);
+  const voiceToggleDeafen = useVoiceStore((s) => s.toggleDeafen);
+  const voiceLeave = useVoiceStore((s) => s.leave);
 
   const [showProfile, setShowProfile] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -45,6 +53,36 @@ export default function UserPanel(): React.JSX.Element {
 
   return (
     <>
+      {/* Universal voice bar — shown whenever connected to a voice channel,
+          regardless of the open view. Structured as a list so multiple active
+          channels can be added later. */}
+      {voiceChannel && (
+        <div style={s.voiceBar}>
+          <span style={s.voiceName} title={voiceChannelName || 'Voice'}>
+            {'\u{1F50A}'} {voiceChannelName || 'Voice'}
+          </span>
+          <div style={s.voiceBtns}>
+            <button
+              style={{ ...s.voiceBtn, color: voiceDeafened ? '#E24B4A' : 'var(--color-text-secondary)' }}
+              onClick={voiceToggleDeafen}
+              title={voiceDeafened ? 'Undeafen (channel audio)' : 'Deafen (mute channel audio)'}
+            >
+              {voiceDeafened ? '\u{1F507}' : '\u{1F509}'}
+            </button>
+            <button
+              style={{ ...s.voiceBtn, color: voiceMuted ? '#E24B4A' : 'var(--color-text-secondary)' }}
+              onClick={voiceToggleMute}
+              title={voiceMuted ? 'Unmute mic' : 'Mute mic'}
+            >
+              {voiceMuted ? '\u{1F507}' : '\u{1F3A4}'}
+            </button>
+            <button style={{ ...s.voiceBtn, color: '#E24B4A' }} onClick={voiceLeave} title="Leave voice channel">
+              {'\u{1F4F4}'}
+            </button>
+          </div>
+        </div>
+      )}
+
       <div style={s.panel}>
         <div style={s.avatarWrap}>
           <div style={s.avatar}>{(username ?? '?').slice(0, 2).toUpperCase()}</div>
@@ -91,6 +129,10 @@ export default function UserPanel(): React.JSX.Element {
 }
 
 const s = {
+  voiceBar: { display: 'flex', alignItems: 'center', gap: '6px', padding: '6px 10px', background: 'var(--color-bg-tertiary)', borderTop: '1px solid var(--color-border)', flexShrink: 0 } as React.CSSProperties,
+  voiceName: { flex: 1, minWidth: 0, fontSize: '12px', fontWeight: 600, color: 'var(--color-green)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const } as React.CSSProperties,
+  voiceBtns: { display: 'flex', gap: '2px', flexShrink: 0 } as React.CSSProperties,
+  voiceBtn: { width: '26px', height: '26px', borderRadius: '6px', background: 'transparent', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '14px' } as React.CSSProperties,
   panel: { position: 'relative' as const, padding: '8px 10px', background: 'var(--color-bg-tertiary)', borderTop: '1px solid var(--color-border)', display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 } as React.CSSProperties,
   avatarWrap: { position: 'relative' as const, flexShrink: 0 } as React.CSSProperties,
   avatar: { width: '36px', height: '36px', borderRadius: '50%', background: 'var(--color-accent-dim)', border: '1.5px solid var(--color-accent)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', fontWeight: 600, color: 'var(--color-accent)' } as React.CSSProperties,

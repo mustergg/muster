@@ -40,16 +40,16 @@ export default function VoicePanel({ channelId, channelName }: Props): React.JSX
           <div style={s.voiceIcon}>{'\u{1F3A4}'}</div>
           <p style={s.joinText}>
             {isInOtherChannel
-              ? 'You are in another voice channel. Leave it first to join this one.'
+              ? 'Joining will move you here from your current voice channel.'
               : 'Click below to join the voice channel.'
             }
           </p>
           <button
-            onClick={() => join(channelId)}
-            disabled={connecting || isInOtherChannel}
-            style={{ ...s.joinBtn, opacity: connecting || isInOtherChannel ? 0.5 : 1 }}
+            onClick={() => join(channelId, channelName)}
+            disabled={connecting}
+            style={{ ...s.joinBtn, opacity: connecting ? 0.5 : 1 }}
           >
-            {connecting ? 'Connecting...' : 'Join Voice'}
+            {connecting ? 'Connecting...' : isInOtherChannel ? 'Switch to this channel' : 'Join Voice'}
           </button>
         </div>
       )}
