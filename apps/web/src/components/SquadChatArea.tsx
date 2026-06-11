@@ -10,6 +10,7 @@ import { useSquadStore, SQUAD_BLOB_PREFIX, squadRoomKey, type SquadRoom } from '
 import { useNetworkStore } from '../stores/networkStore.js';
 import { useCommunityStore } from '../stores/communityStore.js';
 import { useComposerStore, appendMention, handleMentionBackspace } from '../stores/composerStore.js';
+import { parseReply, packReply, replyPreview, mentionsUser, flashMessage, isFirstMentionView } from '../lib/messageFx.js';
 import { fetchAndDecryptBlob } from '../lib/blobUpload.js';
 import EmojiPicker from './EmojiPicker.js';
 import VoiceRecorder from './VoiceRecorder.js';
@@ -103,10 +104,11 @@ const fs = {
 /** The full squad chat UI for one room ('text' or 'voice'). */
 function SquadBody({ squadId, room }: { squadId: string; room: SquadRoom }): React.JSX.Element {
   const { messages, members, sendMessage, sendSquadFile, openSquad, loadRoom, inviteMember, kickMember, leaveSquad, deleteSquad, detachSquad, deleteSquadMessage, editSquadMessage, lastMessage, clearMessage, loadMembers } = useSquadStore();
-  const { publicKey: myKey } = useNetworkStore();
+  const { publicKey: myKey, username: myUsername } = useNetworkStore();
   const myCommunityRoles = useCommunityStore((st) => st.myRoles);
   const msgKey = squadRoomKey(squadId, room);
   const [input, setInput] = useState('');
+  const [replyTo, setReplyTo] = useState<{ messageId: string; preview: string } | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState('');
   const [showSettings, setShowSettings] = useState(false);
@@ -178,9 +180,26 @@ function SquadBody({ squadId, room }: { squadId: string; room: SquadRoom }): Rea
 
   const handleSend = () => {
     if (!input.trim()) return;
-    sendMessage(squadId, input.trim(), room);
+    const body = input.trim();
+    sendMessage(squadId, replyTo ? packReply(replyTo.messageId, body) : body, room);
     setInput('');
+    setReplyTo(null);
   };
+
+  const resolveReply = (id: string): { username: string; preview: string } | null => {
+    const orig = (messages[msgKey] || []).find((m) => m.messageId === id);
+    if (!orig) return null;
+    return { username: orig.senderUsername, preview: replyPreview(orig.content, 99) };
+  };
+
+  // Flash messages that @mention me the first time I see them.
+  useEffect(() => {
+    for (const m of (messages[msgKey] || [])) {
+      if (!m.isOwn && mentionsUser(parseReply(m.content).text, myUsername) && isFirstMentionView(myKey, m.messageId)) {
+        setTimeout(() => flashMessage(m.messageId), 150);
+      }
+    }
+  }, [msgKey, (messages[msgKey] || []).length]);
 
   const handleInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>): void => {
     if (handleMentionBackspace(e, input, setInput)) return;
@@ -270,50 +289,66 @@ function SquadBody({ squadId, room }: { squadId: string; room: SquadRoom }): Rea
           const within = (Date.now() - m.timestamp) <= SQUAD_EDIT_WINDOW_MS;
           const canEdit = m.isOwn && within && !blob;
           const isEditing = editingId === m.messageId;
+          const { replyTo: rTo, text } = parseReply(m.content || '');
+          const repliedTo = rTo ? resolveReply(rTo) : null;
+          const mentioned = mentionsUser(text, myUsername);
           const saveEdit = () => {
             const v = editDraft.trim();
             setEditingId(null);
-            if (v && v !== m.content) editSquadMessage(squadId, m.messageId, v, room);
+            if (v && v !== text) editSquadMessage(squadId, m.messageId, rTo ? packReply(rTo, v) : v, room);
           };
           return (
-            <div key={m.messageId} style={s.msg}>
-              <span style={s.msgAuthor}>{m.senderUsername}</span>
-              {isEditing ? (
-                <span style={s.editRow}>
-                  <input
-                    autoFocus
-                    value={editDraft}
-                    onChange={(e) => setEditDraft(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); saveEdit(); } else if (e.key === 'Escape') setEditingId(null); }}
-                    style={s.editInput}
-                  />
-                  <button onClick={saveEdit} style={s.editSave}>Save</button>
-                  <button onClick={() => setEditingId(null)} style={s.editCancel}>Cancel</button>
-                </span>
-              ) : (
-                blob ? <SquadAttachment desc={blob} /> : <span style={s.msgContent}>{m.content}{m.edited ? <span style={s.editedTag}> (edited)</span> : ''}</span>
-              )}
-              <span style={s.msgTime}>{new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-              {m.isOwn
-                ? <SeenIndicator context="squad" contextId={msgKey} messageId={m.messageId} />
-                : <MarkSeenButton context="squad" contextId={msgKey} messageId={m.messageId} />}
-              {!isEditing && canEdit && (
-                <button onClick={() => { setEditDraft(m.content); setEditingId(m.messageId); }} style={s.delMsgBtn} title="Edit message">{'✏️'}</button>
-              )}
-              {!isEditing && (m.isOwn || canModerate) && (
-                <button
-                  onClick={() => { if (confirm('Delete this message?')) deleteSquadMessage(squadId, m.messageId, room); }}
-                  style={s.delMsgBtn}
-                  title="Delete message"
-                >
-                  {'\u{1F5D1}'}
-                </button>
-              )}
+            <div key={m.messageId} id={`msg-${m.messageId}`} style={{ ...s.msgRow, justifyContent: m.isOwn ? 'flex-end' : 'flex-start' }}>
+              <div style={s.msgBubble}>
+                {repliedTo && (
+                  <button style={s.replyChip} onClick={() => rTo && flashMessage(rTo)} title="Jump to message">
+                    {'↪'} {repliedTo.username}: {repliedTo.preview}
+                  </button>
+                )}
+                <div style={s.msg}>
+                  <span style={s.msgAuthor}>{m.senderUsername}</span>
+                  {isEditing ? (
+                    <span style={s.editRow}>
+                      <input
+                        autoFocus
+                        value={editDraft}
+                        onChange={(e) => setEditDraft(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); saveEdit(); } else if (e.key === 'Escape') setEditingId(null); }}
+                        style={s.editInput}
+                      />
+                      <button onClick={saveEdit} style={s.editSave}>Save</button>
+                      <button onClick={() => setEditingId(null)} style={s.editCancel}>Cancel</button>
+                    </span>
+                  ) : (
+                    blob ? <SquadAttachment desc={blob} /> : <span style={{ ...s.msgContent, ...(mentioned ? s.mentioned : {}) }}>{text}{m.edited ? <span style={s.editedTag}> (edited)</span> : ''}</span>
+                  )}
+                  <span style={s.msgTime}>{new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                  {m.isOwn
+                    ? <SeenIndicator context="squad" contextId={msgKey} messageId={m.messageId} />
+                    : <MarkSeenButton context="squad" contextId={msgKey} messageId={m.messageId} />}
+                  {!isEditing && (
+                    <button onClick={() => setReplyTo({ messageId: m.messageId, preview: replyPreview(m.content, 80) })} style={s.delMsgBtn} title="Reply">{'↩️'}</button>
+                  )}
+                  {!isEditing && canEdit && (
+                    <button onClick={() => { setEditDraft(text); setEditingId(m.messageId); }} style={s.delMsgBtn} title="Edit message">{'✏️'}</button>
+                  )}
+                  {!isEditing && (m.isOwn || canModerate) && (
+                    <button onClick={() => { if (confirm('Delete this message?')) deleteSquadMessage(squadId, m.messageId, room); }} style={s.delMsgBtn} title="Delete message">{'\u{1F5D1}'}</button>
+                  )}
+                </div>
+              </div>
             </div>
           );
         })}
         <div ref={bottomRef} />
       </div>
+
+      {replyTo && (
+        <div style={s.replyBar}>
+          <span style={s.replyBarText}>{'↩️'} Replying to: {replyTo.preview}</span>
+          <button onClick={() => setReplyTo(null)} style={s.replyBarClose} title="Cancel reply">{'✕'}</button>
+        </div>
+      )}
 
       {/* Input */}
       <div style={s.inputBar}>
@@ -394,7 +429,14 @@ const s = {
   dangerBtn: { padding: '6px 12px', borderRadius: 'var(--radius-md)', border: '1px solid #E24B4A', background: 'transparent', color: '#E24B4A', fontSize: '12px', cursor: 'pointer', alignSelf: 'flex-start' as const } as React.CSSProperties,
   messageList: { flex: 1, overflowY: 'auto' as const, padding: '12px 16px', display: 'flex', flexDirection: 'column' as const, gap: '4px' } as React.CSSProperties,
   empty: { textAlign: 'center' as const, color: 'var(--color-text-muted)', fontSize: '13px', padding: '48px 16px' } as React.CSSProperties,
+  msgRow: { display: 'flex', padding: '1px 0' } as React.CSSProperties,
+  msgBubble: { maxWidth: '85%', minWidth: 0 } as React.CSSProperties,
   msg: { display: 'flex', gap: '6px', alignItems: 'baseline', padding: '2px 0' } as React.CSSProperties,
+  mentioned: { fontWeight: 700, color: 'var(--color-text-primary)' } as React.CSSProperties,
+  replyChip: { display: 'inline-flex', alignItems: 'center', gap: '4px', maxWidth: '100%', background: 'transparent', border: 'none', color: 'var(--color-text-muted)', fontSize: '10px', cursor: 'pointer', padding: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const, textAlign: 'left' as const } as React.CSSProperties,
+  replyBar: { display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 16px', background: 'var(--color-bg-secondary)', borderTop: '1px solid var(--color-border)' } as React.CSSProperties,
+  replyBarText: { flex: 1, fontSize: '12px', color: 'var(--color-text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const } as React.CSSProperties,
+  replyBarClose: { background: 'transparent', border: 'none', color: 'var(--color-text-muted)', cursor: 'pointer', fontSize: '12px', flexShrink: 0 } as React.CSSProperties,
   msgAuthor: { fontSize: '13px', fontWeight: 600, flexShrink: 0 } as React.CSSProperties,
   msgContent: { fontSize: '13px', color: 'var(--color-text-secondary)', wordBreak: 'break-word' as const } as React.CSSProperties,
   msgTime: { fontSize: '10px', color: 'var(--color-text-muted)', marginLeft: 'auto', flexShrink: 0 } as React.CSSProperties,

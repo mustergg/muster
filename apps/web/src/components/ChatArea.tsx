@@ -18,6 +18,7 @@ import VoiceRecorder from './VoiceRecorder.js';
 import { ReceiptToggle, SeenIndicator, MarkSeenButton } from './ReadReceiptUI.js';
 import { useReadReceiptStore } from '../stores/readReceiptStore.js';
 import { useComposerStore, appendMention, handleMentionBackspace } from '../stores/composerStore.js';
+import { parseReply, packReply, replyPreview, mentionsUser, flashMessage, isFirstMentionView } from '../lib/messageFx.js';
 import type { ActiveLocation } from '../pages/MainLayout.js';
 import type { TransportMessage } from '@muster/transport';
 
@@ -231,7 +232,7 @@ const fileStyles = {
 /** Own messages can be deleted within this window (matches relay). */
 const DELETE_WINDOW_MS = 15 * 60 * 1000;
 
-function MessageRow({ msg, isAdmin, onDelete, onEdit, channelId }: { msg: ChatMessage; isAdmin: boolean; onDelete: (id: string) => void; onEdit: (id: string, content: string) => void; channelId: string }): React.JSX.Element {
+function MessageRow({ msg, isAdmin, onDelete, onEdit, onReply, channelId, myUsername, myKey, resolveReply }: { msg: ChatMessage; isAdmin: boolean; onDelete: (id: string) => void; onEdit: (id: string, content: string) => void; onReply: (msg: ChatMessage) => void; channelId: string; myUsername: string; myKey: string; resolveReply: (id: string) => { username: string; preview: string } | null }): React.JSX.Element {
   const initials = (msg.senderUsername || '??').slice(0, 2).toUpperCase();
   const hue = parseInt((msg.senderPublicKey || '0000').slice(0, 4), 16) % 360;
   const [hover, setHover] = useState(false);
@@ -242,22 +243,37 @@ function MessageRow({ msg, isAdmin, onDelete, onEdit, channelId }: { msg: ChatMe
   const hasBlob = !!msg.blobRoot;
   const withinWindow = (Date.now() - msg.timestamp) <= DELETE_WINDOW_MS;
   const canDelete = isAdmin || (msg.isOwn && withinWindow);
-  // Only the author can edit a plain text message within the window.
   const canEdit = msg.isOwn && withinWindow && !hasFile && !hasBlob;
 
-  const startEdit = (): void => { setEditDraft(msg.content); setEditing(true); };
+  const { replyTo, text } = parseReply(msg.content || '');
+  const repliedTo = replyTo ? resolveReply(replyTo) : null;
+  const mentioned = mentionsUser(text, myUsername);
+
+  // Flash the first time the user sees a message that @mentions them.
+  useEffect(() => {
+    if (mentioned && !msg.isOwn && isFirstMentionView(myKey, msg.messageId)) {
+      setTimeout(() => flashMessage(msg.messageId), 120);
+    }
+  }, []);
+
+  const startEdit = (): void => { setEditDraft(text); setEditing(true); };
   const saveEdit = (): void => {
     const v = editDraft.trim();
     setEditing(false);
-    if (v && v !== msg.content) onEdit(msg.messageId, v);
+    if (v && v !== text) onEdit(msg.messageId, replyTo ? packReply(replyTo, v) : v);
   };
 
   return (
-    <div style={styles.msgGroup} onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}>
+    <div id={`msg-${msg.messageId}`} style={{ ...styles.msgGroup, ...(msg.isOwn ? styles.msgGroupOwn : {}) }} onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}>
       <div style={{ ...styles.avatar, background: `hsl(${hue},45%,25%)`, color: `hsl(${hue},75%,72%)` }}>
         {initials}
       </div>
-      <div style={styles.msgBody}>
+      <div style={{ ...styles.msgBody, ...(msg.isOwn ? styles.msgBodyOwn : {}) }}>
+        {repliedTo && (
+          <button style={styles.replyChip} onClick={() => replyTo && flashMessage(replyTo)} title="Jump to message">
+            <span style={styles.replyArrow}>{'↪'}</span> {repliedTo.username}: {repliedTo.preview}
+          </button>
+        )}
         <div style={styles.msgHeader}>
           <span style={{ ...styles.author, color: `hsl(${hue},75%,72%)` }}>
             {msg.senderUsername}
@@ -279,7 +295,7 @@ function MessageRow({ msg, isAdmin, onDelete, onEdit, channelId }: { msg: ChatMe
             <button onClick={() => setEditing(false)} style={styles.editCancel}>Cancel</button>
           </div>
         ) : (
-          msg.content && <p style={styles.content}>{msg.content}</p>
+          text && <p style={{ ...styles.content, ...(mentioned ? styles.mentioned : {}) }}>{text}</p>
         )}
         {hasBlob && <BlobAttachment msg={msg} />}
         {!hasBlob && hasFile && (
@@ -291,19 +307,12 @@ function MessageRow({ msg, isAdmin, onDelete, onEdit, channelId }: { msg: ChatMe
           />
         )}
       </div>
-      {!editing && hover && (canEdit || canDelete) && (
+      {!editing && hover && (
         <div style={styles.msgActions}>
-          {canEdit && (
-            <button onClick={startEdit} style={styles.msgDeleteBtn} title="Edit message">{'✏️'}</button>
-          )}
+          <button onClick={() => onReply(msg)} style={styles.msgDeleteBtn} title="Reply">{'↩️'}</button>
+          {canEdit && <button onClick={startEdit} style={styles.msgDeleteBtn} title="Edit message">{'✏️'}</button>}
           {canDelete && (
-            <button
-              onClick={() => { if (confirm('Delete this message?')) onDelete(msg.messageId); }}
-              style={styles.msgDeleteBtn}
-              title="Delete message"
-            >
-              {'\u{1F5D1}'}
-            </button>
+            <button onClick={() => { if (confirm('Delete this message?')) onDelete(msg.messageId); }} style={styles.msgDeleteBtn} title="Delete message">{'\u{1F5D1}'}</button>
           )}
         </div>
       )}
@@ -319,6 +328,7 @@ export default function ChatArea({ active }: Props): React.JSX.Element {
   const myRoles = useCommunityStore((s) => s.myRoles);
   const communities = useCommunityStore((s) => s.communities);
   const myKey = useNetworkStore((s) => s.publicKey);
+  const myUsername = useNetworkStore((s) => s.username);
   const isAdmin = (() => {
     if (!active) return false;
     const role = myRoles[active.communityId];
@@ -326,6 +336,7 @@ export default function ChatArea({ active }: Props): React.JSX.Element {
     return communities[active.communityId]?.ownerPublicKey === myKey;
   })();
   const [draft, setDraft] = useState('');
+  const [replyTo, setReplyTo] = useState<{ messageId: string; preview: string } | null>(null);
   const [uploading, setUploading] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -356,9 +367,23 @@ export default function ChatArea({ active }: Props): React.JSX.Element {
 
   const handleSend = async (): Promise<void> => {
     if (!active || !draft.trim()) return;
-    const content = draft.trim();
+    const body = draft.trim();
+    const content = replyTo ? packReply(replyTo.messageId, body) : body;
     setDraft('');
+    setReplyTo(null);
     await sendMessage(active.channelId, content);
+  };
+
+  // Resolve a replied-to message into { author, short preview } for the chip.
+  const resolveReply = (id: string): { username: string; preview: string } | null => {
+    const list = active ? (messages[active.channelId] || []) : [];
+    const orig = list.find((m) => m.messageId === id);
+    if (!orig) return null;
+    return { username: orig.senderUsername, preview: replyPreview(orig.content, 99) };
+  };
+
+  const startReply = (m: ChatMessage): void => {
+    setReplyTo({ messageId: m.messageId, preview: replyPreview(m.content, 80) });
   };
 
   // Let member-list clicks drop an @mention into this composer.
@@ -485,13 +510,19 @@ export default function ChatArea({ active }: Props): React.JSX.Element {
           </div>
         )}
         {channelMessages.map((msg) => (
-          <MessageRow key={msg.messageId} msg={msg} isAdmin={isAdmin} channelId={active.channelId} onDelete={(id) => active && deleteMessage(active.channelId, id)} onEdit={(id, content) => active && editMessage(active.channelId, id, content)} />
+          <MessageRow key={msg.messageId} msg={msg} isAdmin={isAdmin} channelId={active.channelId} myUsername={myUsername || ''} myKey={myKey} resolveReply={resolveReply} onReply={startReply} onDelete={(id) => active && deleteMessage(active.channelId, id)} onEdit={(id, content) => active && editMessage(active.channelId, id, content)} />
         ))}
         <div ref={bottomRef} />
       </div>
 
       {/* Input */}
       <div style={styles.inputArea}>
+        {replyTo && (
+          <div style={styles.replyBar}>
+            <span style={styles.replyBarText}>{'↩️'} Replying to: {replyTo.preview}</span>
+            <button onClick={() => setReplyTo(null)} style={styles.replyBarClose} title="Cancel reply">{'✕'}</button>
+          </div>
+        )}
         <div style={styles.inputWrap}>
           <button
             onClick={() => fileInputRef.current?.click()}
@@ -540,6 +571,14 @@ const styles = {
   messages: { flex: 1, overflowY: 'auto' as const, padding: '16px', display: 'flex', flexDirection: 'column' as const, gap: '4px' } as React.CSSProperties,
   emptyChannel: { fontSize: '13px', color: 'var(--color-text-muted)', padding: '8px 0' } as React.CSSProperties,
   msgGroup: { display: 'flex', gap: '12px', padding: '2px 0', marginBottom: '8px', position: 'relative' as const } as React.CSSProperties,
+  msgGroupOwn: { flexDirection: 'row-reverse' as const } as React.CSSProperties,
+  msgBodyOwn: { display: 'flex', flexDirection: 'column' as const, alignItems: 'flex-end', textAlign: 'right' as const } as React.CSSProperties,
+  mentioned: { fontWeight: 700, color: 'var(--color-text-primary)' } as React.CSSProperties,
+  replyChip: { display: 'inline-flex', alignItems: 'center', gap: '4px', maxWidth: '100%', background: 'transparent', border: 'none', color: 'var(--color-text-muted)', fontSize: '11px', cursor: 'pointer', padding: '1px 0', marginBottom: '2px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const, textAlign: 'left' as const } as React.CSSProperties,
+  replyArrow: { color: 'var(--color-accent)', flexShrink: 0 } as React.CSSProperties,
+  replyBar: { display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px', background: 'var(--color-bg-tertiary)', borderRadius: 'var(--radius-md)', marginBottom: '6px' } as React.CSSProperties,
+  replyBarText: { flex: 1, fontSize: '12px', color: 'var(--color-text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const } as React.CSSProperties,
+  replyBarClose: { background: 'transparent', border: 'none', color: 'var(--color-text-muted)', cursor: 'pointer', fontSize: '12px', flexShrink: 0 } as React.CSSProperties,
   msgActions: { position: 'absolute' as const, top: '0', right: '4px', display: 'flex', gap: '3px' } as React.CSSProperties,
   msgDeleteBtn: { width: '24px', height: '24px', borderRadius: '6px', border: '1px solid var(--color-border)', background: 'var(--color-bg-secondary)', color: 'var(--color-text-secondary)', cursor: 'pointer', fontSize: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center' } as React.CSSProperties,
   editRow: { display: 'flex', gap: '6px', alignItems: 'center', marginTop: '2px' } as React.CSSProperties,

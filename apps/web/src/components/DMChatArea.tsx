@@ -9,6 +9,7 @@ import { useNetworkStore } from '../stores/networkStore.js';
 import EmojiPicker from './EmojiPicker.js';
 import VoiceRecorder from './VoiceRecorder.js';
 import { ReceiptToggle, SeenIndicator, MarkSeenButton } from './ReadReceiptUI.js';
+import { parseReply, packReply, replyPreview, mentionsUser, flashMessage, isFirstMentionView } from '../lib/messageFx.js';
 import { useReadReceiptStore } from '../stores/readReceiptStore.js';
 
 interface Props {
@@ -86,7 +87,7 @@ function DMAttachment({ msg }: { msg: DMMessage }): React.JSX.Element {
 
 const DM_EDIT_WINDOW_MS = 15 * 60 * 1000;
 
-function DMMessageRow({ msg, ctxId, partnerKey }: { msg: DMMessage; ctxId: string; partnerKey: string }): React.JSX.Element {
+function DMMessageRow({ msg, ctxId, partnerKey, myUsername, myKey, onReply, resolveReply }: { msg: DMMessage; ctxId: string; partnerKey: string; myUsername: string; myKey: string; onReply: (msg: DMMessage) => void; resolveReply: (id: string) => { username: string; preview: string } | null }): React.JSX.Element {
   const hue = parseInt((msg.senderPublicKey || '0000').slice(0, 4), 16) % 360;
   const initials = (msg.senderUsername || '??').slice(0, 2).toUpperCase();
   const [hover, setHover] = useState(false);
@@ -99,18 +100,33 @@ function DMMessageRow({ msg, ctxId, partnerKey }: { msg: DMMessage; ctxId: strin
   const canDelete = msg.isOwn && within;
   const canEdit = msg.isOwn && within && !hasAttachment;
 
+  const { replyTo, text } = parseReply(msg.content || '');
+  const repliedTo = replyTo ? resolveReply(replyTo) : null;
+  const mentioned = mentionsUser(text, myUsername);
+
+  useEffect(() => {
+    if (mentioned && !msg.isOwn && isFirstMentionView(myKey, msg.messageId)) {
+      setTimeout(() => flashMessage(msg.messageId), 120);
+    }
+  }, []);
+
   const saveEdit = (): void => {
     const v = editDraft.trim();
     setEditing(false);
-    if (v && v !== msg.content) editDM(partnerKey, msg.messageId, v);
+    if (v && v !== text) editDM(partnerKey, msg.messageId, replyTo ? packReply(replyTo, v) : v);
   };
 
   return (
-    <div style={styles.msgGroup} onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}>
+    <div id={`msg-${msg.messageId}`} style={{ ...styles.msgGroup, ...(msg.isOwn ? { flexDirection: 'row-reverse' as const } : {}) }} onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}>
       <div style={{ ...styles.avatar, background: `hsl(${hue},45%,25%)`, color: `hsl(${hue},75%,72%)` }}>
         {initials}
       </div>
-      <div style={styles.msgBody}>
+      <div style={{ ...styles.msgBody, ...(msg.isOwn ? { display: 'flex', flexDirection: 'column' as const, alignItems: 'flex-end', textAlign: 'right' as const } : {}) }}>
+        {repliedTo && (
+          <button style={dmEdit.replyChip} onClick={() => replyTo && flashMessage(replyTo)} title="Jump to message">
+            {'↪'} {repliedTo.username}: {repliedTo.preview}
+          </button>
+        )}
         <div style={styles.msgHeader}>
           <span style={{ ...styles.author, color: `hsl(${hue},75%,72%)` }}>
             {msg.senderUsername}
@@ -132,13 +148,14 @@ function DMMessageRow({ msg, ctxId, partnerKey }: { msg: DMMessage; ctxId: strin
             <button onClick={() => setEditing(false)} style={dmEdit.cancel}>Cancel</button>
           </div>
         ) : (
-          msg.content && <p style={styles.content}>{msg.content}</p>
+          text && <p style={{ ...styles.content, ...(mentioned ? { fontWeight: 700, color: 'var(--color-text-primary)' } : {}) }}>{text}</p>
         )}
         {hasAttachment && <DMAttachment msg={msg} />}
       </div>
-      {!editing && hover && (canEdit || canDelete) && (
+      {!editing && hover && (
         <div style={dmEdit.actions}>
-          {canEdit && <button onClick={() => { setEditDraft(msg.content); setEditing(true); }} style={dmEdit.actionBtn} title="Edit message">{'✏️'}</button>}
+          <button onClick={() => onReply(msg)} style={dmEdit.actionBtn} title="Reply">{'↩️'}</button>
+          {canEdit && <button onClick={() => { setEditDraft(text); setEditing(true); }} style={dmEdit.actionBtn} title="Edit message">{'✏️'}</button>}
           {canDelete && <button onClick={() => { if (confirm('Delete this message?')) deleteDM(partnerKey, msg.messageId); }} style={dmEdit.actionBtn} title="Delete message">{'\u{1F5D1}'}</button>}
         </div>
       )}
@@ -147,12 +164,16 @@ function DMMessageRow({ msg, ctxId, partnerKey }: { msg: DMMessage; ctxId: strin
 }
 
 const dmEdit = {
+  replyChip: { display: 'inline-flex', alignItems: 'center', gap: '4px', maxWidth: '100%', background: 'transparent', border: 'none', color: 'var(--color-text-muted)', fontSize: '11px', cursor: 'pointer', padding: '1px 0', marginBottom: '2px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const, textAlign: 'left' as const } as React.CSSProperties,
   actions: { position: 'absolute' as const, top: '0', right: '4px', display: 'flex', gap: '3px' } as React.CSSProperties,
   actionBtn: { width: '24px', height: '24px', borderRadius: '6px', border: '1px solid var(--color-border)', background: 'var(--color-bg-secondary)', color: 'var(--color-text-secondary)', cursor: 'pointer', fontSize: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center' } as React.CSSProperties,
   row: { display: 'flex', gap: '6px', alignItems: 'center', marginTop: '2px' } as React.CSSProperties,
   input: { flex: 1, padding: '6px 10px', background: 'var(--color-bg-input)', border: '1px solid var(--color-accent)', borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', fontSize: '14px', outline: 'none', fontFamily: 'inherit' } as React.CSSProperties,
   save: { padding: '5px 10px', borderRadius: 'var(--radius-md)', border: 'none', background: 'var(--color-accent)', color: '#fff', fontSize: '11px', fontWeight: 600, cursor: 'pointer' } as React.CSSProperties,
   cancel: { padding: '5px 10px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'transparent', color: 'var(--color-text-muted)', fontSize: '11px', cursor: 'pointer' } as React.CSSProperties,
+  replyBar: { display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 10px', background: 'var(--color-bg-tertiary)', borderRadius: 'var(--radius-md)', marginBottom: '6px' } as React.CSSProperties,
+  replyBarText: { flex: 1, fontSize: '12px', color: 'var(--color-text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const } as React.CSSProperties,
+  replyBarClose: { background: 'transparent', border: 'none', color: 'var(--color-text-muted)', cursor: 'pointer', fontSize: '12px', flexShrink: 0 } as React.CSSProperties,
 } as const;
 
 const fileStyles = {
@@ -170,8 +191,9 @@ const fileStyles = {
 
 export default function DMChatArea({ partnerPublicKey }: Props): React.JSX.Element {
   const { messages, sendDM, sendDMFile, openConversation, conversations } = useDMStore();
-  const { publicKey: myKey } = useNetworkStore();
+  const { publicKey: myKey, username: myUsername } = useNetworkStore();
   const [draft, setDraft] = useState('');
+  const [replyTo, setReplyTo] = useState<{ messageId: string; preview: string } | null>(null);
   const [uploading, setUploading] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -218,9 +240,18 @@ export default function DMChatArea({ partnerPublicKey }: Props): React.JSX.Eleme
 
   const handleSend = (): void => {
     if (!partnerPublicKey || !draft.trim()) return;
-    sendDM(partnerPublicKey, draft.trim());
+    const body = draft.trim();
+    sendDM(partnerPublicKey, replyTo ? packReply(replyTo.messageId, body) : body);
     setDraft('');
+    setReplyTo(null);
   };
+
+  const resolveReply = (id: string): { username: string; preview: string } | null => {
+    const orig = dmMessages.find((m) => m.messageId === id);
+    if (!orig) return null;
+    return { username: orig.senderUsername, preview: replyPreview(orig.content, 99) };
+  };
+  const startReply = (m: DMMessage): void => setReplyTo({ messageId: m.messageId, preview: replyPreview(m.content, 80) });
 
   const handleKeyDown = (e: React.KeyboardEvent): void => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -275,13 +306,19 @@ export default function DMChatArea({ partnerPublicKey }: Props): React.JSX.Eleme
           </div>
         )}
         {dmMessages.map((msg) => (
-          <DMMessageRow key={msg.messageId} msg={msg} ctxId={dmCtxId} partnerKey={partnerPublicKey} />
+          <DMMessageRow key={msg.messageId} msg={msg} ctxId={dmCtxId} partnerKey={partnerPublicKey} myUsername={myUsername || ''} myKey={myKey} onReply={startReply} resolveReply={resolveReply} />
         ))}
         <div ref={bottomRef} />
       </div>
 
       {/* Input */}
       <div style={styles.inputArea}>
+        {replyTo && (
+          <div style={dmEdit.replyBar}>
+            <span style={dmEdit.replyBarText}>{'↩️'} Replying to: {replyTo.preview}</span>
+            <button onClick={() => setReplyTo(null)} style={dmEdit.replyBarClose} title="Cancel reply">{'✕'}</button>
+          </div>
+        )}
         <div style={styles.inputWrap}>
           <button
             onClick={() => fileInputRef.current?.click()}

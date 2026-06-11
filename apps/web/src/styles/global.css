@@ -135,4 +135,13 @@ input::placeholder { color: var(--color-text-muted); }
 .text-muted    { color: var(--color-text-muted); }
 .text-accent   { color: var(--color-accent); }
 .text-mono     { font-family: var(--font-mono); }
+
+/* Reusable attention flash — jumping to a replied-to message, or the first time
+   a user sees a message that @mentions them. */
+@keyframes muster-flash {
+  0%   { background: var(--color-accent-dim); }
+  40%  { background: var(--color-accent-dim); }
+  100% { background: transparent; }
+}
+.msg-flash { animation: muster-flash 1.6s ease-out; border-radius: 8px; }
 .truncate      { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
