@@ -89,7 +89,13 @@ const postDB = new PostDB(messageDB.getDatabase());
 const squadDB = new SquadDB(messageDB.getDatabase());
 const nodeDB = new NodeDB(messageDB.getDatabase());
 const tierManager = new TierManager(nodeDB);
-tierManager.autoHostAll(communityDB);
+// Selective hosting → only the owner's own + explicitly-added communities.
+// Otherwise (default 'main') host everything as before.
+if (tierManager.isSelective()) {
+  tierManager.syncOwnerCommunities(communityDB, nodeDB.getConfig('adminPublicKey'));
+} else {
+  tierManager.autoHostAll(communityDB);
+}
 tierManager.startPurgeScheduler(messageDB, dmDB);
 
 initNodeInfo(nodeDB);
@@ -157,6 +163,7 @@ let dhtManager: DhtManager | null = null;
 
 const adminBot = new AdminBot({
   nodeDB, messageDB, communityDB, dmDB, userDB, fileDB, postDB, squadDB,
+  tierManager, blobDB,
   sendToClient,
   getClientCount: () => clients.size,
   getChannelCount: () => channels.size,

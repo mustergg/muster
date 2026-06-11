@@ -25,6 +25,8 @@ import { UserDB } from './userDB';
 import { FileDB } from './fileDB';
 import { PostDB } from './postDB';
 import { SquadDB } from './squadDB';
+import { TierManager } from './nodeTier';
+import { BlobDB } from './blobDB';
 import type { RelayClient } from './types';
 import { randomBytes } from 'crypto';
 import { freemem, totalmem, uptime as osUptime, hostname, platform, arch } from 'os';
@@ -49,6 +51,8 @@ export class AdminBot {
   private fileDB: FileDB;
   private postDB: PostDB;
   private squadDB: SquadDB;
+  private tierManager: TierManager;
+  private blobDB: BlobDB;
   private sendToClient: (client: RelayClient, msg: Record<string, unknown>) => void;
   private getClientCount: () => number;
   private getChannelCount: () => number;
@@ -70,6 +74,8 @@ export class AdminBot {
     fileDB: FileDB;
     postDB: PostDB;
     squadDB: SquadDB;
+    tierManager: TierManager;
+    blobDB: BlobDB;
     sendToClient: (client: RelayClient, msg: Record<string, unknown>) => void;
     getClientCount: () => number;
     getChannelCount: () => number;
@@ -84,6 +90,8 @@ export class AdminBot {
     this.fileDB = deps.fileDB;
     this.postDB = deps.postDB;
     this.squadDB = deps.squadDB;
+    this.tierManager = deps.tierManager;
+    this.blobDB = deps.blobDB;
     this.sendToClient = deps.sendToClient;
     this.getClientCount = deps.getClientCount;
     this.getChannelCount = deps.getChannelCount;
@@ -171,6 +179,8 @@ export class AdminBot {
       case '/restart':    this.cmdRestart(client, parts.slice(1)); break;
       case '/version':    this.cmdVersion(client); break;
       case '/owner':      this.cmdOwner(client, parts.slice(1)); break;
+      case '/host':       this.cmdHost(client, parts.slice(1)); break;
+      case '/storage':    this.cmdStorage(client, parts.slice(1)); break;
       case '/update':     this.cmdUpdate(client, parts.slice(1)); break;
       default:
         if (trimmed.startsWith('/')) {
@@ -203,6 +213,10 @@ export class AdminBot {
       '    keys: nodeName, retentionDays, maxFileSize, pnpmPath, gitPath, nodePath',
       '    e.g. /config set nodeName My Node',
       '    e.g. /config set pnpmPath /home/pi/.local/share/pnpm/pnpm',
+      '',
+      '🏠 Hosting & Storage',
+      '  /host              — Hosted communities (mine · add · stop · retention · selective)',
+      '  /storage           — Usage + limit/network share (limit <MB> · network <pct>)',
       '',
       '🔄 Maintenance',
       '  /update autoconf   — Detect + save tool paths (git, node, pnpm)',
@@ -254,9 +268,29 @@ export class AdminBot {
       `Known peers:   ${this.nodeDB.getPeerCount()}`,
       `Connected:     ${this.getPeerCount()}`,
       ``,
+      `💾 Storage`,
+      ...this.storageStatusLines(),
+      ``,
       `💾 Memory`,
       `Free:          ${memFree} MB / ${memTotal} MB`,
     ].join('\n'));
+  }
+
+  /** Storage usage lines shared by /status and /storage (incl. 90% alert). */
+  private storageStatusLines(): string[] {
+    const cfg = this.tierManager.getConfig();
+    const usedMB = (this.blobDB.stats().totalBytes + this.fileDB.getTotalSize()) / (1024 * 1024);
+    const maxMB = cfg.maxDiskMB;
+    const lines = [
+      `Used:          ${usedMB.toFixed(1)} MB`,
+      `Limit:         ${maxMB === 0 ? 'unlimited' : maxMB + ' MB'}`,
+      `Hosting:       ${this.tierManager.getConfig().hostedCommunityIds.length} communities (${this.tierManager.isSelective() ? 'selective' : 'host-all'})`,
+    ];
+    if (maxMB > 0) {
+      const pct = Math.round((usedMB / maxMB) * 100);
+      lines.push(`Usage:         ${pct}%${pct >= 90 ? '  🚨 OVER 90% — raise /storage limit or free space' : ''}`);
+    }
+    return lines;
   }
 
   private cmdPeers(client: RelayClient): void {
@@ -442,6 +476,173 @@ export class AdminBot {
     }
 
     this.reply(client, 'Usage:\n  /owner                              — show owner / handover status\n  /owner set <username|publicKeyHex>  — start a 48h handover (new owner must be verified)\n  /owner refuse                       — cancel a pending handover');
+  }
+
+  /** Resolve a community by exact id or (case-insensitive) name. */
+  private resolveCommunity(input: string): { id: string; name: string; ownerPublicKey: string } | undefined {
+    const direct = this.communityDB.getCommunity(input);
+    if (direct) return direct as any;
+    const needle = input.trim().toLowerCase();
+    for (const id of this.communityDB.getAllCommunityIds()) {
+      const c = this.communityDB.getCommunity(id) as any;
+      if (c && String(c.name).toLowerCase() === needle) return c;
+    }
+    return undefined;
+  }
+
+  /** Manage which communities this relay hosts. */
+  private cmdHost(client: RelayClient, args: string[]): void {
+    const owner = this.nodeDB.getConfig('adminPublicKey');
+    const cfg = this.tierManager.getConfig();
+    const sub = (args[0] || '').toLowerCase();
+
+    if (!sub || sub === 'list') {
+      const lines = ['🏠 Hosted Communities', '━━━━━━━━━━━━━━━━━━━━',
+        `Mode: ${this.tierManager.isSelective() ? 'selective (owner-chosen)' : 'host-all'}`, ''];
+      if (this.tierManager.getTier() === 'main' && !this.tierManager.isSelective()) {
+        lines.push('Hosting ALL communities (host-all mode).', 'Switch to owner-chosen: /host selective on');
+      } else if (cfg.hostedCommunityIds.length === 0) {
+        lines.push('No communities hosted yet. Add one: /host add <name>');
+      } else {
+        for (const id of cfg.hostedCommunityIds) {
+          const c = this.communityDB.getCommunity(id) as any;
+          if (!c) continue;
+          const ret = this.tierManager.getRetentionDays(id);
+          const mine = c.ownerPublicKey === owner ? ' (yours)' : '';
+          lines.push(`• ${c.name}${mine} — ${ret === 0 ? 'permanent' : ret + 'd'}`);
+        }
+      }
+      this.reply(client, lines.join('\n'));
+      return;
+    }
+
+    if (sub === 'mine') {
+      const mine = owner ? (this.communityDB.getCommunitiesForUser(owner) as any[]) : [];
+      const lines = ['👤 Your Communities', '━━━━━━━━━━━━━━━━━━━━'];
+      if (mine.length === 0) lines.push('You are not in any community on this node.');
+      for (const c of mine) {
+        const hosted = this.tierManager.isHosted(c.id);
+        const role = c.ownerPublicKey === owner ? 'owner' : 'member';
+        lines.push(`• ${c.name} [${role}] ${hosted ? '✓ hosted' : '— not hosted'}`);
+      }
+      lines.push('', 'Host one: /host add <name>');
+      this.reply(client, lines.join('\n'));
+      return;
+    }
+
+    if (sub === 'selective') {
+      const v = (args[1] || '').toLowerCase();
+      if (v === 'on') {
+        this.tierManager.setSelectiveHosting(true);
+        this.tierManager.syncOwnerCommunities(this.communityDB, owner);
+        this.reply(client, '✅ Selective hosting ON. Only your own + explicitly-added communities are hosted.\nManage with /host add and /host stop.');
+      } else if (v === 'off') {
+        this.tierManager.setSelectiveHosting(false);
+        this.reply(client, '✅ Selective hosting OFF — hosting all communities again.');
+      } else {
+        this.reply(client, 'Usage: /host selective on|off');
+      }
+      return;
+    }
+
+    if (sub === 'add' && args[1]) {
+      const c = this.resolveCommunity(args.slice(1).join(' '));
+      if (!c) { this.reply(client, '❌ Community not found (use its exact name or id).'); return; }
+      this.tierManager.hostCommunity(c.id);
+      this.reply(client, `✅ Now hosting "${c.name}".`);
+      return;
+    }
+
+    if (sub === 'stop' && args[1]) {
+      const c = this.resolveCommunity(args.slice(1).join(' '));
+      if (!c) { this.reply(client, '❌ Community not found.'); return; }
+      if (c.ownerPublicKey === owner) { this.reply(client, `❌ You can't stop hosting "${c.name}" — you own it.`); return; }
+      this.tierManager.unhostCommunity(c.id);
+      this.reply(client, `✅ Stopped hosting "${c.name}". It will be purged after its retention window.`);
+      return;
+    }
+
+    if (sub === 'retention' && args.length >= 3) {
+      const days = parseInt(args[args.length - 1]);
+      const name = args.slice(1, args.length - 1).join(' ');
+      const c = this.resolveCommunity(name);
+      if (!c) { this.reply(client, '❌ Community not found.'); return; }
+      if (isNaN(days) || days < 0) { this.reply(client, '❌ Days must be a number ≥ 0 (0 = permanent).'); return; }
+      this.tierManager.setCommunityRetention(c.id, days);
+      this.reply(client, `✅ "${c.name}" will be kept for ${days === 0 ? 'permanent' : days + ' days'}.`);
+      return;
+    }
+
+    this.reply(client, [
+      '🏠 Host commands:',
+      '  /host                       — list hosted communities',
+      '  /host mine                  — your communities + hosted status',
+      '  /host add <name>            — host a community',
+      '  /host stop <name>           — stop hosting (not your own)',
+      '  /host retention <name> <days> — keep N days (0 = permanent)',
+      '  /host selective on|off      — owner-chosen vs host-all',
+    ].join('\n'));
+  }
+
+  /** Show + manage relay storage limits and the network contribution share. */
+  private cmdStorage(client: RelayClient, args: string[]): void {
+    const cfg = this.tierManager.getConfig();
+    const usedBytes = this.blobDB.stats().totalBytes + this.fileDB.getTotalSize();
+    const usedMB = usedBytes / (1024 * 1024);
+    const maxMB = cfg.maxDiskMB; // 0 = unlimited
+    const netPct = cfg.networkContributionPercent;
+    const sub = (args[0] || '').toLowerCase();
+
+    if (!sub || sub === 'status') {
+      const lines = ['💾 Storage', '━━━━━━━━━━━━━━━━━━━━',
+        `Used:  ${usedMB.toFixed(1)} MB`,
+        `Limit: ${maxMB === 0 ? 'unlimited' : maxMB + ' MB'}`];
+      if (maxMB > 0) {
+        const pct = Math.round((usedMB / maxMB) * 100);
+        lines.push(`Usage: ${pct}%`);
+        if (pct >= 90) lines.push('🚨 Over 90%! Raise the limit (/storage limit <MB>) or free up space.');
+        lines.push(`Network share: ${netPct}% → up to ${(maxMB * netPct / 100).toFixed(0)} MB (grows in parallel with your own usage)`);
+      } else {
+        lines.push(`Network share: ${netPct}%`);
+      }
+      lines.push('', '/storage limit <MB>            — set disk limit (0 = unlimited)', '/storage network <pct> [--force] — network share (min 10%)');
+      this.reply(client, lines.join('\n'));
+      return;
+    }
+
+    if (sub === 'limit' && args[1] !== undefined) {
+      const mb = parseInt(args[1]);
+      if (isNaN(mb) || mb < 0) { this.reply(client, '❌ MB must be a number ≥ 0 (0 = unlimited).'); return; }
+      this.tierManager.setLimits({ maxDiskMB: mb });
+      this.reply(client, `✅ Disk limit set to ${mb === 0 ? 'unlimited' : mb + ' MB'}.`);
+      return;
+    }
+
+    if (sub === 'network' && args[1] !== undefined) {
+      const pct = parseInt(args[1]);
+      const force = args.includes('--force');
+      if (isNaN(pct) || pct < 0 || pct > 100) { this.reply(client, '❌ Percent must be 0–100.'); return; }
+      if (pct < 10 && !force) {
+        this.reply(client, [
+          '⚠️ Less than 10% network share weakens the wider Muster network.',
+          'If you really need to, please support the project another way —',
+          'a small donation goes a long way 🙏.',
+          '',
+          `To proceed anyway: /storage network ${pct} --force`,
+        ].join('\n'));
+        return;
+      }
+      this.tierManager.setLimits({ networkContributionPercent: pct });
+      this.reply(client, `✅ Network share set to ${pct}%.${pct < 10 ? '\nThank you for considering a donation 🙏' : ''}`);
+      return;
+    }
+
+    this.reply(client, [
+      '💾 Storage commands:',
+      '  /storage                       — usage + limits',
+      '  /storage limit <MB>            — disk limit (0 = unlimited)',
+      '  /storage network <pct> [--force] — network share % (min 10%)',
+    ].join('\n'));
   }
 
   private cmdPurge(client: RelayClient, args: string[]): void {

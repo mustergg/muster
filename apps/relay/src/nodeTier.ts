@@ -37,6 +37,12 @@ export interface TierConfig {
   hostedCommunityIds: string[];
   /** IDs of squads this node permanently hosts. */
   hostedSquadIds: string[];
+  /** When true, even a 'main' node only hosts the explicit hostedCommunityIds
+   *  (+ the relay owner's own communities) instead of every community. */
+  selectiveHosting?: boolean;
+  /** Per-community retention cap in days (0 = permanent). Overrides the
+   *  hosted/permanent default for that community. */
+  retentionOverrides?: Record<string, number>;
 }
 
 export interface StorageStats {
@@ -202,8 +208,49 @@ export class TierManager {
 
   /** Check if a community is permanently hosted on this node. */
   isHosted(communityId: string): boolean {
-    if (this.config.tier === 'main') return true; // Main nodes host everything
+    // Main nodes host everything UNLESS the owner opted into selective hosting.
+    if (this.config.tier === 'main' && !this.config.selectiveHosting) return true;
     return this.config.hostedCommunityIds.includes(communityId);
+  }
+
+  isSelective(): boolean { return !!this.config.selectiveHosting; }
+
+  /** Toggle selective hosting (owner-driven hosting list instead of host-all). */
+  setSelectiveHosting(on: boolean): void {
+    this.config.selectiveHosting = on;
+    this.saveConfig(this.config);
+    console.log(`[tier] Selective hosting ${on ? 'ENABLED' : 'disabled'}`);
+  }
+
+  /** Set a per-community retention cap (days; 0 = permanent). */
+  setCommunityRetention(communityId: string, days: number): void {
+    this.config.retentionOverrides = this.config.retentionOverrides || {};
+    this.config.retentionOverrides[communityId] = Math.max(0, Math.floor(days));
+    this.saveConfig(this.config);
+  }
+
+  /** Remove a per-community retention override. */
+  clearCommunityRetention(communityId: string): void {
+    if (this.config.retentionOverrides && communityId in this.config.retentionOverrides) {
+      delete this.config.retentionOverrides[communityId];
+      this.saveConfig(this.config);
+    }
+  }
+
+  /** Ensure every community owned by `ownerPubkey` is in the hosted list.
+   *  Returns how many were newly added. */
+  syncOwnerCommunities(communityDB: CommunityDB, ownerPubkey: string | undefined | null): number {
+    if (!ownerPubkey) return 0;
+    let added = 0;
+    for (const id of communityDB.getAllCommunityIds()) {
+      const c = communityDB.getCommunity(id);
+      if (c?.ownerPublicKey === ownerPubkey && !this.config.hostedCommunityIds.includes(id)) {
+        this.config.hostedCommunityIds.push(id);
+        added++;
+      }
+    }
+    if (added) this.saveConfig(this.config);
+    return added;
   }
 
   /** Check if a squad is hosted. */
@@ -224,6 +271,8 @@ export class TierManager {
 
   /** Get retention days for a specific community. */
   getRetentionDays(communityId: string): number {
+    const ov = this.config.retentionOverrides?.[communityId];
+    if (ov !== undefined) return ov; // explicit cap wins, even for hosted
     if (this.isHosted(communityId)) return 0; // permanent
     return this.config.defaultRetentionDays || 30;
   }
