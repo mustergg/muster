@@ -89,13 +89,10 @@ const postDB = new PostDB(messageDB.getDatabase());
 const squadDB = new SquadDB(messageDB.getDatabase());
 const nodeDB = new NodeDB(messageDB.getDatabase());
 const tierManager = new TierManager(nodeDB);
-// Selective hosting → only the owner's own + explicitly-added communities.
-// Otherwise (default 'main') host everything as before.
-if (tierManager.isSelective()) {
-  tierManager.syncOwnerCommunities(communityDB, nodeDB.getConfig('adminPublicKey'));
-} else {
-  tierManager.autoHostAll(communityDB);
-}
+// Hosting is always selective: a node hosts only its owner's own communities
+// plus any the owner explicitly added (/host add). A fresh node starts empty
+// and never auto-hosts the whole network.
+tierManager.syncOwnerCommunities(communityDB, nodeDB.getConfig('adminPublicKey'));
 tierManager.startPurgeScheduler(messageDB, dmDB);
 
 initNodeInfo(nodeDB);

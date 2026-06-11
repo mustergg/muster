@@ -215,7 +215,7 @@ export class AdminBot {
       '    e.g. /config set pnpmPath /home/pi/.local/share/pnpm/pnpm',
       '',
       '🏠 Hosting & Storage',
-      '  /host              — Hosted communities (mine · add · stop · retention · selective)',
+      '  /host              — Hosted communities (mine · add · stop · retention · reset)',
       '  /storage           — Usage + limit/network share (limit <MB> · network <pct>)',
       '',
       '🔄 Maintenance',
@@ -284,7 +284,7 @@ export class AdminBot {
     const lines = [
       `Used:          ${usedMB.toFixed(1)} MB`,
       `Limit:         ${maxMB === 0 ? 'unlimited' : maxMB + ' MB'}`,
-      `Hosting:       ${this.tierManager.getConfig().hostedCommunityIds.length} communities (${this.tierManager.isSelective() ? 'selective' : 'host-all'})`,
+      `Hosting:       ${this.tierManager.getConfig().hostedCommunityIds.length} communities (selective)`,
     ];
     if (maxMB > 0) {
       const pct = Math.round((usedMB / maxMB) * 100);
@@ -498,10 +498,8 @@ export class AdminBot {
 
     if (!sub || sub === 'list') {
       const lines = ['🏠 Hosted Communities', '━━━━━━━━━━━━━━━━━━━━',
-        `Mode: ${this.tierManager.isSelective() ? 'selective (owner-chosen)' : 'host-all'}`, ''];
-      if (this.tierManager.getTier() === 'main' && !this.tierManager.isSelective()) {
-        lines.push('Hosting ALL communities (host-all mode).', 'Switch to owner-chosen: /host selective on');
-      } else if (cfg.hostedCommunityIds.length === 0) {
+        'Hosting is selective: only your own + added communities.', ''];
+      if (cfg.hostedCommunityIds.length === 0) {
         lines.push('No communities hosted yet. Add one: /host add <name>');
       } else {
         for (const id of cfg.hostedCommunityIds) {
@@ -530,18 +528,18 @@ export class AdminBot {
       return;
     }
 
-    if (sub === 'selective') {
-      const v = (args[1] || '').toLowerCase();
-      if (v === 'on') {
-        this.tierManager.setSelectiveHosting(true);
-        this.tierManager.syncOwnerCommunities(this.communityDB, owner);
-        this.reply(client, '✅ Selective hosting ON. Only your own + explicitly-added communities are hosted.\nManage with /host add and /host stop.');
-      } else if (v === 'off') {
-        this.tierManager.setSelectiveHosting(false);
-        this.reply(client, '✅ Selective hosting OFF — hosting all communities again.');
-      } else {
-        this.reply(client, 'Usage: /host selective on|off');
+    if (sub === 'reset') {
+      // Drop everything except the owner's own communities (one-shot prune of an
+      // inherited host-all list). Non-owned communities get purged after their
+      // retention window.
+      const cfg2 = this.tierManager.getConfig();
+      const dropped: string[] = [];
+      for (const id of [...cfg2.hostedCommunityIds]) {
+        const c = this.communityDB.getCommunity(id) as any;
+        if (!c || c.ownerPublicKey !== owner) { this.tierManager.unhostCommunity(id); if (c) dropped.push(c.name); }
       }
+      this.tierManager.syncOwnerCommunities(this.communityDB, owner);
+      this.reply(client, `✅ Reset to your own communities only. Stopped hosting ${dropped.length} other(s)${dropped.length ? ': ' + dropped.slice(0, 10).join(', ') : ''}.\nThey'll be purged after their retention window.`);
       return;
     }
 
@@ -574,13 +572,13 @@ export class AdminBot {
     }
 
     this.reply(client, [
-      '🏠 Host commands:',
+      '🏠 Host commands (hosting is always selective):',
       '  /host                       — list hosted communities',
       '  /host mine                  — your communities + hosted status',
       '  /host add <name>            — host a community',
       '  /host stop <name>           — stop hosting (not your own)',
       '  /host retention <name> <days> — keep N days (0 = permanent)',
-      '  /host selective on|off      — owner-chosen vs host-all',
+      '  /host reset                 — host only your own (drop the rest)',
     ].join('\n'));
   }
 

@@ -37,9 +37,6 @@ export interface TierConfig {
   hostedCommunityIds: string[];
   /** IDs of squads this node permanently hosts. */
   hostedSquadIds: string[];
-  /** When true, even a 'main' node only hosts the explicit hostedCommunityIds
-   *  (+ the relay owner's own communities) instead of every community. */
-  selectiveHosting?: boolean;
   /** Per-community retention cap in days (0 = permanent). Overrides the
    *  hosted/permanent default for that community. */
   retentionOverrides?: Record<string, number>;
@@ -206,20 +203,12 @@ export class TierManager {
     this.saveConfig(this.config);
   }
 
-  /** Check if a community is permanently hosted on this node. */
+  /** Check if a community is permanently hosted on this node.
+   *  Hosting is always selective: a node hosts only the communities its owner
+   *  owns or explicitly added — never the whole network. This keeps storage
+   *  bounded and avoids centralising everything on one relay. */
   isHosted(communityId: string): boolean {
-    // Main nodes host everything UNLESS the owner opted into selective hosting.
-    if (this.config.tier === 'main' && !this.config.selectiveHosting) return true;
     return this.config.hostedCommunityIds.includes(communityId);
-  }
-
-  isSelective(): boolean { return !!this.config.selectiveHosting; }
-
-  /** Toggle selective hosting (owner-driven hosting list instead of host-all). */
-  setSelectiveHosting(on: boolean): void {
-    this.config.selectiveHosting = on;
-    this.saveConfig(this.config);
-    console.log(`[tier] Selective hosting ${on ? 'ENABLED' : 'disabled'}`);
   }
 
   /** Set a per-community retention cap (days; 0 = permanent). */
@@ -259,15 +248,6 @@ export class TierManager {
     return this.config.hostedSquadIds.includes(squadId);
   }
 
-  /** Auto-host all communities on this node (for main nodes). */
-  autoHostAll(communityDB: CommunityDB): void {
-    if (this.config.tier === 'main') {
-      const allIds = communityDB.getAllCommunityIds();
-      this.config.hostedCommunityIds = allIds;
-      this.saveConfig(this.config);
-      console.log(`[tier] Auto-hosting all ${allIds.length} communities (main node)`);
-    }
-  }
 
   /** Get retention days for a specific community. */
   getRetentionDays(communityId: string): number {
