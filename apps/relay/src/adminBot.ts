@@ -671,7 +671,7 @@ export class AdminBot {
       this.reply(client, '🔄 Restarting node in 3 seconds...');
       setTimeout(() => {
         console.log('[admin-bot] Restart requested by admin.');
-        process.exit(0); // systemd will restart the service
+        process.exit(1); // non-zero so Restart=on-failure/always restarts us
       }, 3000);
       return;
     }
@@ -796,10 +796,11 @@ export class AdminBot {
             commit: getGitCommit(),
             at: Date.now(),
           }));
-          // Schedule restart
+          // Schedule restart. Exit non-zero so the common `Restart=on-failure`
+          // systemd policy restarts us (a clean exit 0 would NOT trigger it).
           setTimeout(() => {
             console.log('[updater] Update complete. Restarting...');
-            process.exit(0); // systemd restarts the service
+            process.exit(1); // systemd (on-failure/always) restarts the service
           }, 3000);
         }
       } catch (err: any) {
