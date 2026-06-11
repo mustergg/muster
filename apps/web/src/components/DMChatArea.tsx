@@ -175,6 +175,7 @@ const dmEdit = {
   replyBar: { display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 10px', background: 'var(--color-bg-tertiary)', borderRadius: 'var(--radius-md)', marginBottom: '6px' } as React.CSSProperties,
   replyBarText: { flex: 1, fontSize: '12px', color: 'var(--color-text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const } as React.CSSProperties,
   replyBarClose: { background: 'transparent', border: 'none', color: 'var(--color-text-muted)', cursor: 'pointer', fontSize: '12px', flexShrink: 0 } as React.CSSProperties,
+  clearBtn: { width: '24px', height: '24px', borderRadius: '50%', border: 'none', background: 'var(--color-bg-tertiary)', color: 'var(--color-text-muted)', cursor: 'pointer', fontSize: '11px', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' } as React.CSSProperties,
 } as const;
 
 const fileStyles = {
@@ -256,7 +257,10 @@ export default function DMChatArea({ partnerPublicKey }: Props): React.JSX.Eleme
   };
   const startReply = (m: DMMessage): void => setReplyTo({ messageId: m.messageId, preview: replyPreview(m.content, 80) });
 
+  const clearComposer = (): void => { setDraft(''); setReplyTo(null); textInputRef.current?.focus(); };
+
   const handleKeyDown = (e: React.KeyboardEvent): void => {
+    if (e.key === 'Escape') { e.preventDefault(); clearComposer(); return; }
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSend();
@@ -332,6 +336,9 @@ export default function DMChatArea({ partnerPublicKey }: Props): React.JSX.Eleme
             {uploading ? '⌛' : '\u{1F4CE}'}
           </button>
           <VoiceRecorder onSend={(f) => void uploadFile(f)} disabled={uploading} />
+          {(draft || replyTo) && (
+            <button onClick={clearComposer} style={dmEdit.clearBtn} title="Clear (Esc)">{'✕'}</button>
+          )}
           <input
             ref={textInputRef}
             style={styles.input}

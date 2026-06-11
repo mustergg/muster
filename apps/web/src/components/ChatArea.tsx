@@ -396,8 +396,11 @@ export default function ChatArea({ active }: Props): React.JSX.Element {
     return () => setComposerHandler(null);
   }, []);
 
+  const clearComposer = (): void => { setDraft(''); setReplyTo(null); textInputRef.current?.focus(); };
+
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>): void => {
     if (handleMentionBackspace(e, draft, setDraft)) return; // atomic @mention delete
+    if (e.key === 'Escape') { e.preventDefault(); clearComposer(); return; }
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSend();
@@ -536,6 +539,9 @@ export default function ChatArea({ active }: Props): React.JSX.Element {
             {uploading ? '\u231B' : '\u{1F4CE}'}
           </button>
           <VoiceRecorder onSend={(f) => void uploadFile(f)} disabled={uploading} />
+          {(draft || replyTo) && (
+            <button onClick={clearComposer} style={styles.clearBtn} title="Clear (Esc)">{'✕'}</button>
+          )}
           <input
             ref={textInputRef}
             style={styles.input}
@@ -583,6 +589,7 @@ const styles = {
   replyBar: { display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px', background: 'var(--color-bg-tertiary)', borderRadius: 'var(--radius-md)', marginBottom: '6px' } as React.CSSProperties,
   replyBarText: { flex: 1, fontSize: '12px', color: 'var(--color-text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const } as React.CSSProperties,
   replyBarClose: { background: 'transparent', border: 'none', color: 'var(--color-text-muted)', cursor: 'pointer', fontSize: '12px', flexShrink: 0 } as React.CSSProperties,
+  clearBtn: { width: '24px', height: '24px', borderRadius: '50%', border: 'none', background: 'var(--color-bg-tertiary)', color: 'var(--color-text-muted)', cursor: 'pointer', fontSize: '11px', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' } as React.CSSProperties,
   msgActions: { position: 'absolute' as const, top: '0', right: '4px', display: 'flex', gap: '3px' } as React.CSSProperties,
   msgDeleteBtn: { width: '24px', height: '24px', borderRadius: '6px', border: '1px solid var(--color-border)', background: 'var(--color-bg-secondary)', color: 'var(--color-text-secondary)', cursor: 'pointer', fontSize: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center' } as React.CSSProperties,
   editRow: { display: 'flex', gap: '6px', alignItems: 'center', marginTop: '2px' } as React.CSSProperties,

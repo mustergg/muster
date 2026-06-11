@@ -204,8 +204,11 @@ function SquadBody({ squadId, room }: { squadId: string; room: SquadRoom }): Rea
     }
   }, [msgKey, (messages[msgKey] || []).length]);
 
+  const clearComposer = (): void => { setInput(''); setReplyTo(null); textInputRef.current?.focus(); };
+
   const handleInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>): void => {
     if (handleMentionBackspace(e, input, setInput)) return;
+    if (e.key === 'Escape') { e.preventDefault(); clearComposer(); return; }
     if (e.key === 'Enter') handleSend();
   };
 
@@ -359,6 +362,9 @@ function SquadBody({ squadId, room }: { squadId: string; room: SquadRoom }): Rea
           {uploading ? '⌛' : '\u{1F4CE}'}
         </button>
         <VoiceRecorder onSend={(f) => void uploadFile(f)} disabled={uploading} />
+        {(input || replyTo) && (
+          <button onClick={clearComposer} style={s.clearBtn} title="Clear (Esc)">{'✕'}</button>
+        )}
         <input
           ref={textInputRef}
           type="text" value={input}
@@ -441,6 +447,7 @@ const s = {
   replyBar: { display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 16px', background: 'var(--color-bg-secondary)', borderTop: '1px solid var(--color-border)' } as React.CSSProperties,
   replyBarText: { flex: 1, fontSize: '12px', color: 'var(--color-text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const } as React.CSSProperties,
   replyBarClose: { background: 'transparent', border: 'none', color: 'var(--color-text-muted)', cursor: 'pointer', fontSize: '12px', flexShrink: 0 } as React.CSSProperties,
+  clearBtn: { width: '24px', height: '24px', borderRadius: '50%', border: 'none', background: 'var(--color-bg-tertiary)', color: 'var(--color-text-muted)', cursor: 'pointer', fontSize: '11px', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' } as React.CSSProperties,
   msgAuthor: { fontSize: '13px', fontWeight: 600, flexShrink: 0 } as React.CSSProperties,
   msgContent: { fontSize: '13px', color: 'var(--color-text-secondary)', wordBreak: 'break-word' as const } as React.CSSProperties,
   msgTime: { fontSize: '10px', color: 'var(--color-text-muted)', marginLeft: 'auto', flexShrink: 0 } as React.CSSProperties,
