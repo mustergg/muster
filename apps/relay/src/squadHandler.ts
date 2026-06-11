@@ -92,6 +92,7 @@ export function handleSquadMessage(
     case 'SUBSCRIBE_SQUAD':       handleSubscribe(client, msg, squadDB, clients); break;
     case 'SEND_SQUAD_MESSAGE':    handleSendMessage(client, msg, squadDB, sendToClient); break;
     case 'DELETE_SQUAD_MESSAGE':  handleDeleteMessage(client, msg, squadDB, sendToClient); break;
+    case 'EDIT_SQUAD_MESSAGE':    handleEditMessage(client, msg, squadDB, sendToClient); break;
     case 'SQUAD_HISTORY_REQUEST': handleHistory(client, msg, squadDB, sendToClient); break;
   }
 }
@@ -486,6 +487,29 @@ function handleDeleteMessage(
 
   squadDB.deleteMessage(messageId);
   broadcastToSquad(squadId, { type: 'SQUAD_MESSAGE_DELETED', payload: { squadId, messageId, room: message.room || 'text' }, timestamp: Date.now() });
+}
+
+function handleEditMessage(
+  client: RelayClient, msg: any, squadDB: SquadDB,
+  sendToClient: (c: RelayClient, m: Record<string, unknown>) => void,
+): void {
+  const { squadId, messageId, content } = msg.payload || {};
+  if (!squadId || !messageId || typeof content !== 'string') return;
+  if (!squadDB.isMember(squadId, client.publicKey)) return;
+
+  const message = squadDB.getMessage(messageId);
+  if (!message || message.squadId !== squadId) return;
+
+  // Only the author may edit, within the window.
+  const isAuthor = message.senderPublicKey === client.publicKey;
+  const withinWindow = (Date.now() - message.timestamp) <= SQUAD_EDIT_WINDOW_MS;
+  if (!isAuthor || !withinWindow) {
+    sendToClient(client, { type: 'SQUAD_RESULT', payload: { action: 'EDIT_SQUAD_MESSAGE', success: false, message: 'You can only edit your own recent messages.' }, timestamp: Date.now() });
+    return;
+  }
+
+  squadDB.updateMessageContent(messageId, content);
+  broadcastToSquad(squadId, { type: 'SQUAD_MESSAGE_EDITED', payload: { squadId, messageId, content, room: message.room || 'text' }, timestamp: Date.now() });
 }
 
 function handleHistory(

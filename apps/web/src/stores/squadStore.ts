@@ -49,6 +49,7 @@ export interface SquadMessage {
   senderUsername: string;
   timestamp: number;
   isOwn: boolean;
+  edited?: boolean;
 }
 
 /** A squad has two independent text streams: its main text chat ('text') and
@@ -111,6 +112,8 @@ interface SquadState {
   sendMessage: (squadId: string, content: string, room?: SquadRoom) => void;
   /** Delete a squad message (author within window, squad owner, or staff). */
   deleteSquadMessage: (squadId: string, messageId: string, room?: SquadRoom) => void;
+  /** Edit one's own squad message within the window (re-encrypts). */
+  editSquadMessage: (squadId: string, messageId: string, content: string, room?: SquadRoom) => void;
   /** Send a file/voice attachment to a squad room (blob + descriptor marker). */
   sendSquadFile: (squadId: string, file: File, room?: SquadRoom) => Promise<void>;
   clearMessage: () => void;
@@ -295,6 +298,22 @@ export const useSquadStore = create<SquadState>((set, get) => ({
     transport.send({ type: 'DELETE_SQUAD_MESSAGE', payload: { squadId, messageId, room }, timestamp: Date.now() });
   },
 
+  editSquadMessage: (squadId, messageId, content, room = 'text') => {
+    const { transport } = useNetworkStore.getState();
+    if (!transport?.isConnected) return;
+    const key = squadRoomKey(squadId, room);
+    set((s) => ({
+      messages: { ...s.messages, [key]: (s.messages[key] || []).map((m) => m.messageId === messageId ? { ...m, content, edited: true } : m) },
+    }));
+    const groupCrypto = useGroupCryptoStore.getState();
+    void groupCrypto.encrypt(squadId, content).then((enc) => {
+      const wire = enc ? packEnc(enc) : content;
+      transport.send({ type: 'EDIT_SQUAD_MESSAGE', payload: { squadId, messageId, content: wire, room }, timestamp: Date.now() });
+    }).catch(() => {
+      transport.send({ type: 'EDIT_SQUAD_MESSAGE', payload: { squadId, messageId, content, room }, timestamp: Date.now() });
+    });
+  },
+
   clearMessage: () => set({ lastMessage: '' }),
 
   init: () => {
@@ -454,6 +473,18 @@ export const useSquadStore = create<SquadState>((set, get) => ({
           set((s) => ({
             messages: { ...s.messages, [key]: (s.messages[key] || []).filter((m) => m.messageId !== p.messageId) },
           }));
+          break;
+        }
+        case 'SQUAD_MESSAGE_EDITED': {
+          const p = msg.payload as any;
+          const room: SquadRoom = p.room === 'voice' ? 'voice' : 'text';
+          const key = squadRoomKey(p.squadId, room);
+          const raw: string = p.content || '';
+          const enc = raw.startsWith(SQUAD_ENC_PREFIX);
+          set((s) => ({
+            messages: { ...s.messages, [key]: (s.messages[key] || []).map((m) => m.messageId === p.messageId ? { ...m, content: enc ? '\u{1F512}…' : raw, edited: true } : m) },
+          }));
+          if (enc) decryptInto(p.squadId, key, p.messageId, raw);
           break;
         }
         case 'SQUAD_DETACHED': {

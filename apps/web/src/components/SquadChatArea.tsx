@@ -23,6 +23,7 @@ interface Props {
 }
 
 const MAX_SQUAD_FILE = 100 * 1024 * 1024;
+const SQUAD_EDIT_WINDOW_MS = 15 * 60 * 1000;
 
 function formatSize(bytes: number): string {
   if (bytes < 1024) return bytes + 'B';
@@ -101,11 +102,13 @@ const fs = {
 
 /** The full squad chat UI for one room ('text' or 'voice'). */
 function SquadBody({ squadId, room }: { squadId: string; room: SquadRoom }): React.JSX.Element {
-  const { messages, members, sendMessage, sendSquadFile, openSquad, loadRoom, inviteMember, kickMember, leaveSquad, deleteSquad, detachSquad, deleteSquadMessage, lastMessage, clearMessage, loadMembers } = useSquadStore();
+  const { messages, members, sendMessage, sendSquadFile, openSquad, loadRoom, inviteMember, kickMember, leaveSquad, deleteSquad, detachSquad, deleteSquadMessage, editSquadMessage, lastMessage, clearMessage, loadMembers } = useSquadStore();
   const { publicKey: myKey } = useNetworkStore();
   const myCommunityRoles = useCommunityStore((st) => st.myRoles);
   const msgKey = squadRoomKey(squadId, room);
   const [input, setInput] = useState('');
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editDraft, setEditDraft] = useState('');
   const [showSettings, setShowSettings] = useState(false);
   const [inviteUsername, setInviteUsername] = useState('');
   const [uploading, setUploading] = useState(false);
@@ -264,15 +267,40 @@ function SquadBody({ squadId, room }: { squadId: string; room: SquadRoom }): Rea
         )}
         {squadMessages.map((m) => {
           const blob = parseBlobContent(m.content);
+          const within = (Date.now() - m.timestamp) <= SQUAD_EDIT_WINDOW_MS;
+          const canEdit = m.isOwn && within && !blob;
+          const isEditing = editingId === m.messageId;
+          const saveEdit = () => {
+            const v = editDraft.trim();
+            setEditingId(null);
+            if (v && v !== m.content) editSquadMessage(squadId, m.messageId, v, room);
+          };
           return (
             <div key={m.messageId} style={s.msg}>
               <span style={s.msgAuthor}>{m.senderUsername}</span>
-              {blob ? <SquadAttachment desc={blob} /> : <span style={s.msgContent}>{m.content}</span>}
+              {isEditing ? (
+                <span style={s.editRow}>
+                  <input
+                    autoFocus
+                    value={editDraft}
+                    onChange={(e) => setEditDraft(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); saveEdit(); } else if (e.key === 'Escape') setEditingId(null); }}
+                    style={s.editInput}
+                  />
+                  <button onClick={saveEdit} style={s.editSave}>Save</button>
+                  <button onClick={() => setEditingId(null)} style={s.editCancel}>Cancel</button>
+                </span>
+              ) : (
+                blob ? <SquadAttachment desc={blob} /> : <span style={s.msgContent}>{m.content}{m.edited ? <span style={s.editedTag}> (edited)</span> : ''}</span>
+              )}
               <span style={s.msgTime}>{new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
               {m.isOwn
                 ? <SeenIndicator context="squad" contextId={msgKey} messageId={m.messageId} />
                 : <MarkSeenButton context="squad" contextId={msgKey} messageId={m.messageId} />}
-              {(m.isOwn || canModerate) && (
+              {!isEditing && canEdit && (
+                <button onClick={() => { setEditDraft(m.content); setEditingId(m.messageId); }} style={s.delMsgBtn} title="Edit message">{'✏️'}</button>
+              )}
+              {!isEditing && (m.isOwn || canModerate) && (
                 <button
                   onClick={() => { if (confirm('Delete this message?')) deleteSquadMessage(squadId, m.messageId, room); }}
                   style={s.delMsgBtn}
@@ -371,6 +399,11 @@ const s = {
   msgContent: { fontSize: '13px', color: 'var(--color-text-secondary)', wordBreak: 'break-word' as const } as React.CSSProperties,
   msgTime: { fontSize: '10px', color: 'var(--color-text-muted)', marginLeft: 'auto', flexShrink: 0 } as React.CSSProperties,
   delMsgBtn: { background: 'transparent', border: 'none', color: 'var(--color-text-muted)', cursor: 'pointer', fontSize: '11px', padding: '0 2px', flexShrink: 0, opacity: 0.6 } as React.CSSProperties,
+  editRow: { display: 'inline-flex', gap: '6px', alignItems: 'center', flex: 1 } as React.CSSProperties,
+  editInput: { flex: 1, padding: '4px 8px', background: 'var(--color-bg-input)', border: '1px solid var(--color-accent)', borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', fontSize: '13px', outline: 'none', fontFamily: 'inherit' } as React.CSSProperties,
+  editSave: { padding: '3px 8px', borderRadius: 'var(--radius-md)', border: 'none', background: 'var(--color-accent)', color: '#fff', fontSize: '10px', fontWeight: 600, cursor: 'pointer' } as React.CSSProperties,
+  editCancel: { padding: '3px 8px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'transparent', color: 'var(--color-text-muted)', fontSize: '10px', cursor: 'pointer' } as React.CSSProperties,
+  editedTag: { fontSize: '10px', color: 'var(--color-text-muted)' } as React.CSSProperties,
   inputBar: { display: 'flex', gap: '6px', padding: '10px 16px', borderTop: '1px solid var(--color-border)', flexShrink: 0, alignItems: 'center' } as React.CSSProperties,
   iconBtn: { width: '30px', height: '30px', borderRadius: '6px', background: 'transparent', border: 'none', color: 'var(--color-text-muted)', cursor: 'pointer', fontSize: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 } as React.CSSProperties,
   chatInput: { flex: 1, padding: '8px 12px', background: 'var(--color-bg-input)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', fontSize: '13px', outline: 'none', fontFamily: 'inherit' } as React.CSSProperties,

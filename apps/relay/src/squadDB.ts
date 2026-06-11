@@ -271,6 +271,10 @@ export class SquadDB {
     return this.db.prepare('DELETE FROM squad_messages WHERE messageId = ?').run(messageId).changes > 0;
   }
 
+  updateMessageContent(messageId: string, content: string): boolean {
+    return this.db.prepare('UPDATE squad_messages SET content = ? WHERE messageId = ?').run(content, messageId).changes > 0;
+  }
+
   getMessagesSince(squadId: string, since: number, room = 'text', limit = 200): DBSquadMessage[] {
     return this.db.prepare(
       'SELECT * FROM squad_messages WHERE squadId = ? AND room = ? AND timestamp > ? ORDER BY timestamp ASC LIMIT ?'
