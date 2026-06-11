@@ -29,6 +29,7 @@ import { TierManager } from './nodeTier';
 import { BlobDB } from './blobDB';
 import type { RelayClient } from './types';
 import { randomBytes } from 'crypto';
+import { execSync } from 'child_process';
 import { freemem, totalmem, uptime as osUptime, hostname, platform, arch } from 'os';
 import { getCurrentVersion, getGitBranch, getGitCommit, checkForUpdates, executeUpdate, compareVersions, autoconfigure } from './nodeUpdater';
 
@@ -351,7 +352,7 @@ export class AdminBot {
     if (args[0] === 'set' && args.length >= 3) {
       const key = args[1]!;
       const value = args.slice(2).join(' ');
-      const allowed = ['nodeName', 'retentionDays', 'maxFileSize', 'adminPublicKey', 'pnpmPath', 'gitPath', 'nodePath'];
+      const allowed = ['nodeName', 'retentionDays', 'maxFileSize', 'adminPublicKey', 'pnpmPath', 'gitPath', 'nodePath', 'serviceName'];
       if (!allowed.includes(key)) {
         this.reply(client, `❌ Unknown config key: ${key}\nAllowed: ${allowed.join(', ')}`);
         return;
@@ -787,6 +788,14 @@ export class AdminBot {
         this.reply(client, result.log.join('\n'));
 
         if (result.success) {
+          // Stash a post-restart report so the owner gets a confirmation (with
+          // recent logs) the next time they connect after the node comes back.
+          this.nodeDB.setConfig('updateReport', JSON.stringify({
+            owner: client.publicKey,
+            version: getCurrentVersion(),
+            commit: getGitCommit(),
+            at: Date.now(),
+          }));
           // Schedule restart
           setTimeout(() => {
             console.log('[updater] Update complete. Restarting...');
@@ -815,6 +824,41 @@ export class AdminBot {
   // =================================================================
   // Send welcome message when admin connects
   // =================================================================
+
+  /** Tail the systemd journal for this service (best-effort — needs journal
+   *  access; falls back to a note when unavailable). */
+  private tailJournal(lines = 25): string {
+    const unit = this.nodeDB.getConfig('serviceName') || 'muster-node';
+    try {
+      const out = execSync(`journalctl -u ${unit} -n ${lines} --no-pager -o short`, { encoding: 'utf-8', timeout: 8000 }).trim();
+      // Keep the DM compact — last ~1500 chars.
+      return out.length > 1500 ? '…\n' + out.slice(-1500) : out;
+    } catch {
+      return '(journal unavailable — the service user needs journal access:\n  sudo usermod -aG systemd-journal <user> && reboot )';
+    }
+  }
+
+  /** After an update-triggered restart, DM the owner a confirmation with the
+   *  new version + recent logs. Sent once, when the owner next connects. */
+  sendUpdateReportIfPending(client: RelayClient): void {
+    const raw = this.nodeDB.getConfig('updateReport');
+    if (!raw) return;
+    if (!this.isAdmin(client.publicKey)) return; // owner only
+    let rep: any;
+    try { rep = JSON.parse(raw); } catch { this.nodeDB.setConfig('updateReport', ''); return; }
+    this.nodeDB.setConfig('updateReport', ''); // deliver once
+
+    const journal = this.tailJournal();
+    this.reply(client, [
+      '✅ Node restarted after update',
+      '━━━━━━━━━━━━━━━━━━━━',
+      `Now running: ${rep.version || getCurrentVersion()} (${rep.commit || getGitCommit()})`,
+      `Updated at:  ${rep.at ? new Date(rep.at).toISOString() : 'unknown'}`,
+      '',
+      '📜 Recent log (journalctl -u muster-node):',
+      journal,
+    ].join('\n'));
+  }
 
   sendWelcome(client: RelayClient): void {
     // Send at most once per process per admin — the dispatcher calls this on

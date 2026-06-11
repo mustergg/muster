@@ -380,6 +380,8 @@ function handleMessage(client: RelayClient, msg: any): void {
         timestamp: Date.now(),
       });
       setTimeout(() => adminBot.sendWelcome(client), 200);
+      // Post-update confirmation (with recent logs), delivered once.
+      setTimeout(() => adminBot.sendUpdateReportIfPending(client), 400);
     }
     return;
   }
