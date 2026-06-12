@@ -4,6 +4,7 @@
   "description": "Muster Desktop Application (Tauri v2)",
   "private": true,
   "scripts": {
+    "tauri": "tauri",
     "dev": "tauri dev",
     "build": "tauri build",
     "build:debug": "tauri build --debug",
