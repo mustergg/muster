@@ -1,6 +1,6 @@
 {
   "name": "@muster/desktop",
-  "version": "0.0.9",
+  "version": "0.0.10",
   "description": "Muster Desktop Application (Tauri v2)",
   "private": true,
   "scripts": {
