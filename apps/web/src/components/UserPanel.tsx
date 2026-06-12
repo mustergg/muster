@@ -13,6 +13,7 @@ import { useAuthStore } from '../stores/authStore.js';
 import { useNetworkStore } from '../stores/networkStore.js';
 import { useStatusStore, STATUS_OPTIONS, statusMeta, type UserAvailability } from '../stores/statusStore.js';
 import { useVoiceStore } from '../stores/voiceStore.js';
+import { useUiNav } from '../stores/uiNavStore.js';
 import EditProfileModal from '../pages/EditProfileModal.js';
 
 export default function UserPanel(): React.JSX.Element {
@@ -85,7 +86,9 @@ export default function UserPanel(): React.JSX.Element {
 
       <div style={s.panel}>
         <div style={s.avatarWrap}>
-          <div style={s.avatar}>{(username ?? '?').slice(0, 2).toUpperCase()}</div>
+          <button style={s.avatarBtn} onClick={() => setShowProfile(true)} title="Edit profile">
+            <div style={s.avatar}>{(username ?? '?').slice(0, 2).toUpperCase()}</div>
+          </button>
           <span style={{ ...s.dot, background: meta.color }} title={meta.label} />
         </div>
 
@@ -107,7 +110,7 @@ export default function UserPanel(): React.JSX.Element {
           />
         </div>
 
-        <button onClick={() => setShowProfile(true)} title="Edit profile" style={s.actionBtn}>{'⚙'}</button>
+        <button onClick={() => useUiNav.getState().requestSettings()} title="Settings" style={s.actionBtn}>{'\u{2699}\u{FE0F}'}</button>
         <button onClick={handleLogout} title="Logout" style={s.actionBtn}>{'⏻'}</button>
 
         {pickerOpen && (
@@ -135,6 +138,7 @@ const s = {
   voiceBtn: { width: '26px', height: '26px', borderRadius: '6px', background: 'transparent', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '14px' } as React.CSSProperties,
   panel: { position: 'relative' as const, padding: '8px 10px', background: 'var(--color-bg-tertiary)', borderTop: '1px solid var(--color-border)', display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 } as React.CSSProperties,
   avatarWrap: { position: 'relative' as const, flexShrink: 0 } as React.CSSProperties,
+  avatarBtn: { padding: 0, border: 'none', background: 'transparent', cursor: 'pointer', display: 'block', borderRadius: '50%' } as React.CSSProperties,
   avatar: { width: '36px', height: '36px', borderRadius: '50%', background: 'var(--color-accent-dim)', border: '1.5px solid var(--color-accent)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', fontWeight: 600, color: 'var(--color-accent)' } as React.CSSProperties,
   dot: { position: 'absolute' as const, right: '-1px', bottom: '-1px', width: '11px', height: '11px', borderRadius: '50%', border: '2px solid var(--color-bg-tertiary)' } as React.CSSProperties,
   info: { flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' as const, gap: '1px' } as React.CSSProperties,

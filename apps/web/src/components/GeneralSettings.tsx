@@ -10,12 +10,15 @@ import React from 'react';
 import { useTranslation } from 'react-i18next';
 import { SUPPORTED_LOCALES, setLocale, getStoredLocale, type SupportedLocale } from '@muster/i18n';
 import { useReadReceiptStore } from '../stores/readReceiptStore.js';
+import { useLayoutPref } from '../stores/layoutPrefStore.js';
 
 export default function GeneralSettings(): React.JSX.Element {
   const { t, i18n } = useTranslation();
   const current = (i18n.language as SupportedLocale) || getStoredLocale();
   const receiptsDefaultOn = useReadReceiptStore((st) => st.defaultOn);
   const setDefaultOn = useReadReceiptStore((st) => st.setDefaultOn);
+  const forceMobile = useLayoutPref((st) => st.forceMobile);
+  const setForceMobile = useLayoutPref((st) => st.setForceMobile);
 
   const pick = (loc: SupportedLocale): void => { void setLocale(loc); };
 
@@ -55,6 +58,15 @@ export default function GeneralSettings(): React.JSX.Element {
             <span>{t('settings.receiptsDefault')}</span>
           </label>
           <div style={s.note}>{t('settings.receiptsNote')}</div>
+        </div>
+
+        <div style={s.section}>
+          <div style={s.sectionTitle}>Layout</div>
+          <label style={s.checkRow}>
+            <input type="checkbox" checked={forceMobile} onChange={(e) => setForceMobile(e.target.checked)} style={{ accentColor: 'var(--color-accent)' }} />
+            <span>Mobile layout (single column)</span>
+          </label>
+          <div style={s.note}>Force the phone layout on any screen — handy on a vertical monitor or to preview/tune the mobile UI.</div>
         </div>
 
         <div style={s.section}>

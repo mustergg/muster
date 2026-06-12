@@ -8,6 +8,7 @@ import MainContent from '../components/MainContent.js';
 import MobileShell from '../components/MobileShell.js';
 import { useIsMobile } from '../lib/useResponsive.js';
 import { useNavRecency } from '../stores/navRecencyStore.js';
+import { useUiNav } from '../stores/uiNavStore.js';
 import type { SquadRoom } from '../stores/squadStore.js';
 import type { ActiveLocation, ViewMode } from '../components/layoutTypes.js';
 import VerificationBanner from '../components/VerificationBanner.js';
@@ -93,6 +94,13 @@ export default function MainLayout(): React.JSX.Element {
   }, [status]);
 
   useEffect(() => { loadCommunities(); }, []);
+
+  // Let the shared UserPanel (settings button) open the settings view.
+  useEffect(() => {
+    useUiNav.getState().setOpenSettings(() => handleSelectSettings());
+    return () => useUiNav.getState().setOpenSettings(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // R25 — Phase 4. Browser piece cache for blob attachments. Init once;
   // shut down on unmount.

@@ -18,6 +18,7 @@ import VoiceRecorder from './VoiceRecorder.js';
 import { ReceiptToggle, SeenIndicator, MarkSeenButton } from './ReadReceiptUI.js';
 import { useReadReceiptStore } from '../stores/readReceiptStore.js';
 import { useComposerStore, appendMention, handleMentionBackspace } from '../stores/composerStore.js';
+import AutoGrowTextarea from './AutoGrowTextarea.js';
 import { parseReply, packReply, replyPreview, mentionsUser, flashMessage, isFirstMentionView } from '../lib/messageFx.js';
 import { useTypeToFocus } from '../lib/useTypeToFocus.js';
 import type { ActiveLocation } from '../pages/MainLayout.js';
@@ -342,7 +343,7 @@ export default function ChatArea({ active }: Props): React.JSX.Element {
   const [dragOver, setDragOver] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const textInputRef = useRef<HTMLInputElement>(null);
+  const textInputRef = useRef<HTMLTextAreaElement>(null);
   useTypeToFocus(textInputRef);
   // Drag depth counter — dragenter/dragleave fire for every child element, so
   // a plain boolean flickers. Count enters vs leaves and only hide at zero.
@@ -398,7 +399,7 @@ export default function ChatArea({ active }: Props): React.JSX.Element {
 
   const clearComposer = (): void => { setDraft(''); setReplyTo(null); textInputRef.current?.focus(); };
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>): void => {
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>): void => {
     if (handleMentionBackspace(e, draft, setDraft)) return; // atomic @mention delete
     if (e.key === 'Escape') { e.preventDefault(); clearComposer(); return; }
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -542,10 +543,9 @@ export default function ChatArea({ active }: Props): React.JSX.Element {
           {(draft || replyTo) && (
             <button onClick={clearComposer} style={styles.clearBtn} title="Clear (Esc)">{'✕'}</button>
           )}
-          <input
+          <AutoGrowTextarea
             ref={textInputRef}
             style={styles.input}
-            type="text"
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={handleKeyDown}
@@ -603,7 +603,7 @@ const styles = {
   time: { fontSize: '11px', color: 'var(--color-text-muted)', fontFamily: 'var(--font-mono)' } as React.CSSProperties,
   content: { fontSize: '13px', color: 'var(--color-text-secondary)', lineHeight: 1.5, wordBreak: 'break-word' as const } as React.CSSProperties,
   inputArea: { padding: '10px 16px 14px', flexShrink: 0 } as React.CSSProperties,
-  inputWrap: { display: 'flex', alignItems: 'center', background: 'var(--color-bg-input)', border: '1px solid var(--color-border)', borderRadius: '10px', gap: '4px', paddingRight: '8px', paddingLeft: '4px' } as React.CSSProperties,
+  inputWrap: { display: 'flex', alignItems: 'flex-end', background: 'var(--color-bg-input)', border: '1px solid var(--color-border)', borderRadius: '10px', gap: '4px', paddingRight: '8px', paddingLeft: '4px' } as React.CSSProperties,
   attachBtn: { width: '32px', height: '32px', borderRadius: '6px', background: 'transparent', border: 'none', color: 'var(--color-text-muted)', cursor: 'pointer', fontSize: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, transition: 'color 0.15s' } as React.CSSProperties,
   input: { flex: 1, background: 'transparent', border: 'none', color: 'var(--color-text-primary)', padding: '10px 8px', outline: 'none', fontSize: '13px', fontFamily: 'inherit' } as React.CSSProperties,
   sendBtn: { width: '30px', height: '30px', borderRadius: '6px', background: 'var(--color-accent)', border: 'none', color: '#fff', cursor: 'pointer', fontSize: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, opacity: 1, transition: 'opacity 0.15s' } as React.CSSProperties,

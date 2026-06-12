@@ -42,9 +42,10 @@
   --safe-top:    env(safe-area-inset-top, 0px);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
   --mobile-header-h: 46px;
-  /* Left drawer collapsed-rail: content shrinks to this scale; rail width is
-     the channel sidebar width times the scale. Tuned after device testing. */
-  --rail-scale: 0.5;
+  /* Left drawer collapsed-rail: fixed width, content scaled to fit
+     (≈ rail-w / sidebar-channels-w). Tuned after device testing. */
+  --rail-w: 75px;
+  --rail-scale: 0.34;
 }
 
 /* ── Reset ──────────────────────────────────────────────────────────────────── */
@@ -111,7 +112,7 @@ input, textarea, button { font-family: inherit; font-size: inherit; }
 .m-rail-slot {
   position: relative;
   flex-shrink: 0;
-  width: calc(var(--sidebar-channels-w) * var(--rail-scale));
+  width: var(--rail-w);
   height: 100%;
   overflow: hidden;
   background: var(--color-bg-secondary);

@@ -7,16 +7,18 @@
  * phones get the mobile shell, landscape/tablets keep the wide layout.
  */
 import { useEffect, useState } from 'react';
+import { useLayoutPref } from '../stores/layoutPrefStore.js';
 
 export const MOBILE_BREAKPOINT = 768;
 
 export function useIsMobile(breakpoint: number = MOBILE_BREAKPOINT): boolean {
-  const [isMobile, setIsMobile] = useState<boolean>(() =>
+  const forceMobile = useLayoutPref((s) => s.forceMobile);
+  const [narrow, setNarrow] = useState<boolean>(() =>
     typeof window !== 'undefined' ? window.innerWidth < breakpoint : false,
   );
 
   useEffect(() => {
-    const onResize = (): void => setIsMobile(window.innerWidth < breakpoint);
+    const onResize = (): void => setNarrow(window.innerWidth < breakpoint);
     window.addEventListener('resize', onResize);
     window.addEventListener('orientationchange', onResize);
     onResize();
@@ -26,5 +28,5 @@ export function useIsMobile(breakpoint: number = MOBILE_BREAKPOINT): boolean {
     };
   }, [breakpoint]);
 
-  return isMobile;
+  return forceMobile || narrow;
 }

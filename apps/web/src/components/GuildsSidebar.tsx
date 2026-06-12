@@ -318,24 +318,6 @@ export default function GuildsSidebar({ activeCommunityId, onSelectCommunity, dm
           )}
         </div>
 
-        {/* Spacer to push settings to bottom */}
-        <div style={{ flex: 1 }} />
-
-        {/* Settings button */}
-        <button
-          title="Settings"
-          onClick={() => onSelectSettings?.()}
-          style={{
-            ...styles.icon,
-            background: settingsActive ? 'var(--color-accent)' : 'var(--color-bg-hover)',
-            color: settingsActive ? '#fff' : 'var(--color-text-secondary)',
-            borderRadius: settingsActive ? '14px' : '50%',
-            border: settingsActive ? '2px solid var(--color-accent)' : '2px solid transparent',
-            fontSize: '18px', fontWeight: 400,
-          }}
-        >
-          {'\u{2699}\u{FE0F}'}
-        </button>
       </div>
 
       {showCreateSquad && <CreateSquadGlobalModal onClose={() => setShowCreateSquad(false)} />}
