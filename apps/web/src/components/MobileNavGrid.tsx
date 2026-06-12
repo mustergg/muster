@@ -5,7 +5,7 @@
  * pin → recency. Tap a tile to jump, star to pin. Rendered between the top bar
  * and the bottom user panel — it never covers the user panel.
  */
-import React from 'react';
+import React, { useRef } from 'react';
 import { useCommunityStore } from '../stores/communityStore.js';
 import { useSquadStore } from '../stores/squadStore.js';
 import { useNavRecency, orderByRecency } from '../stores/navRecencyStore.js';
@@ -72,12 +72,23 @@ export default function MobileNavGrid({ onSelectCommunity, onSelectSquad, onClos
 
   const empty = squadTiles.length === 0 && communityTiles.length === 0;
 
+  // Pull up (when the grid is scrolled to the top) closes it.
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const startY = useRef<number | null>(null);
+  const onTouchStart = (e: React.TouchEvent): void => { startY.current = e.touches[0]?.clientY ?? null; };
+  const onTouchEnd = (e: React.TouchEvent): void => {
+    const sy = startY.current; startY.current = null;
+    const ey = e.changedTouches[0]?.clientY;
+    if (sy == null || ey == null) return;
+    if (ey - sy < -50 && (scrollRef.current?.scrollTop ?? 0) <= 0) onClose();
+  };
+
   return (
-    <div style={g.wrap}>
+    <div style={g.wrap} onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
       <div style={g.header} onClick={onClose} title="Close">
         <span style={g.handle} />
       </div>
-      <div style={g.scroll}>
+      <div style={g.scroll} ref={scrollRef}>
         {empty && <div style={g.empty}>No communities or squads yet</div>}
         {squadTiles.length > 0 && (
           <>
