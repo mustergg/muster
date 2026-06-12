@@ -218,7 +218,7 @@ export default function MobileShell(props: Props): React.JSX.Element {
 
           <div style={s.main} onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
             {hasLeft && leftState === 'rail' && (
-              <div className="m-rail-slot">
+              <div className="m-rail-slot" onClick={() => setLeftState('open')} title="Open">
                 <div className="m-rail-inner">{leftContent}</div>
               </div>
             )}
@@ -271,6 +271,6 @@ const s = {
   title: { flex: 1, minWidth: 0, fontSize: '15px', fontWeight: 600, color: 'var(--color-text-primary)', textAlign: 'center' as const, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const } as React.CSSProperties,
   main: { flex: 1, position: 'relative' as const, display: 'flex', minHeight: 0, overflow: 'hidden' } as React.CSSProperties,
   contentWrap: { flex: 1, display: 'flex', flexDirection: 'column' as const, minWidth: 0, minHeight: 0, overflow: 'hidden' } as React.CSSProperties,
-  leftDrawer: { width: '82%', maxWidth: '320px', background: 'var(--color-bg-secondary)', boxShadow: '2px 0 16px rgba(0,0,0,0.4)' } as React.CSSProperties,
+  leftDrawer: { width: '41%', maxWidth: '160px', background: 'var(--color-bg-secondary)', boxShadow: '2px 0 16px rgba(0,0,0,0.4)' } as React.CSSProperties,
   rightDrawer: { width: '78%', maxWidth: '300px', background: 'var(--color-bg-secondary)', boxShadow: '-2px 0 16px rgba(0,0,0,0.4)' } as React.CSSProperties,
 } as const;

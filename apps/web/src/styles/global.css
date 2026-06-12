@@ -117,12 +117,16 @@ input, textarea, button { font-family: inherit; font-size: inherit; }
   overflow: hidden;
   background: var(--color-bg-secondary);
   border-right: 1px solid var(--color-border);
+  cursor: pointer;
 }
+/* In the collapsed rail the list is a non-interactive peek: tapping anywhere
+   expands the drawer; channels only become clickable once it's open. */
 .m-rail-inner {
   width: var(--sidebar-channels-w);
   height: calc(100% / var(--rail-scale));
   transform: scale(var(--rail-scale));
   transform-origin: top left;
+  pointer-events: none;
 }
 /* Selected channel/DM stays larger than its siblings in the rail (≈75% vs
    50%) so the current location reads at a glance. */
