@@ -15,7 +15,8 @@ import { useTypeToFocus } from '../lib/useTypeToFocus.js';
 import { fetchAndDecryptBlob } from '../lib/blobUpload.js';
 import EmojiPicker from './EmojiPicker.js';
 import VoiceRecorder from './VoiceRecorder.js';
-import AutoGrowTextarea from './AutoGrowTextarea.js';
+import ComposerBar from './ComposerBar.js';
+import { useIsMobile } from '../lib/useResponsive.js';
 import VoicePanel from './VoicePanel.js';
 import { ReceiptToggle, SeenIndicator, MarkSeenButton } from './ReadReceiptUI.js';
 import { useReadReceiptStore } from '../stores/readReceiptStore.js';
@@ -120,6 +121,7 @@ function SquadBody({ squadId, room }: { squadId: string; room: SquadRoom }): Rea
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textInputRef = useRef<HTMLTextAreaElement>(null);
   useTypeToFocus(textInputRef);
+  const isMobile = useIsMobile();
 
   const uploadFile = useCallback(async (file: File) => {
     if (file.size > MAX_SQUAD_FILE) { alert(`File too large. Max ${formatSize(MAX_SQUAD_FILE)}.`); return; }
@@ -358,24 +360,22 @@ function SquadBody({ squadId, room }: { squadId: string; room: SquadRoom }): Rea
       )}
 
       {/* Input */}
-      <div style={s.inputBar}>
-        <button onClick={() => fileInputRef.current?.click()} disabled={uploading} style={s.iconBtn} title="Attach file">
-          {uploading ? '⌛' : '\u{1F4CE}'}
-        </button>
-        <VoiceRecorder onSend={(f) => void uploadFile(f)} disabled={uploading} />
-        {(input || replyTo) && (
-          <button onClick={clearComposer} style={s.clearBtn} title="Clear (Esc)">{'✕'}</button>
-        )}
-        <AutoGrowTextarea
-          ref={textInputRef}
+      <div style={s.inputArea}>
+        <ComposerBar
           value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={handleInputKeyDown}
+          onChange={setInput}
+          onSubmit={handleSend}
+          onPickFile={() => fileInputRef.current?.click()}
+          onSendVoice={(f) => void uploadFile(f)}
+          voiceDisabled={uploading}
+          showClear={!!(input || replyTo)}
+          onClear={clearComposer}
           placeholder={`Message ${squad?.name || 'squad'}...`}
-          style={s.chatInput}
+          disabled={uploading}
+          inputRef={textInputRef}
+          isMobile={isMobile}
+          sendDisabled={!input.trim()}
         />
-        <EmojiPicker onPick={(e) => setInput((d) => d + e)} />
-        <button onClick={handleSend} disabled={!input.trim()} style={{ ...s.sendBtn, opacity: input.trim() ? 1 : 0.5 }}>Send</button>
         <input ref={fileInputRef} type="file" style={{ display: 'none' }} onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadFile(f); e.target.value = ''; }} />
       </div>
     </div>
@@ -459,6 +459,7 @@ const s = {
   editCancel: { padding: '3px 8px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'transparent', color: 'var(--color-text-muted)', fontSize: '10px', cursor: 'pointer' } as React.CSSProperties,
   editedTag: { fontSize: '10px', color: 'var(--color-text-muted)' } as React.CSSProperties,
   inputBar: { display: 'flex', gap: '6px', padding: '10px 16px', borderTop: '1px solid var(--color-border)', flexShrink: 0, alignItems: 'flex-end' } as React.CSSProperties,
+  inputArea: { padding: '10px 16px', borderTop: '1px solid var(--color-border)', flexShrink: 0 } as React.CSSProperties,
   iconBtn: { width: '30px', height: '30px', borderRadius: '6px', background: 'transparent', border: 'none', color: 'var(--color-text-muted)', cursor: 'pointer', fontSize: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 } as React.CSSProperties,
   chatInput: { flex: 1, padding: '8px 12px', background: 'var(--color-bg-input)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', fontSize: '13px', outline: 'none', fontFamily: 'inherit' } as React.CSSProperties,
   sendBtn: { padding: '8px 16px', borderRadius: 'var(--radius-md)', border: 'none', background: 'var(--color-accent)', color: '#fff', fontSize: '12px', fontWeight: 500, cursor: 'pointer' } as React.CSSProperties,

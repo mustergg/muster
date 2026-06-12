@@ -11,7 +11,8 @@ import VoiceRecorder from './VoiceRecorder.js';
 import { ReceiptToggle, SeenIndicator, MarkSeenButton } from './ReadReceiptUI.js';
 import { parseReply, packReply, replyPreview, mentionsUser, flashMessage, isFirstMentionView } from '../lib/messageFx.js';
 import { useTypeToFocus } from '../lib/useTypeToFocus.js';
-import AutoGrowTextarea from './AutoGrowTextarea.js';
+import ComposerBar from './ComposerBar.js';
+import { useIsMobile } from '../lib/useResponsive.js';
 import { useReadReceiptStore } from '../stores/readReceiptStore.js';
 
 interface Props {
@@ -203,6 +204,7 @@ export default function DMChatArea({ partnerPublicKey }: Props): React.JSX.Eleme
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textInputRef = useRef<HTMLTextAreaElement>(null);
   useTypeToFocus(textInputRef);
+  const isMobile = useIsMobile();
   const dragDepthRef = useRef(0);
 
   const uploadFile = useCallback(async (file: File) => {
@@ -327,32 +329,21 @@ export default function DMChatArea({ partnerPublicKey }: Props): React.JSX.Eleme
             <button onClick={() => setReplyTo(null)} style={dmEdit.replyBarClose} title="Cancel reply">{'✕'}</button>
           </div>
         )}
-        <div style={styles.inputWrap}>
-          <button
-            onClick={() => fileInputRef.current?.click()}
-            disabled={uploading}
-            style={styles.iconBtn}
-            title="Attach file"
-          >
-            {uploading ? '⌛' : '\u{1F4CE}'}
-          </button>
-          <VoiceRecorder onSend={(f) => void uploadFile(f)} disabled={uploading} />
-          {(draft || replyTo) && (
-            <button onClick={clearComposer} style={dmEdit.clearBtn} title="Clear (Esc)">{'✕'}</button>
-          )}
-          <AutoGrowTextarea
-            ref={textInputRef}
-            style={styles.input}
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder={`Message ${partnerName}`}
-          />
-          <EmojiPicker onPick={(e) => setDraft((d) => d + e)} />
-          <button onClick={handleSend} disabled={!draft.trim()} style={styles.sendBtn}>
-            &#x2191;
-          </button>
-        </div>
+        <ComposerBar
+          value={draft}
+          onChange={setDraft}
+          onSubmit={handleSend}
+          onPickFile={() => fileInputRef.current?.click()}
+          onSendVoice={(f) => void uploadFile(f)}
+          voiceDisabled={uploading}
+          showClear={!!(draft || replyTo)}
+          onClear={clearComposer}
+          placeholder={`Message ${partnerName}`}
+          disabled={uploading}
+          inputRef={textInputRef}
+          isMobile={isMobile}
+          sendDisabled={!draft.trim()}
+        />
         <input
           ref={fileInputRef}
           type="file"

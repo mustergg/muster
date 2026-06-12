@@ -5,7 +5,7 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 
-const EMOJIS = [
+export const EMOJIS = [
   '😀', '😂', '🙂', '😉', '😍', '😎', '🤔', '😢', '😭', '😡',
   '👍', '👎', '👏', '🙏', '🔥', '🎉', '❤️', '💯', '✅', '❌',
   '😅', '😏', '🥳', '😴', '🤯', '🫡', '👀', '💪', '🚀', '⭐',

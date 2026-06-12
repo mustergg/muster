@@ -18,7 +18,8 @@ import VoiceRecorder from './VoiceRecorder.js';
 import { ReceiptToggle, SeenIndicator, MarkSeenButton } from './ReadReceiptUI.js';
 import { useReadReceiptStore } from '../stores/readReceiptStore.js';
 import { useComposerStore, appendMention, handleMentionBackspace } from '../stores/composerStore.js';
-import AutoGrowTextarea from './AutoGrowTextarea.js';
+import ComposerBar from './ComposerBar.js';
+import { useIsMobile } from '../lib/useResponsive.js';
 import { parseReply, packReply, replyPreview, mentionsUser, flashMessage, isFirstMentionView } from '../lib/messageFx.js';
 import { useTypeToFocus } from '../lib/useTypeToFocus.js';
 import type { ActiveLocation } from '../pages/MainLayout.js';
@@ -345,6 +346,7 @@ export default function ChatArea({ active }: Props): React.JSX.Element {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textInputRef = useRef<HTMLTextAreaElement>(null);
   useTypeToFocus(textInputRef);
+  const isMobile = useIsMobile();
   // Drag depth counter — dragenter/dragleave fire for every child element, so
   // a plain boolean flickers. Count enters vs leaves and only hide at zero.
   const dragDepthRef = useRef(0);
@@ -530,37 +532,21 @@ export default function ChatArea({ active }: Props): React.JSX.Element {
             <button onClick={() => setReplyTo(null)} style={styles.replyBarClose} title="Cancel reply">{'✕'}</button>
           </div>
         )}
-        <div style={styles.inputWrap}>
-          <button
-            onClick={() => fileInputRef.current?.click()}
-            disabled={uploading}
-            style={styles.attachBtn}
-            title={t('attachment.attachFile')}
-          >
-            {uploading ? '\u231B' : '\u{1F4CE}'}
-          </button>
-          <VoiceRecorder onSend={(f) => void uploadFile(f)} disabled={uploading} />
-          {(draft || replyTo) && (
-            <button onClick={clearComposer} style={styles.clearBtn} title="Clear (Esc)">{'✕'}</button>
-          )}
-          <AutoGrowTextarea
-            ref={textInputRef}
-            style={styles.input}
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder={t('channel.textPlaceholder', { name: active.channelName })}
-            disabled={uploading}
-          />
-          <EmojiPicker onPick={(e) => setDraft((d) => d + e)} />
-          <button
-            onClick={handleSend}
-            disabled={!draft.trim() || uploading}
-            style={styles.sendBtn}
-          >
-            &#x2191;
-          </button>
-        </div>
+        <ComposerBar
+          value={draft}
+          onChange={setDraft}
+          onSubmit={handleSend}
+          onPickFile={() => fileInputRef.current?.click()}
+          onSendVoice={(f) => void uploadFile(f)}
+          voiceDisabled={uploading}
+          showClear={!!(draft || replyTo)}
+          onClear={clearComposer}
+          placeholder={t('channel.textPlaceholder', { name: active.channelName })}
+          disabled={uploading}
+          inputRef={textInputRef}
+          isMobile={isMobile}
+          sendDisabled={!draft.trim() || uploading}
+        />
         <input
           ref={fileInputRef}
           type="file"
