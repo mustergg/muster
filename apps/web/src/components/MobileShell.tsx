@@ -5,15 +5,22 @@
  *   - Top nav bar: horizontal GuildsSidebar (communities / squads / DMs /
  *     friends / settings). Pull-down fullscreen grid comes in a later phase.
  *   - Compact header: hamburger (left drawer) · title · members (right drawer).
- *   - Main: MainContent fills; left/right drawers overlay it.
+ *   - Main: MainContent fills; left/right drawers overlay or flank it.
  *   - User panel pinned at the bottom (voice bar + status), always reachable
  *     for quick mute / disconnect.
  *
- * Left drawer holds the context list (channels / DM list / squad sidebar);
- * right drawer holds the community member list. Both are overlays that never
- * cover the bottom user panel.
+ * Left drawer (channels / DM list / squad sidebar) has three states:
+ *   - open  — full-width overlay with a backdrop (pick a channel).
+ *   - rail  — a thin in-flow column showing the list scaled down (~half size),
+ *             with the selected row emphasised; selecting a channel collapses
+ *             the open drawer to this rail instead of hiding it.
+ *   - closed — hidden (only when there's nothing to list).
+ * The hamburger toggles open ↔ rail.
+ *
+ * Right drawer (community members) is a plain overlay. Swipe right→left opens
+ * it; swipe left→right opens the left drawer.
  */
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import GuildsSidebar from './GuildsSidebar.js';
 import ChannelsSidebar from './ChannelsSidebar.js';
 import DMConversationList from './DMConversationList.js';
@@ -25,6 +32,8 @@ import { useCommunityStore } from '../stores/communityStore.js';
 import { useSquadStore } from '../stores/squadStore.js';
 import type { ActiveLocation, ViewMode } from './layoutTypes.js';
 import type { SquadRoom } from '../stores/squadStore.js';
+
+type LeftState = 'open' | 'rail' | 'closed';
 
 interface Props {
   viewMode: ViewMode;
@@ -44,12 +53,15 @@ interface Props {
   onOpenDM: (publicKey: string) => void;
 }
 
+const SWIPE_MIN = 60;     // px of horizontal travel to count as a swipe
+const SWIPE_RATIO = 1.5;  // horizontal must dominate vertical by this factor
+
 export default function MobileShell(props: Props): React.JSX.Element {
   const {
     viewMode, active, activeSquad, squadMode, activeCommunityId, activeDMPartner,
   } = props;
 
-  const [leftOpen, setLeftOpen] = useState(false);
+  const [leftState, setLeftState] = useState<LeftState>('closed');
   const [rightOpen, setRightOpen] = useState(false);
 
   const communities = useCommunityStore((s) => s.communities);
@@ -69,13 +81,15 @@ export default function MobileShell(props: Props): React.JSX.Element {
   const hasLeft = viewMode === 'community' || viewMode === 'dm' || viewMode === 'squad';
   const hasRight = viewMode === 'community' && !isSpecial;
 
-  // Open the left drawer automatically when a view is entered with nothing
-  // selected yet; close drawers when there's no left drawer for the view.
+  // Resolve the left drawer state when the view (or selected community)
+  // changes: open when nothing is picked yet, rail once there's a selection,
+  // closed when the view has no list at all.
   useEffect(() => {
     setRightOpen(false);
-    if (viewMode === 'community' && activeCommunityId && !active) setLeftOpen(true);
-    else if (viewMode === 'dm' && !activeDMPartner) setLeftOpen(true);
-    else if (!hasLeft) setLeftOpen(false);
+    if (viewMode === 'community') setLeftState(!activeCommunityId ? 'closed' : active ? 'rail' : 'open');
+    else if (viewMode === 'dm') setLeftState(activeDMPartner ? 'rail' : 'open');
+    else if (viewMode === 'squad') setLeftState('open');
+    else setLeftState('closed');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [viewMode, activeCommunityId]);
 
@@ -86,30 +100,60 @@ export default function MobileShell(props: Props): React.JSX.Element {
     : viewMode === 'squad' ? squadName
     : (active?.channelName ?? activeCommunity?.name ?? 'Muster');
 
+  // Collapse the open left drawer to its rail when a list item is chosen.
+  const collapseLeft = (): void => setLeftState('rail');
+  const toggleLeft = (): void => setLeftState((st) => (st === 'open' ? 'rail' : 'open'));
+
   const leftContent =
     viewMode === 'community' ? (
       <ChannelsSidebar
         mobile
         communityId={activeCommunityId}
         activeChannelId={active?.channelId ?? null}
-        onSelectChannel={(c, ch, n) => { props.onSelectChannel(c, ch, n); setLeftOpen(false); }}
+        onSelectChannel={(c, ch, n) => { props.onSelectChannel(c, ch, n); collapseLeft(); }}
       />
     ) : viewMode === 'dm' ? (
       <DMConversationList
         mobile
         activeConversation={activeDMPartner}
-        onSelectConversation={(pk) => { props.onSelectDMPartner(pk); setLeftOpen(false); }}
+        onSelectConversation={(pk) => { props.onSelectDMPartner(pk); collapseLeft(); }}
       />
     ) : viewMode === 'squad' && activeSquad ? (
       <SquadSidebar
         mobile
         squadId={activeSquad}
         activeMode={squadMode}
-        onSelectMode={(m) => { props.onSelectSquadMode(m); setLeftOpen(false); }}
+        onSelectMode={(m) => { props.onSelectSquadMode(m); collapseLeft(); }}
         onJoinCommunity={props.onSelectCommunity}
         onOpenDM={props.onOpenDM}
       />
     ) : null;
+
+  // ── Swipe: right→left opens members, left→right opens channels ──
+  const touch = useRef<{ x: number; y: number; t: number } | null>(null);
+  const onTouchStart = (e: React.TouchEvent): void => {
+    const p = e.touches[0];
+    if (p) touch.current = { x: p.clientX, y: p.clientY, t: Date.now() };
+  };
+  const onTouchEnd = (e: React.TouchEvent): void => {
+    const start = touch.current;
+    const p = e.changedTouches[0];
+    touch.current = null;
+    if (!start || !p) return;
+    const dx = p.clientX - start.x;
+    const dy = p.clientY - start.y;
+    if (Date.now() - start.t > 600) return;
+    if (Math.abs(dx) < SWIPE_MIN || Math.abs(dx) < Math.abs(dy) * SWIPE_RATIO) return;
+    if (dx < 0) {
+      // swipe left
+      if (hasRight) setRightOpen(true);
+      else if (hasLeft && leftState === 'open') setLeftState('rail');
+    } else {
+      // swipe right
+      if (rightOpen) setRightOpen(false);
+      else if (hasLeft) setLeftState('open');
+    }
+  };
 
   return (
     <div style={s.root}>
@@ -132,7 +176,7 @@ export default function MobileShell(props: Props): React.JSX.Element {
       {(hasLeft || hasRight) && (
         <div style={s.header}>
           {hasLeft ? (
-            <button style={s.hbtn} onClick={() => setLeftOpen((o) => !o)} title="Channels">{'☰'}</button>
+            <button style={s.hbtn} onClick={toggleLeft} title="Channels">{'☰'}</button>
           ) : <span style={s.hbtnSpacer} />}
           <span style={s.title}>{title}</span>
           {hasRight ? (
@@ -141,7 +185,20 @@ export default function MobileShell(props: Props): React.JSX.Element {
         </div>
       )}
 
-      <div style={s.main}>
+      <div style={s.main} onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
+        {hasLeft && leftState === 'rail' && (
+          <div className="m-rail-slot">
+            <div className="m-rail-inner">{leftContent}</div>
+          </div>
+        )}
+
+        {hasLeft && leftState === 'open' && (
+          <>
+            <div className="m-backdrop" onClick={collapseLeft} />
+            <div className="m-drawer m-drawer-left" style={s.leftDrawer}>{leftContent}</div>
+          </>
+        )}
+
         <div style={s.contentWrap}>
           <MainContent
             viewMode={viewMode}
@@ -153,15 +210,6 @@ export default function MobileShell(props: Props): React.JSX.Element {
             onOpenDM={props.onOpenDM}
           />
         </div>
-
-        {hasLeft && (
-          <>
-            {leftOpen && <div className="m-backdrop" onClick={() => setLeftOpen(false)} />}
-            <div className={`m-drawer m-drawer-left ${leftOpen ? '' : 'closed'}`} style={s.leftDrawer}>
-              {leftContent}
-            </div>
-          </>
-        )}
 
         {hasRight && (
           <>

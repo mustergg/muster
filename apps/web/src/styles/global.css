@@ -42,6 +42,9 @@
   --safe-top:    env(safe-area-inset-top, 0px);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
   --mobile-header-h: 46px;
+  /* Left drawer collapsed-rail: content shrinks to this scale; rail width is
+     the channel sidebar width times the scale. Tuned after device testing. */
+  --rail-scale: 0.5;
 }
 
 /* ── Reset ──────────────────────────────────────────────────────────────────── */
@@ -101,6 +104,31 @@ input, textarea, button { font-family: inherit; font-size: inherit; }
   animation: m-fade 0.2s ease;
 }
 @keyframes m-fade { from { opacity: 0; } to { opacity: 1; } }
+
+/* Collapsed left drawer ("rail"): renders the full sidebar at natural width
+   then scales it down, so text + icons stay legible at ~half size. The selected
+   row is emphasised by the sidebar itself (.m-rail-selected). */
+.m-rail-slot {
+  position: relative;
+  flex-shrink: 0;
+  width: calc(var(--sidebar-channels-w) * var(--rail-scale));
+  height: 100%;
+  overflow: hidden;
+  background: var(--color-bg-secondary);
+  border-right: 1px solid var(--color-border);
+}
+.m-rail-inner {
+  width: var(--sidebar-channels-w);
+  height: calc(100% / var(--rail-scale));
+  transform: scale(var(--rail-scale));
+  transform-origin: top left;
+}
+/* Selected channel/DM stays larger than its siblings in the rail (≈75% vs
+   50%) so the current location reads at a glance. */
+.m-rail-inner .m-rail-selected {
+  transform: scale(1.5);
+  transform-origin: left center;
+}
 
 input[type='text'],
 input[type='password'] {

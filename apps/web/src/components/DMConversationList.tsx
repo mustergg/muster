@@ -78,7 +78,7 @@ export default function DMConversationList({ activeConversation, onSelectConvers
 function ConversationItem({ conv, isActive, onClick }: { conv: DMConversation; isActive: boolean; onClick: () => void }): React.JSX.Element {
   const hue = parseInt((conv.publicKey || '0000').slice(0, 4), 16) % 360;
   return (
-    <button onClick={onClick} style={{ ...styles.convItem, background: isActive ? 'var(--color-bg-hover)' : 'transparent' }}>
+    <button onClick={onClick} className={isActive ? 'm-rail-selected' : undefined} style={{ ...styles.convItem, background: isActive ? 'var(--color-bg-hover)' : 'transparent' }}>
       <div style={{ ...styles.convAvatar, background: `hsl(${hue},40%,20%)`, color: `hsl(${hue},70%,65%)` }}>
         {(conv.username || '??').slice(0, 2).toUpperCase()}
       </div>

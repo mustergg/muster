@@ -194,6 +194,7 @@ export default function ChannelsSidebar({ communityId, activeChannelId, onSelect
           {communityId && (
             <button
               onClick={() => onSelectChannel(communityId, '__feed__', 'Feed')}
+              className={activeChannelId === '__feed__' ? 'm-rail-selected' : undefined}
               style={{ ...styles.channelItem, ...(activeChannelId === '__feed__' ? styles.channelActive : {}) }}
             >
               <span style={styles.chIcon}>{'\u{1F4F0}'}</span>
@@ -222,6 +223,7 @@ export default function ChannelsSidebar({ communityId, activeChannelId, onSelect
                     key={ch.id}
                     onClick={() => communityId && onSelectChannel(communityId, ch.id, ch.name)}
                     {...dragProps(ch.id, textChannels)}
+                    className={activeChannelId === ch.id ? 'm-rail-selected' : undefined}
                     style={{ ...styles.channelItem, ...(activeChannelId === ch.id ? styles.channelActive : {}), opacity: dragChannelId === ch.id ? 0.4 : 1, cursor: isAdmin ? 'grab' : 'pointer' }}
                   >
                     <span style={styles.chIcon}>#</span>
@@ -282,6 +284,7 @@ export default function ChannelsSidebar({ communityId, activeChannelId, onSelect
                     key={ch.id}
                     onClick={() => communityId && onSelectChannel(communityId, ch.id, ch.name)}
                     {...dragProps(ch.id, voiceChannels)}
+                    className={activeChannelId === ch.id ? 'm-rail-selected' : undefined}
                     style={{ ...styles.channelItem, ...(activeChannelId === ch.id ? styles.channelActive : {}), opacity: dragChannelId === ch.id ? 0.4 : 1, cursor: isAdmin ? 'grab' : 'pointer' }}
                   >
                     <span style={{ ...styles.chIcon, color: 'var(--color-green)' }}>&#x1F3A4;</span>
@@ -332,6 +335,7 @@ export default function ChannelsSidebar({ communityId, activeChannelId, onSelect
                 <React.Fragment key={sq.id}>
                   <button
                     onClick={() => communityId && onSelectChannel(communityId, `__squad_text__${sq.id}`, `${sq.name}`)}
+                    className={activeChannelId === `__squad_text__${sq.id}` ? 'm-rail-selected' : undefined}
                     style={{ ...styles.channelItem, ...(activeChannelId === `__squad_text__${sq.id}` ? styles.channelActive : {}) }}
                   >
                     <span style={styles.chIcon}>#</span>
@@ -340,6 +344,7 @@ export default function ChannelsSidebar({ communityId, activeChannelId, onSelect
                   </button>
                   <button
                     onClick={() => communityId && onSelectChannel(communityId, `__squad_voice__${sq.id}`, `${sq.name} Voice`)}
+                    className={activeChannelId === `__squad_voice__${sq.id}` ? 'm-rail-selected' : undefined}
                     style={{ ...styles.channelItem, ...(activeChannelId === `__squad_voice__${sq.id}` ? styles.channelActive : {}) }}
                   >
                     <span style={styles.chIcon}>{'\u{1F3A4}'}</span>
