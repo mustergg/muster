@@ -7,6 +7,7 @@ import SquadSidebar from '../components/SquadSidebar.js';
 import MainContent from '../components/MainContent.js';
 import MobileShell from '../components/MobileShell.js';
 import { useIsMobile } from '../lib/useResponsive.js';
+import { useNavRecency } from '../stores/navRecencyStore.js';
 import type { SquadRoom } from '../stores/squadStore.js';
 import type { ActiveLocation, ViewMode } from '../components/layoutTypes.js';
 import VerificationBanner from '../components/VerificationBanner.js';
@@ -103,9 +104,10 @@ export default function MainLayout(): React.JSX.Element {
   const handleOpenDM = (publicKey: string) => { setViewMode('dm'); setActiveDMPartner(publicKey); setActiveSquad(null); };
   const handleSelectDM = () => { setViewMode('dm'); setActiveCommunityId(null); setActive(null); setActiveSquad(null); };
   const handleSelectFriends = () => { setViewMode('friends'); setActiveCommunityId(null); setActive(null); setActiveDMPartner(null); setActiveSquad(null); };
-  const handleSelectCommunity = (id: string) => { setViewMode('community'); setActiveCommunityId(id); setActiveDMPartner(null); setActiveSquad(null); };
+  const handleSelectCommunity = (id: string) => { useNavRecency.getState().touch(id); setViewMode('community'); setActiveCommunityId(id); setActiveDMPartner(null); setActiveSquad(null); };
   const handleSelectSettings = () => { setViewMode('settings'); setActiveCommunityId(null); setActive(null); setActiveDMPartner(null); setActiveSquad(null); };
   const handleSelectSquad = (squadId: string) => {
+    useNavRecency.getState().touch(squadId);
     const squad = useSquadStore.getState().allMySquads().find((s) => s.id === squadId);
     const cid = squad?.communityId || '';
     // Member of the parent community? Only members get the in-community view

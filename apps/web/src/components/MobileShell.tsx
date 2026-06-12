@@ -27,6 +27,7 @@ import DMConversationList from './DMConversationList.js';
 import SquadSidebar from './SquadSidebar.js';
 import MembersSidebar from './MembersSidebar.js';
 import MainContent from './MainContent.js';
+import MobileNavGrid from './MobileNavGrid.js';
 import UserPanel from './UserPanel.js';
 import { useCommunityStore } from '../stores/communityStore.js';
 import { useSquadStore } from '../stores/squadStore.js';
@@ -63,6 +64,7 @@ export default function MobileShell(props: Props): React.JSX.Element {
 
   const [leftState, setLeftState] = useState<LeftState>('closed');
   const [rightOpen, setRightOpen] = useState(false);
+  const [navGridOpen, setNavGridOpen] = useState(false);
 
   const communities = useCommunityStore((s) => s.communities);
   const squadName = useSquadStore((s) =>
@@ -155,71 +157,102 @@ export default function MobileShell(props: Props): React.JSX.Element {
     }
   };
 
+  // ── Top bar: pull down opens the nav grid, pull up closes it ──
+  const topTouch = useRef<{ y: number; t: number } | null>(null);
+  const onTopStart = (e: React.TouchEvent): void => {
+    const p = e.touches[0];
+    if (p) topTouch.current = { y: p.clientY, t: Date.now() };
+  };
+  const onTopEnd = (e: React.TouchEvent): void => {
+    const start = topTouch.current;
+    const p = e.changedTouches[0];
+    topTouch.current = null;
+    if (!start || !p || Date.now() - start.t > 600) return;
+    const dy = p.clientY - start.y;
+    if (dy > 36) setNavGridOpen(true);
+    else if (dy < -36) setNavGridOpen(false);
+  };
+
   return (
     <div style={s.root}>
-      <div style={s.topbar}>
-        <GuildsSidebar
-          horizontal
-          activeCommunityId={activeCommunityId}
-          onSelectCommunity={props.onSelectCommunity}
-          dmActive={viewMode === 'dm'}
-          onSelectDM={props.onSelectDM}
-          friendsActive={viewMode === 'friends'}
-          onSelectFriends={props.onSelectFriends}
-          settingsActive={viewMode === 'settings'}
-          onSelectSettings={props.onSelectSettings}
-          activeSquadId={activeSquad ?? (active?.channelId?.match(/^__squad_(?:text|voice)__(.+)$/)?.[1] ?? null)}
-          onSelectSquad={props.onSelectSquad}
-        />
-      </div>
-
-      {(hasLeft || hasRight) && (
-        <div style={s.header}>
-          {hasLeft ? (
-            <button style={s.hbtn} onClick={toggleLeft} title="Channels">{'☰'}</button>
-          ) : <span style={s.hbtnSpacer} />}
-          <span style={s.title}>{title}</span>
-          {hasRight ? (
-            <button style={s.hbtn} onClick={() => setRightOpen((o) => !o)} title="Members">{'\u{1F465}'}</button>
-          ) : <span style={s.hbtnSpacer} />}
-        </div>
-      )}
-
-      <div style={s.main} onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
-        {hasLeft && leftState === 'rail' && (
-          <div className="m-rail-slot">
-            <div className="m-rail-inner">{leftContent}</div>
-          </div>
-        )}
-
-        {hasLeft && leftState === 'open' && (
-          <>
-            <div className="m-backdrop" onClick={collapseLeft} />
-            <div className="m-drawer m-drawer-left" style={s.leftDrawer}>{leftContent}</div>
-          </>
-        )}
-
-        <div style={s.contentWrap}>
-          <MainContent
-            viewMode={viewMode}
-            active={active}
-            activeSquad={activeSquad}
-            squadMode={squadMode}
+      <div style={s.topbar} onTouchStart={onTopStart} onTouchEnd={onTopEnd}>
+        <div style={s.topbarScroll}>
+          <GuildsSidebar
+            horizontal
             activeCommunityId={activeCommunityId}
-            activeDMPartner={activeDMPartner}
-            onOpenDM={props.onOpenDM}
+            onSelectCommunity={props.onSelectCommunity}
+            dmActive={viewMode === 'dm'}
+            onSelectDM={props.onSelectDM}
+            friendsActive={viewMode === 'friends'}
+            onSelectFriends={props.onSelectFriends}
+            settingsActive={viewMode === 'settings'}
+            onSelectSettings={props.onSelectSettings}
+            activeSquadId={activeSquad ?? (active?.channelId?.match(/^__squad_(?:text|voice)__(.+)$/)?.[1] ?? null)}
+            onSelectSquad={props.onSelectSquad}
           />
         </div>
-
-        {hasRight && (
-          <>
-            {rightOpen && <div className="m-backdrop" onClick={() => setRightOpen(false)} />}
-            <div className={`m-drawer m-drawer-right ${rightOpen ? '' : 'closed'}`} style={s.rightDrawer}>
-              <MembersSidebar mobile communityId={activeCommunityId} onOpenDM={props.onOpenDM} />
-            </div>
-          </>
-        )}
+        <button style={s.chevron} onClick={() => setNavGridOpen((o) => !o)} title="All communities & squads">
+          {navGridOpen ? '▴' : '▾'}
+        </button>
       </div>
+
+      {navGridOpen ? (
+        <MobileNavGrid
+          onSelectCommunity={props.onSelectCommunity}
+          onSelectSquad={props.onSelectSquad}
+          onClose={() => setNavGridOpen(false)}
+        />
+      ) : (
+        <>
+          {(hasLeft || hasRight) && (
+            <div style={s.header}>
+              {hasLeft ? (
+                <button style={s.hbtn} onClick={toggleLeft} title="Channels">{'☰'}</button>
+              ) : <span style={s.hbtnSpacer} />}
+              <span style={s.title}>{title}</span>
+              {hasRight ? (
+                <button style={s.hbtn} onClick={() => setRightOpen((o) => !o)} title="Members">{'\u{1F465}'}</button>
+              ) : <span style={s.hbtnSpacer} />}
+            </div>
+          )}
+
+          <div style={s.main} onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
+            {hasLeft && leftState === 'rail' && (
+              <div className="m-rail-slot">
+                <div className="m-rail-inner">{leftContent}</div>
+              </div>
+            )}
+
+            {hasLeft && leftState === 'open' && (
+              <>
+                <div className="m-backdrop" onClick={collapseLeft} />
+                <div className="m-drawer m-drawer-left" style={s.leftDrawer}>{leftContent}</div>
+              </>
+            )}
+
+            <div style={s.contentWrap}>
+              <MainContent
+                viewMode={viewMode}
+                active={active}
+                activeSquad={activeSquad}
+                squadMode={squadMode}
+                activeCommunityId={activeCommunityId}
+                activeDMPartner={activeDMPartner}
+                onOpenDM={props.onOpenDM}
+              />
+            </div>
+
+            {hasRight && (
+              <>
+                {rightOpen && <div className="m-backdrop" onClick={() => setRightOpen(false)} />}
+                <div className={`m-drawer m-drawer-right ${rightOpen ? '' : 'closed'}`} style={s.rightDrawer}>
+                  <MembersSidebar mobile communityId={activeCommunityId} onOpenDM={props.onOpenDM} />
+                </div>
+              </>
+            )}
+          </div>
+        </>
+      )}
 
       <UserPanel />
     </div>
@@ -228,7 +261,9 @@ export default function MobileShell(props: Props): React.JSX.Element {
 
 const s = {
   root: { flex: 1, display: 'flex', flexDirection: 'column' as const, overflow: 'hidden', minHeight: 0 } as React.CSSProperties,
-  topbar: { flexShrink: 0, paddingTop: 'var(--safe-top)' } as React.CSSProperties,
+  topbar: { flexShrink: 0, paddingTop: 'var(--safe-top)', display: 'flex', alignItems: 'stretch', background: 'var(--color-bg-tertiary)' } as React.CSSProperties,
+  topbarScroll: { flex: 1, minWidth: 0 } as React.CSSProperties,
+  chevron: { flexShrink: 0, width: '34px', border: 'none', borderBottom: '1px solid var(--color-border)', background: 'var(--color-bg-tertiary)', color: 'var(--color-text-secondary)', cursor: 'pointer', fontSize: '14px', display: 'flex', alignItems: 'center', justifyContent: 'center' } as React.CSSProperties,
   header: { height: 'var(--mobile-header-h)', display: 'flex', alignItems: 'center', gap: '8px', padding: '0 8px', background: 'var(--color-bg-secondary)', borderBottom: '1px solid var(--color-border)', flexShrink: 0 } as React.CSSProperties,
   hbtn: { width: '36px', height: '36px', borderRadius: '8px', background: 'transparent', border: 'none', color: 'var(--color-text-secondary)', cursor: 'pointer', fontSize: '18px', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 } as React.CSSProperties,
   hbtnSpacer: { width: '36px', flexShrink: 0 } as React.CSSProperties,

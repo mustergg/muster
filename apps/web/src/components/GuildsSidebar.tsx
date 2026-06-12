@@ -13,6 +13,7 @@ import { useDMStore } from '../stores/dmStore.js';
 import { useFriendStore } from '../stores/friendStore.js';
 import { useNetworkStore } from '../stores/networkStore.js';
 import { useSquadStore } from '../stores/squadStore.js';
+import { useNavRecency, orderByRecency } from '../stores/navRecencyStore.js';
 import CreateCommunityModal from '../pages/CreateCommunityModal.js';
 import JoinCommunityModal from '../pages/JoinCommunityModal.js';
 import CreateSquadGlobalModal from '../pages/CreateSquadGlobalModal.js';
@@ -54,6 +55,8 @@ export default function GuildsSidebar({ activeCommunityId, onSelectCommunity, dm
   const { publicKey: myKey } = useNetworkStore();
   const mySquads = useSquadStore((s) => s.allMySquads());
   const setSquadOrder = useSquadStore((s) => s.setSquadOrder);
+  const navLastUsed = useNavRecency((s) => s.lastUsed);
+  const navPinned = useNavRecency((s) => s.pinned);
   const [dragCommunityId, setDragCommunityId] = useState<string | null>(null);
   const [dragSquadId, setDragSquadId] = useState<string | null>(null);
   const [showCreateSquad, setShowCreateSquad] = useState(false);
@@ -148,6 +151,11 @@ export default function GuildsSidebar({ activeCommunityId, onSelectCommunity, dm
   const sidebarStyle = horizontal ? { ...styles.sidebar, ...styles.sidebarH } : styles.sidebar;
   const dividerStyle = horizontal ? styles.dividerH : styles.divider;
 
+  // Mobile top bar orders communities/squads by pin → recency; the desktop
+  // rail keeps its manual drag order.
+  const orderedSquads = horizontal ? orderByRecency(mySquads, navLastUsed, navPinned) : mySquads;
+  const orderedCommunities = horizontal ? orderByRecency(communityList, navLastUsed, navPinned) : communityList;
+
   return (
     <>
       <div style={sidebarStyle}>
@@ -189,7 +197,7 @@ export default function GuildsSidebar({ activeCommunityId, onSelectCommunity, dm
         {mySquads.length > 0 && (
           <>
             <div style={dividerStyle} />
-            {mySquads.map((sq) => {
+            {orderedSquads.map((sq) => {
               const isActive = activeSquadId === sq.id;
               const hue = parseInt((sq.id || '0000').slice(0, 4).replace(/[^0-9a-f]/gi, '0') || '0', 16) % 360;
               return (
@@ -221,7 +229,7 @@ export default function GuildsSidebar({ activeCommunityId, onSelectCommunity, dm
         <div style={dividerStyle} />
 
         {/* Community icons with context menu */}
-        {communityList.map((c) => {
+        {orderedCommunities.map((c) => {
           const { color, bg } = communityColor(c.id);
           const isActive = !dmActive && !friendsActive && activeCommunityId === c.id;
           const isOwner = c.ownerPublicKey === myKey;
