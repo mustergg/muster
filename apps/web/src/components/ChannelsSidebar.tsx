@@ -27,11 +27,13 @@ interface Props {
   communityId: string | null;
   activeChannelId: string | null;
   onSelectChannel: (communityId: string, channelId: string, channelName: string) => void;
+  /** Mobile drawer variant: full width, no internal user panel (it's global). */
+  mobile?: boolean;
 }
 
 const ADMIN_ROLES = new Set(['owner', 'admin']);
 
-export default function ChannelsSidebar({ communityId, activeChannelId, onSelectChannel }: Props): React.JSX.Element {
+export default function ChannelsSidebar({ communityId, activeChannelId, onSelectChannel, mobile }: Props): React.JSX.Element {
   const { t } = useTranslation();
   const { status, peerCount, publicKey: myVoiceKey } = useNetworkStore();
   const { communities, subscribePresence, onlineMembers, serveCommunityRequests, myRoles, deleteChannel, fetchCommunity, reorderChannels } = useCommunityStore();
@@ -147,7 +149,7 @@ export default function ChannelsSidebar({ communityId, activeChannelId, onSelect
 
   return (
     <>
-      <div style={styles.sidebar}>
+      <div style={mobile ? { ...styles.sidebar, width: '100%', borderRight: 'none' } : styles.sidebar}>
         {/* Header */}
         <div style={styles.header}>
           <span style={styles.serverName}>
@@ -350,7 +352,7 @@ export default function ChannelsSidebar({ communityId, activeChannelId, onSelect
         </div>
 
         {/* User panel (shared) */}
-        <UserPanel />
+        {!mobile && <UserPanel />}
       </div>
 
       {showInvite && community && (

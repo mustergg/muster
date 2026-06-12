@@ -9,6 +9,8 @@ import ContextMenu from './ContextMenu.js';
 interface Props {
   communityId: string | null;
   onOpenDM?: (publicKey: string) => void;
+  /** Mobile drawer variant: full width. */
+  mobile?: boolean;
 }
 
 const ROLE_BADGE: Record<string, { label: string; color: string }> = {
@@ -18,7 +20,7 @@ const ROLE_BADGE: Record<string, { label: string; color: string }> = {
   member:    { label: '',          color: '' },
 };
 
-export default function MembersSidebar({ communityId, onOpenDM }: Props): React.JSX.Element {
+export default function MembersSidebar({ communityId, onOpenDM, mobile }: Props): React.JSX.Element {
   const { t } = useTranslation();
   const { peerCount, status, publicKey: myKey, accountInfo } = useNetworkStore();
   const { onlineMembers } = useCommunityStore();
@@ -33,7 +35,7 @@ export default function MembersSidebar({ communityId, onOpenDM }: Props): React.
   const members = communityId ? (onlineMembers[communityId] ?? []) : [];
 
   return (
-    <div style={styles.sidebar}>
+    <div style={mobile ? { ...styles.sidebar, width: '100%', borderLeft: 'none' } : styles.sidebar}>
       <div style={styles.header}>
         {t('community.members')} — {members.length || peerCount} online
       </div>

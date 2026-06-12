@@ -12,6 +12,8 @@ import UserPanel from './UserPanel.js';
 interface Props {
   activeConversation: string | null;
   onSelectConversation: (publicKey: string) => void;
+  /** Mobile drawer variant: full width, no internal user panel (it's global). */
+  mobile?: boolean;
 }
 
 function formatTime(ts: number): string {
@@ -21,7 +23,7 @@ function formatTime(ts: number): string {
   return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
 }
 
-export default function DMConversationList({ activeConversation, onSelectConversation }: Props): React.JSX.Element {
+export default function DMConversationList({ activeConversation, onSelectConversation, mobile }: Props): React.JSX.Element {
   const { status } = useNetworkStore();
   const { conversations, loadConversations, clearConversation } = useDMStore();
 
@@ -30,7 +32,7 @@ export default function DMConversationList({ activeConversation, onSelectConvers
   }, [status]);
 
   return (
-    <div style={styles.sidebar}>
+    <div style={mobile ? { ...styles.sidebar, width: '100%', borderRight: 'none' } : styles.sidebar}>
       <div style={styles.header}>
         <span style={styles.headerTitle}>Direct Messages</span>
       </div>
@@ -68,7 +70,7 @@ export default function DMConversationList({ activeConversation, onSelectConvers
         )}
       </div>
 
-      <UserPanel />
+      {!mobile && <UserPanel />}
     </div>
   );
 }

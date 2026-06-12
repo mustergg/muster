@@ -24,6 +24,8 @@ interface Props {
   onJoinCommunity?: (communityId: string) => void;
   /** Open a DM with a member (gated to verified accounts). */
   onOpenDM?: (publicKey: string) => void;
+  /** Mobile drawer variant: full width, no internal user panel (it's global). */
+  mobile?: boolean;
 }
 
 const ROLE_BADGE: Record<string, { label: string; color: string }> = {
@@ -38,7 +40,7 @@ function roleBadge(role?: string): React.JSX.Element | null {
   return <span style={{ fontSize: '9px', fontWeight: 700, color: b.color, border: `1px solid ${b.color}`, borderRadius: '3px', padding: '0 4px', flexShrink: 0, textTransform: 'uppercase' }}>{b.label}</span>;
 }
 
-export default function SquadSidebar({ squadId, activeMode, onSelectMode, onJoinCommunity, onOpenDM }: Props): React.JSX.Element {
+export default function SquadSidebar({ squadId, activeMode, onSelectMode, onJoinCommunity, onOpenDM, mobile }: Props): React.JSX.Element {
   const { publicKey: myKey, accountInfo } = useNetworkStore();
   const mention = useComposerStore((s) => s.mention);
   const canDM = accountInfo?.emailVerified ?? false;
@@ -96,7 +98,7 @@ export default function SquadSidebar({ squadId, activeMode, onSelectMode, onJoin
   const roleByKey = new Map(members.map((m) => [m.publicKey, m]));
 
   return (
-    <div style={s.sidebar}>
+    <div style={mobile ? { ...s.sidebar, width: '100%', borderRight: 'none' } : s.sidebar}>
       <div style={s.header}>
         <span style={s.title}>{squad?.name || 'Squad'}</span>
       </div>
@@ -162,7 +164,7 @@ export default function SquadSidebar({ squadId, activeMode, onSelectMode, onJoin
         ))}
       </div>
 
-      <UserPanel />
+      {!mobile && <UserPanel />}
     </div>
   );
 }

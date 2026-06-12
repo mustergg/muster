@@ -1,18 +1,15 @@
 import React, { useState, useEffect } from 'react';
 import GuildsSidebar from '../components/GuildsSidebar.js';
 import ChannelsSidebar from '../components/ChannelsSidebar.js';
-import ChatArea from '../components/ChatArea.js';
 import MembersSidebar from '../components/MembersSidebar.js';
 import DMConversationList from '../components/DMConversationList.js';
-import DMChatArea from '../components/DMChatArea.js';
-import FriendsPanel from '../components/FriendsPanel.js';
-import FeedView from '../components/FeedView.js';
-import SquadChatArea from '../components/SquadChatArea.js';
 import SquadSidebar from '../components/SquadSidebar.js';
+import MainContent from '../components/MainContent.js';
+import MobileShell from '../components/MobileShell.js';
+import { useIsMobile } from '../lib/useResponsive.js';
 import type { SquadRoom } from '../stores/squadStore.js';
+import type { ActiveLocation, ViewMode } from '../components/layoutTypes.js';
 import VerificationBanner from '../components/VerificationBanner.js';
-import SettingsPanel from '../components/SettingsPanel.js';
-import VoicePanel from '../components/VoicePanel.js';
 import { useNetworkStore } from '../stores/networkStore.js';
 import { useCommunityStore } from '../stores/communityStore.js';
 import { useAuthStore } from '../stores/authStore.js';
@@ -34,13 +31,7 @@ import { useStatusStore } from '../stores/statusStore.js';
 import '../stores/clientNodeStore.js';
 import { useNatStore } from '../stores/natStore.js';
 
-export interface ActiveLocation {
-  communityId: string;
-  channelId: string;
-  channelName: string;
-}
-
-type ViewMode = 'community' | 'dm' | 'friends' | 'settings' | 'squad';
+export type { ActiveLocation };
 
 export default function MainLayout(): React.JSX.Element {
   const [viewMode, setViewMode] = useState<ViewMode>('community');
@@ -51,6 +42,7 @@ export default function MainLayout(): React.JSX.Element {
   const [activeDMPartner, setActiveDMPartner]     = useState<string | null>(null);
   const { connect, status }   = useNetworkStore();
   const { loadCommunities, communities } = useCommunityStore();
+  const isMobile = useIsMobile();
 
   const { isAuthenticated } = useAuthStore();
   useEffect(() => {
@@ -151,6 +143,43 @@ export default function MainLayout(): React.JSX.Element {
 
   const isSpecialView = isFeedActive || isSquadText || isSquadVoice || isCommunityVoice;
 
+  if (isMobile) {
+    return (
+      <div style={styles.outerShell}>
+        <VerificationBanner />
+        <MobileShell
+          viewMode={viewMode}
+          active={active}
+          activeSquad={activeSquad}
+          squadMode={squadMode}
+          activeCommunityId={activeCommunityId}
+          activeDMPartner={activeDMPartner}
+          onSelectCommunity={handleSelectCommunity}
+          onSelectDM={handleSelectDM}
+          onSelectFriends={handleSelectFriends}
+          onSelectSettings={handleSelectSettings}
+          onSelectSquad={handleSelectSquad}
+          onSelectChannel={(communityId, channelId, channelName) => setActive({ communityId, channelId, channelName })}
+          onSelectDMPartner={(pk) => setActiveDMPartner(pk)}
+          onSelectSquadMode={setSquadMode}
+          onOpenDM={handleOpenDM}
+        />
+      </div>
+    );
+  }
+
+  const mainContent = (
+    <MainContent
+      viewMode={viewMode}
+      active={active}
+      activeSquad={activeSquad}
+      squadMode={squadMode}
+      activeCommunityId={activeCommunityId}
+      activeDMPartner={activeDMPartner}
+      onOpenDM={handleOpenDM}
+    />
+  );
+
   return (
     <div style={styles.outerShell}>
       <VerificationBanner />
@@ -170,27 +199,21 @@ export default function MainLayout(): React.JSX.Element {
         />
 
         {viewMode === 'settings' ? (
-          <SettingsPanel />
+          mainContent
         ) : viewMode === 'squad' && activeSquad ? (
           <>
             <SquadSidebar squadId={activeSquad} activeMode={squadMode} onSelectMode={setSquadMode} onJoinCommunity={handleSelectCommunity} onOpenDM={handleOpenDM} />
-            <div style={styles.main}>
-              <SquadChatArea squadId={activeSquad} mode={squadMode} />
-            </div>
+            <div style={styles.main}>{mainContent}</div>
           </>
         ) : viewMode === 'friends' ? (
-          <div style={styles.main}>
-            <FriendsPanel onOpenDM={handleOpenDM} />
-          </div>
+          <div style={styles.main}>{mainContent}</div>
         ) : viewMode === 'dm' ? (
           <>
             <DMConversationList
               activeConversation={activeDMPartner}
               onSelectConversation={(pk) => setActiveDMPartner(pk)}
             />
-            <div style={styles.main}>
-              <DMChatArea partnerPublicKey={activeDMPartner} />
-            </div>
+            <div style={styles.main}>{mainContent}</div>
           </>
         ) : (
           <>
@@ -201,26 +224,7 @@ export default function MainLayout(): React.JSX.Element {
                 setActive({ communityId, channelId, channelName })
               }
             />
-            <div style={styles.main}>
-              {isFeedActive && active ? (
-                <FeedView communityId={active.communityId} />
-              ) : isSquadText && activeSquadId ? (
-                <SquadChatArea squadId={activeSquadId} mode="text" />
-              ) : isSquadVoice && activeSquadId ? (
-                <SquadChatArea squadId={activeSquadId} mode="voice" />
-              ) : isCommunityVoice && active ? (
-                <div style={styles.voiceStack}>
-                  <div style={styles.voiceRegion}>
-                    <VoicePanel channelId={active.channelId} channelName={active.channelName} />
-                  </div>
-                  <div style={styles.voiceTextRegion}>
-                    <ChatArea active={active} />
-                  </div>
-                </div>
-              ) : (
-                <ChatArea active={active} />
-              )}
-            </div>
+            <div style={styles.main}>{mainContent}</div>
             {!isSpecialView && (
               <MembersSidebar communityId={activeCommunityId} onOpenDM={handleOpenDM} />
             )}

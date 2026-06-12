@@ -37,6 +37,11 @@
   --sidebar-guilds-w:   60px;
   --sidebar-channels-w: 220px;
   --sidebar-members-w:  190px;
+
+  /* Mobile shell */
+  --safe-top:    env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --mobile-header-h: 46px;
 }
 
 /* ── Reset ──────────────────────────────────────────────────────────────────── */
@@ -72,6 +77,30 @@ body {
 
 /* ── Inputs ─────────────────────────────────────────────────────────────────── */
 input, textarea, button { font-family: inherit; font-size: inherit; }
+
+/* ── Mobile shell drawers ───────────────────────────────────────────────────── */
+.m-drawer {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 60;
+  display: flex;
+  transition: transform 0.24s ease;
+  will-change: transform;
+}
+.m-drawer-left  { left: 0; }
+.m-drawer-right { right: 0; }
+.m-drawer-left.closed  { transform: translateX(-100%); }
+.m-drawer-right.closed { transform: translateX(100%); }
+
+.m-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 55;
+  background: rgba(0, 0, 0, 0.5);
+  animation: m-fade 0.2s ease;
+}
+@keyframes m-fade { from { opacity: 0; } to { opacity: 1; } }
 
 input[type='text'],
 input[type='password'] {

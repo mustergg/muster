@@ -30,6 +30,8 @@ interface Props {
   onSelectSettings?: () => void;
   activeSquadId?: string | null;
   onSelectSquad?: (squadId: string) => void;
+  /** Horizontal top-bar variant for the mobile shell. */
+  horizontal?: boolean;
 }
 
 function squadInitials(name: string): string {
@@ -45,7 +47,7 @@ function communityColor(id: string): { color: string; bg: string } {
   return { color: `hsl(${hue},60%,65%)`, bg: `hsl(${hue},40%,18%)` };
 }
 
-export default function GuildsSidebar({ activeCommunityId, onSelectCommunity, dmActive, onSelectDM, friendsActive, onSelectFriends, settingsActive, onSelectSettings, activeSquadId, onSelectSquad }: Props): React.JSX.Element {
+export default function GuildsSidebar({ activeCommunityId, onSelectCommunity, dmActive, onSelectDM, friendsActive, onSelectFriends, settingsActive, onSelectSettings, activeSquadId, onSelectSquad, horizontal }: Props): React.JSX.Element {
   const { t } = useTranslation();
   const { communities, loadCommunities, leaveCommunity, myRoles, communityOrder, setCommunityOrder } = useCommunityStore();
   const { conversations } = useDMStore();
@@ -143,9 +145,12 @@ export default function GuildsSidebar({ activeCommunityId, onSelectCommunity, dm
     }
   };
 
+  const sidebarStyle = horizontal ? { ...styles.sidebar, ...styles.sidebarH } : styles.sidebar;
+  const dividerStyle = horizontal ? styles.dividerH : styles.divider;
+
   return (
     <>
-      <div style={styles.sidebar}>
+      <div style={sidebarStyle}>
         {/* Friends button */}
         <button
           title="Friends"
@@ -183,7 +188,7 @@ export default function GuildsSidebar({ activeCommunityId, onSelectCommunity, dm
         {/* Squads (personal + community) */}
         {mySquads.length > 0 && (
           <>
-            <div style={styles.divider} />
+            <div style={dividerStyle} />
             {mySquads.map((sq) => {
               const isActive = activeSquadId === sq.id;
               const hue = parseInt((sq.id || '0000').slice(0, 4).replace(/[^0-9a-f]/gi, '0') || '0', 16) % 360;
@@ -213,7 +218,7 @@ export default function GuildsSidebar({ activeCommunityId, onSelectCommunity, dm
           </>
         )}
 
-        <div style={styles.divider} />
+        <div style={dividerStyle} />
 
         {/* Community icons with context menu */}
         {communityList.map((c) => {
@@ -271,7 +276,7 @@ export default function GuildsSidebar({ activeCommunityId, onSelectCommunity, dm
 
         {communityList.length === 0 && <div style={styles.emptyHint}>No<br/>communities</div>}
 
-        <div style={styles.divider} />
+        <div style={dividerStyle} />
 
         {/* Add button */}
         <div ref={menuRef} style={{ position: 'relative' as const }}>
@@ -289,8 +294,8 @@ export default function GuildsSidebar({ activeCommunityId, onSelectCommunity, dm
             +
           </button>
           {showMenu && (
-            <div style={styles.menu}>
-              <div style={styles.menuArrow} />
+            <div style={horizontal ? styles.menuH : styles.menu}>
+              <div style={horizontal ? styles.menuArrowH : styles.menuArrow} />
               <button style={styles.menuItem} onClick={() => { setShowCreate(true); setShowMenu(false); }}>
                 <span style={styles.menuIcon}>+</span> Create a community
               </button>
@@ -349,13 +354,19 @@ export default function GuildsSidebar({ activeCommunityId, onSelectCommunity, dm
 
 const styles = {
   sidebar: { width: 'var(--sidebar-guilds-w)', background: 'var(--color-bg-tertiary)', display: 'flex', flexDirection: 'column' as const, alignItems: 'center', padding: '10px 0', gap: '6px', borderRight: '1px solid var(--color-border)', flexShrink: 0, overflowY: 'auto' as const, overflowX: 'visible' as const, position: 'relative' as const, zIndex: 10 } as React.CSSProperties,
+  // Horizontal top-bar variant (mobile shell).
+  sidebarH: { width: '100%', height: 'auto', flexDirection: 'row' as const, alignItems: 'center', padding: '8px 10px', gap: '8px', borderRight: 'none', borderBottom: '1px solid var(--color-border)', overflowX: 'auto' as const, overflowY: 'visible' as const } as React.CSSProperties,
   icon: { width: '44px', height: '44px', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', fontSize: '14px', fontWeight: 700, transition: 'border-radius 0.2s, border-color 0.2s, background 0.15s', flexShrink: 0 } as React.CSSProperties,
   activePip: { position: 'absolute' as const, left: '-7px', top: '50%', transform: 'translateY(-50%)', width: '4px', height: '24px', background: 'var(--color-accent)', borderRadius: '0 2px 2px 0' } as React.CSSProperties,
   divider: { width: '32px', height: '1px', background: 'var(--color-border)', margin: '2px 0', flexShrink: 0 } as React.CSSProperties,
+  dividerH: { width: '1px', height: '28px', background: 'var(--color-border)', margin: '0 2px', flexShrink: 0, alignSelf: 'center' } as React.CSSProperties,
   emptyHint: { fontSize: '9px', color: 'var(--color-text-muted)', textAlign: 'center' as const, padding: '4px', lineHeight: 1.4 } as React.CSSProperties,
   badge: { position: 'absolute' as const, bottom: '-2px', right: '-2px', background: '#E24B4A', color: '#fff', fontSize: '9px', fontWeight: 700, minWidth: '16px', height: '16px', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 4px', border: '2px solid var(--color-bg-tertiary)' } as React.CSSProperties,
   menu: { position: 'fixed' as const, left: 'calc(var(--sidebar-guilds-w) + 8px)', bottom: '60px', background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-lg)', minWidth: '200px', zIndex: 500, boxShadow: '0 8px 24px rgba(0,0,0,0.5)', overflow: 'hidden' } as React.CSSProperties,
   menuArrow: { position: 'absolute' as const, left: '-6px', top: '16px', width: '10px', height: '10px', background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)', borderRight: 'none', borderTop: 'none', transform: 'rotate(45deg)' } as React.CSSProperties,
+  // Horizontal top-bar variant: drop the add-menu down from the + button.
+  menuH: { position: 'absolute' as const, top: 'calc(100% + 10px)', right: 0, background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-lg)', minWidth: '200px', zIndex: 500, boxShadow: '0 8px 24px rgba(0,0,0,0.5)', overflow: 'hidden' } as React.CSSProperties,
+  menuArrowH: { position: 'absolute' as const, top: '-6px', right: '16px', width: '10px', height: '10px', background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)', borderRight: 'none', borderBottom: 'none', transform: 'rotate(45deg)' } as React.CSSProperties,
   menuItem: { display: 'flex', alignItems: 'center', gap: '10px', width: '100%', padding: '12px 16px', background: 'transparent', border: 'none', color: 'var(--color-text-secondary)', cursor: 'pointer', fontSize: '13px', textAlign: 'left' as const } as React.CSSProperties,
   menuIcon: { fontSize: '16px', flexShrink: 0 } as React.CSSProperties,
   menuDivider: { height: '1px', background: 'var(--color-border)' } as React.CSSProperties,
