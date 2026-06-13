@@ -85,9 +85,6 @@ export default function MobileNavGrid({ onSelectCommunity, onSelectSquad, onClos
 
   return (
     <div style={g.wrap} onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
-      <div style={g.header} onClick={onClose} title="Close">
-        <span style={g.handle} />
-      </div>
       <div style={g.scroll} ref={scrollRef}>
         {empty && <div style={g.empty}>No communities or squads yet</div>}
         {squadTiles.length > 0 && (
@@ -104,13 +101,16 @@ export default function MobileNavGrid({ onSelectCommunity, onSelectSquad, onClos
           </>
         )}
       </div>
+      <div style={g.header} onClick={onClose} title="Close">
+        <span style={g.handle} />
+      </div>
     </div>
   );
 }
 
 const g = {
   wrap: { flex: 1, display: 'flex', flexDirection: 'column' as const, minHeight: 0, background: 'var(--color-bg-primary)', overflow: 'hidden' } as React.CSSProperties,
-  header: { height: '26px', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, cursor: 'pointer' } as React.CSSProperties,
+  header: { minHeight: '30px', paddingBottom: 'var(--safe-bottom)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, cursor: 'pointer', borderTop: '1px solid var(--color-border)' } as React.CSSProperties,
   handle: { width: '40px', height: '4px', borderRadius: '2px', background: 'var(--color-border)' } as React.CSSProperties,
   scroll: { flex: 1, minHeight: 0, overflowY: 'auto' as const, padding: '4px 12px calc(16px + var(--safe-bottom))' } as React.CSSProperties,
   label: { fontSize: '11px', fontWeight: 700, textTransform: 'uppercase' as const, letterSpacing: '0.5px', color: 'var(--color-text-muted)', margin: '10px 2px 8px' } as React.CSSProperties,

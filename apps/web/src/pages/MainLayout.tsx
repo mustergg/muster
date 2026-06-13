@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import GuildsSidebar from '../components/GuildsSidebar.js';
 import ChannelsSidebar from '../components/ChannelsSidebar.js';
 import MembersSidebar from '../components/MembersSidebar.js';
@@ -95,10 +95,15 @@ export default function MainLayout(): React.JSX.Element {
 
   useEffect(() => { loadCommunities(); }, []);
 
-  // Let the shared UserPanel (settings button) open the settings view.
+  // Remember the last non-settings view so closing settings returns there.
+  const prevViewRef = useRef<ViewMode>('community');
+  useEffect(() => { if (viewMode !== 'settings') prevViewRef.current = viewMode; }, [viewMode]);
+
+  // Bridge the shared UserPanel / SettingsPanel to open & close settings.
   useEffect(() => {
     useUiNav.getState().setOpenSettings(() => handleSelectSettings());
-    return () => useUiNav.getState().setOpenSettings(null);
+    useUiNav.getState().setCloseSettings(() => setViewMode(prevViewRef.current));
+    return () => { useUiNav.getState().setOpenSettings(null); useUiNav.getState().setCloseSettings(null); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

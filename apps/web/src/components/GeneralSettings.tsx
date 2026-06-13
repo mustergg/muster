@@ -11,6 +11,7 @@ import { useTranslation } from 'react-i18next';
 import { SUPPORTED_LOCALES, setLocale, getStoredLocale, type SupportedLocale } from '@muster/i18n';
 import { useReadReceiptStore } from '../stores/readReceiptStore.js';
 import { useLayoutPref } from '../stores/layoutPrefStore.js';
+import { useTextScale, TEXT_SCALES } from '../stores/textScaleStore.js';
 
 export default function GeneralSettings(): React.JSX.Element {
   const { t, i18n } = useTranslation();
@@ -19,6 +20,8 @@ export default function GeneralSettings(): React.JSX.Element {
   const setDefaultOn = useReadReceiptStore((st) => st.setDefaultOn);
   const forceMobile = useLayoutPref((st) => st.forceMobile);
   const setForceMobile = useLayoutPref((st) => st.setForceMobile);
+  const textScale = useTextScale((st) => st.scale);
+  const setTextScale = useTextScale((st) => st.setScale);
 
   const pick = (loc: SupportedLocale): void => { void setLocale(loc); };
 
@@ -61,6 +64,27 @@ export default function GeneralSettings(): React.JSX.Element {
         </div>
 
         <div style={s.section}>
+          <div style={s.sectionTitle}>Text size</div>
+          <div style={s.scaleRow}>
+            {TEXT_SCALES.map((sc) => (
+              <button
+                key={sc}
+                onClick={() => setTextScale(sc)}
+                style={{
+                  ...s.scaleBtn,
+                  borderColor: textScale === sc ? 'var(--color-accent)' : 'var(--color-border)',
+                  background: textScale === sc ? 'var(--color-accent-dim, rgba(46,117,182,0.1))' : 'var(--color-bg-secondary)',
+                  fontSize: `${12 * sc}px`,
+                }}
+              >
+                A
+              </button>
+            ))}
+          </div>
+          <div style={s.note}>Scales the whole interface — useful when text looks too small on your device.</div>
+        </div>
+
+        <div style={s.section}>
           <div style={s.sectionTitle}>Layout</div>
           <label style={s.checkRow}>
             <input type="checkbox" checked={forceMobile} onChange={(e) => setForceMobile(e.target.checked)} style={{ accentColor: 'var(--color-accent)' }} />
@@ -93,6 +117,8 @@ const s = {
   check: { color: 'var(--color-accent)', fontWeight: 700 } as React.CSSProperties,
   note: { fontSize: '12px', color: 'var(--color-text-muted)', marginTop: '10px', maxWidth: '360px', lineHeight: 1.4 } as React.CSSProperties,
   checkRow: { display: 'flex', alignItems: 'center', gap: '8px', fontSize: '14px', cursor: 'pointer' } as React.CSSProperties,
+  scaleRow: { display: 'flex', gap: '8px', alignItems: 'flex-end' } as React.CSSProperties,
+  scaleBtn: { minWidth: '40px', height: '40px', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', cursor: 'pointer', color: 'var(--color-text-primary)', fontWeight: 600 } as React.CSSProperties,
   aboutRow: { display: 'flex', justifyContent: 'space-between', maxWidth: '320px', fontSize: '13px', padding: '3px 0' } as React.CSSProperties,
   aboutK: { color: 'var(--color-text-muted)' } as React.CSSProperties,
   aboutV: { fontWeight: 500, fontFamily: 'var(--font-mono, monospace)' } as React.CSSProperties,

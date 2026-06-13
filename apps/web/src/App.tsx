@@ -9,6 +9,7 @@
 import React, { useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAuthStore } from './stores/authStore.js';
+import { useTextScale } from './stores/textScaleStore.js';
 import AuthPage from './pages/AuthPage.js';
 import MainLayout from './pages/MainLayout.js';
 import NetworkStatusBar from './components/NetworkStatusBar.js';
@@ -16,6 +17,7 @@ import NetworkStatusBar from './components/NetworkStatusBar.js';
 export default function App(): React.JSX.Element {
   const { t } = useTranslation();
   const { isAuthenticated, rehydrate } = useAuthStore();
+  const textScale = useTextScale((s) => s.scale);
 
   // On mount: attempt to rehydrate session from local keystore
   useEffect(() => {
@@ -23,6 +25,11 @@ export default function App(): React.JSX.Element {
       console.warn('[Auth] Rehydration failed:', err);
     });
   }, [rehydrate]);
+
+  // Apply the global text/zoom scale (accessibility).
+  useEffect(() => {
+    (document.documentElement.style as CSSStyleDeclaration & { zoom?: string }).zoom = String(textScale);
+  }, [textScale]);
 
   return (
     <div className="app-root">
