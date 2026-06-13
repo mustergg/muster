@@ -9,7 +9,7 @@ import { useNetworkStore } from '../stores/networkStore.js';
 import EmojiPicker from './EmojiPicker.js';
 import VoiceRecorder from './VoiceRecorder.js';
 import { ReceiptToggle, SeenIndicator, MarkSeenButton } from './ReadReceiptUI.js';
-import { parseReply, packReply, replyPreview, mentionsUser, flashMessage, isFirstMentionView } from '../lib/messageFx.js';
+import { parseReply, packReply, replyPreview, replyPreviewWith, mentionsUser, flashMessage, isFirstMentionView } from '../lib/messageFx.js';
 import { useTypeToFocus } from '../lib/useTypeToFocus.js';
 import ComposerBar from './ComposerBar.js';
 import { useIsMobile } from '../lib/useResponsive.js';
@@ -256,9 +256,9 @@ export default function DMChatArea({ partnerPublicKey }: Props): React.JSX.Eleme
   const resolveReply = (id: string): { username: string; preview: string } | null => {
     const orig = dmMessages.find((m) => m.messageId === id);
     if (!orig) return null;
-    return { username: orig.senderUsername, preview: replyPreview(orig.content, 99) };
+    return { username: orig.senderUsername, preview: replyPreviewWith(orig.content, orig.mimeType, orig.fileName, 99) };
   };
-  const startReply = (m: DMMessage): void => setReplyTo({ messageId: m.messageId, preview: replyPreview(m.content, 80) });
+  const startReply = (m: DMMessage): void => setReplyTo({ messageId: m.messageId, preview: replyPreviewWith(m.content, m.mimeType, m.fileName, 80) });
 
   const clearComposer = (): void => { setDraft(''); setReplyTo(null); textInputRef.current?.focus(); };
 

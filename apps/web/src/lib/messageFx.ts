@@ -31,6 +31,28 @@ export function replyPreview(content: string, max = 99): string {
   return oneLine.length > max ? oneLine.slice(0, max) + '…' : oneLine;
 }
 
+/** Emoji marker for an attachment kind, by MIME type. */
+export function attachIcon(mime?: string | null): string {
+  if (!mime) return '';
+  if (mime.startsWith('image/')) return '\u{1F5BC}\u{FE0F}';
+  if (mime.startsWith('audio/')) return '\u{1F3A4}';
+  if (mime.startsWith('video/')) return '\u{1F3AC}';
+  return '\u{1F4CE}';
+}
+
+/**
+ * Reply-chip preview that also reflects an attachment: prefixes the text with
+ * an icon + filename when the replied message carries an image/file/voice/video.
+ */
+export function replyPreviewWith(content: string, mime?: string | null, name?: string | null, max = 80): string {
+  const ic = attachIcon(mime);
+  if (ic) {
+    const txt = replyPreview(content, 40);
+    return `${ic} ${name || 'attachment'}${txt ? ' · ' + txt : ''}`;
+  }
+  return replyPreview(content, max);
+}
+
 /** Scroll to a message (by id) and flash it to draw attention. */
 export function flashMessage(messageId: string): void {
   const el = document.getElementById(`msg-${messageId}`);

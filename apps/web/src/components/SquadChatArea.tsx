@@ -10,7 +10,7 @@ import { useSquadStore, SQUAD_BLOB_PREFIX, squadRoomKey, type SquadRoom } from '
 import { useNetworkStore } from '../stores/networkStore.js';
 import { useCommunityStore } from '../stores/communityStore.js';
 import { useComposerStore, appendMention, handleMentionBackspace } from '../stores/composerStore.js';
-import { parseReply, packReply, replyPreview, mentionsUser, flashMessage, isFirstMentionView } from '../lib/messageFx.js';
+import { parseReply, packReply, replyPreview, replyPreviewWith, mentionsUser, flashMessage, isFirstMentionView } from '../lib/messageFx.js';
 import { useTypeToFocus } from '../lib/useTypeToFocus.js';
 import { fetchAndDecryptBlob } from '../lib/blobUpload.js';
 import EmojiPicker from './EmojiPicker.js';
@@ -40,6 +40,16 @@ interface BlobDesc { root: string; size: number; mime: string; name: string; pie
 function parseBlobContent(content: string): BlobDesc | null {
   if (!content.startsWith(SQUAD_BLOB_PREFIX)) return null;
   try { return JSON.parse(content.slice(SQUAD_BLOB_PREFIX.length)); } catch { return null; }
+}
+
+/** Reply-chip preview for a squad message, reflecting blob attachments. */
+function squadReplyPreview(content: string): string {
+  const { text } = parseReply(content || '');
+  if (text.startsWith(SQUAD_BLOB_PREFIX)) {
+    const b = parseBlobContent(text);
+    if (b) return replyPreviewWith('', b.mime, b.name, 99);
+  }
+  return replyPreview(content, 99);
 }
 
 function SquadAttachment({ desc }: { desc: BlobDesc }): React.JSX.Element {
@@ -195,7 +205,7 @@ function SquadBody({ squadId, room }: { squadId: string; room: SquadRoom }): Rea
   const resolveReply = (id: string): { username: string; preview: string } | null => {
     const orig = (messages[msgKey] || []).find((m) => m.messageId === id);
     if (!orig) return null;
-    return { username: orig.senderUsername, preview: replyPreview(orig.content, 99) };
+    return { username: orig.senderUsername, preview: squadReplyPreview(orig.content) };
   };
 
   // Flash messages that @mention me the first time I see them.
@@ -336,7 +346,7 @@ function SquadBody({ squadId, room }: { squadId: string; room: SquadRoom }): Rea
                     ? <SeenIndicator context="squad" contextId={msgKey} messageId={m.messageId} />
                     : <MarkSeenButton context="squad" contextId={msgKey} messageId={m.messageId} />}
                   {!isEditing && (
-                    <button onClick={() => setReplyTo({ messageId: m.messageId, preview: replyPreview(m.content, 80) })} style={s.delMsgBtn} title="Reply">{'↩️'}</button>
+                    <button onClick={() => setReplyTo({ messageId: m.messageId, preview: squadReplyPreview(m.content) })} style={s.delMsgBtn} title="Reply">{'↩️'}</button>
                   )}
                   {!isEditing && canEdit && (
                     <button onClick={() => { setEditDraft(text); setEditingId(m.messageId); }} style={s.delMsgBtn} title="Edit message">{'✏️'}</button>

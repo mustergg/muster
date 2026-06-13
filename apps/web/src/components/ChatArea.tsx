@@ -20,7 +20,7 @@ import { useReadReceiptStore } from '../stores/readReceiptStore.js';
 import { useComposerStore, appendMention, handleMentionBackspace } from '../stores/composerStore.js';
 import ComposerBar from './ComposerBar.js';
 import { useIsMobile } from '../lib/useResponsive.js';
-import { parseReply, packReply, replyPreview, mentionsUser, flashMessage, isFirstMentionView } from '../lib/messageFx.js';
+import { parseReply, packReply, replyPreview, replyPreviewWith, mentionsUser, flashMessage, isFirstMentionView } from '../lib/messageFx.js';
 import { useTypeToFocus } from '../lib/useTypeToFocus.js';
 import type { ActiveLocation } from '../pages/MainLayout.js';
 import type { TransportMessage } from '@muster/transport';
@@ -385,11 +385,11 @@ export default function ChatArea({ active }: Props): React.JSX.Element {
     const list = active ? (messages[active.channelId] || []) : [];
     const orig = list.find((m) => m.messageId === id);
     if (!orig) return null;
-    return { username: orig.senderUsername, preview: replyPreview(orig.content, 99) };
+    return { username: orig.senderUsername, preview: replyPreviewWith(orig.content, (orig as any).mimeType, (orig as any).fileName, 99) };
   };
 
   const startReply = (m: ChatMessage): void => {
-    setReplyTo({ messageId: m.messageId, preview: replyPreview(m.content, 80) });
+    setReplyTo({ messageId: m.messageId, preview: replyPreviewWith(m.content, (m as any).mimeType, (m as any).fileName, 80) });
   };
 
   // Let member-list clicks drop an @mention into this composer.
