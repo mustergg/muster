@@ -110,7 +110,7 @@ export default function UserPanel(): React.JSX.Element {
           />
         </div>
 
-        <button onClick={() => useUiNav.getState().requestSettings()} title="Settings" style={s.actionBtn}>{'\u{2699}\u{FE0F}'}</button>
+        <button onClick={() => useUiNav.getState().toggleSettings()} title="Settings" style={s.actionBtn}>{'\u{2699}\u{FE0F}'}</button>
         <button onClick={handleLogout} title="Logout" style={s.actionBtn}>{'⏻'}</button>
 
         {pickerOpen && (

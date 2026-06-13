@@ -97,7 +97,10 @@ export default function MainLayout(): React.JSX.Element {
 
   // Remember the last non-settings view so closing settings returns there.
   const prevViewRef = useRef<ViewMode>('community');
-  useEffect(() => { if (viewMode !== 'settings') prevViewRef.current = viewMode; }, [viewMode]);
+  useEffect(() => {
+    if (viewMode !== 'settings') prevViewRef.current = viewMode;
+    useUiNav.getState().setSettingsOpen(viewMode === 'settings');
+  }, [viewMode]);
 
   // Bridge the shared UserPanel / SettingsPanel to open & close settings.
   useEffect(() => {

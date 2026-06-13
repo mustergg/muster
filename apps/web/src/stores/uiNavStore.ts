@@ -14,6 +14,11 @@ interface UiNavState {
   closeSettings: Fn | null;
   setCloseSettings: (fn: Fn | null) => void;
   requestCloseSettings: () => void;
+  /** Whether the settings view is currently open (kept in sync by MainLayout). */
+  settingsOpen: boolean;
+  setSettingsOpen: (v: boolean) => void;
+  /** Open settings if closed, close them if already open. */
+  toggleSettings: () => void;
 }
 
 export const useUiNav = create<UiNavState>((set, get) => ({
@@ -23,4 +28,7 @@ export const useUiNav = create<UiNavState>((set, get) => ({
   closeSettings: null,
   setCloseSettings: (fn) => set({ closeSettings: fn }),
   requestCloseSettings: () => { get().closeSettings?.(); },
+  settingsOpen: false,
+  setSettingsOpen: (v) => set({ settingsOpen: v }),
+  toggleSettings: () => { const g = get(); (g.settingsOpen ? g.closeSettings : g.openSettings)?.(); },
 }));
