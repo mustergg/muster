@@ -109,13 +109,13 @@ interface SquadState {
   /** Subscribe + load history for a specific squad room (e.g. the voice
    *  channel's dedicated text chat). */
   loadRoom: (squadId: string, room: SquadRoom) => void;
-  sendMessage: (squadId: string, content: string, room?: SquadRoom) => void;
+  sendMessage: (squadId: string, content: string, room?: SquadRoom) => string;
   /** Delete a squad message (author within window, squad owner, or staff). */
   deleteSquadMessage: (squadId: string, messageId: string, room?: SquadRoom) => void;
   /** Edit one's own squad message within the window (re-encrypts). */
   editSquadMessage: (squadId: string, messageId: string, content: string, room?: SquadRoom) => void;
   /** Send a file/voice attachment to a squad room (blob + descriptor marker). */
-  sendSquadFile: (squadId: string, file: File, room?: SquadRoom) => Promise<void>;
+  sendSquadFile: (squadId: string, file: File, room?: SquadRoom) => Promise<string>;
   clearMessage: () => void;
   init: () => () => void;
 }
@@ -249,7 +249,7 @@ export const useSquadStore = create<SquadState>((set, get) => ({
 
   sendMessage: (squadId: string, content: string, room: SquadRoom = 'text') => {
     const { transport, publicKey, username } = useNetworkStore.getState();
-    if (!transport?.isConnected) return;
+    if (!transport?.isConnected) return '';
     const messageId = uuid();
     const timestamp = Date.now();
     const key = squadRoomKey(squadId, room);
@@ -270,11 +270,12 @@ export const useSquadStore = create<SquadState>((set, get) => ({
     }).catch(() => {
       transport.send({ type: 'SEND_SQUAD_MESSAGE', payload: { squadId, content, messageId, room }, timestamp: Date.now() });
     });
+    return messageId;
   },
 
   sendSquadFile: async (squadId: string, file: File, room: SquadRoom = 'text') => {
     const network = useNetworkStore.getState();
-    if (!network.transport?.isConnected) return;
+    if (!network.transport?.isConnected) return '';
     const mime = file.type || 'application/octet-stream';
     const raw = new Uint8Array(await file.arrayBuffer());
     let up;
@@ -283,13 +284,13 @@ export const useSquadStore = create<SquadState>((set, get) => ({
         { send: (m) => network.transport!.send(m), isConnected: network.transport.isConnected },
         raw, mime,
       );
-    } catch (err) { console.warn('[squad] blob upload failed:', err); return; }
+    } catch (err) { console.warn('[squad] blob upload failed:', err); return ''; }
     // Descriptor travels in the squad message content (squad msgs are not
     // E2E; key in plaintext — acceptable for the alpha threat model).
     const descriptor = SQUAD_BLOB_PREFIX + JSON.stringify({
       root: up.rootHex, size: up.size, mime, name: file.name, pieceCount: up.pieceCount, key: up.keyHex,
     });
-    get().sendMessage(squadId, descriptor, room);
+    return get().sendMessage(squadId, descriptor, room);
   },
 
   deleteSquadMessage: (squadId, messageId, room = 'text') => {

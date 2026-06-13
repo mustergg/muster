@@ -143,7 +143,7 @@ interface ChatState {
   unsubscribe: (channels: string[]) => void;
   sendMessage: (channel: string, content: string) => void;
   /** R25 — Phase 4. Send a file/image as an envelope + content-addressed blob. */
-  sendFile: (channel: string, file: File) => Promise<void>;
+  sendFile: (channel: string, file: File) => Promise<string>;
   /** R25 — Phase 4. Fetch + decrypt a blob attachment and attach its object URL. */
   fetchAttachment: (channel: string, messageId: string) => Promise<void>;
   deleteMessage: (channel: string, messageId: string) => void;
@@ -374,9 +374,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
   // the legacy 1-MB UPLOAD_FILE flow.
   sendFile: async (channel, file) => {
     const network = useNetworkStore.getState();
-    if (!network.transport?.isConnected) return;
+    if (!network.transport?.isConnected) return '';
     const privateKey = getPrivateKey();
-    if (!privateKey) { console.warn('[chat] sendFile: no private key'); return; }
+    if (!privateKey) { console.warn('[chat] sendFile: no private key'); return ''; }
 
     const groupCrypto = useGroupCryptoStore.getState();
     const epoch = groupCrypto.channels.get(channel)?.currentEpoch ?? 0;
@@ -434,6 +434,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       send: (m) => network.transport!.send(m),
       isConnected: network.transport.isConnected,
     }, built);
+    return messageId;
   },
 
   fetchAttachment: async (channel, messageId) => {

@@ -83,7 +83,7 @@ interface DMState {
   activeConversation: string | null;
   sendDM: (recipientPublicKey: string, content: string) => void;
   /** R25: send a file/voice attachment over a sealed DM. */
-  sendDMFile: (recipientPublicKey: string, file: File) => Promise<void>;
+  sendDMFile: (recipientPublicKey: string, file: File) => Promise<string>;
   /** R25: fetch + decrypt a DM attachment, attach its object URL. */
   fetchDMAttachment: (partnerPublicKey: string, messageId: string) => Promise<void>;
   openConversation: (publicKey: string) => void;
@@ -223,9 +223,9 @@ export const useDMStore = create<DMState>((set, get) => ({
 
   sendDMFile: async (recipientPublicKey, file) => {
     const network = useNetworkStore.getState();
-    if (!network.transport?.isConnected) return;
+    if (!network.transport?.isConnected) return '';
     const kp = getKeypair();
-    if (!kp) { console.warn('[dm] sendDMFile: no keypair'); return; }
+    if (!kp) { console.warn('[dm] sendDMFile: no keypair'); return ''; }
 
     const messageId = uuid();
     const timestamp = Date.now();
@@ -242,7 +242,7 @@ export const useDMStore = create<DMState>((set, get) => ({
       );
     } catch (err) {
       console.warn('[dm] blob upload failed:', err);
-      return;
+      return '';
     }
     const attachment: SealedDmAttachment = {
       root: uploaded.rootHex, size: uploaded.size, mime, name: file.name,
@@ -272,6 +272,7 @@ export const useDMStore = create<DMState>((set, get) => ({
     } catch (err) {
       console.warn('[dm] sealed file frame failed:', err);
     }
+    return messageId;
   },
 
   fetchDMAttachment: async (partnerPublicKey, messageId) => {

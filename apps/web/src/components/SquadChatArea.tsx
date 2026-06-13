@@ -136,10 +136,14 @@ function SquadBody({ squadId, room }: { squadId: string; room: SquadRoom }): Rea
   const uploadFile = useCallback(async (file: File) => {
     if (file.size > MAX_SQUAD_FILE) { alert(`File too large. Max ${formatSize(MAX_SQUAD_FILE)}.`); return; }
     setUploading(true);
-    try { await sendSquadFile(squadId, file, room); }
+    try {
+      const caption = input.trim();
+      const id = await sendSquadFile(squadId, file, room);
+      if (caption && id) { sendMessage(squadId, packReply(id, caption), room); setInput(''); }
+    }
     catch (err) { console.error('[squad] upload failed:', err); alert('Failed to send file.'); }
     finally { setUploading(false); }
-  }, [squadId, room, sendSquadFile]);
+  }, [squadId, room, sendSquadFile, sendMessage, input]);
 
   const squadMessages = messages[msgKey] || [];
   const squadMembers = members[squadId] || [];

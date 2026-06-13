@@ -425,10 +425,11 @@ export default function ChatArea({ active }: Props): React.JSX.Element {
         return;
       }
       // R25 — Phase 4. Route through the content-addressed blob path:
-      // encrypt → 256-KB pieces → upload → ENVELOPE reference.
+      // encrypt → 256-KB pieces → upload → ENVELOPE reference. Any composer
+      // text rides along as a reply-caption linked to the attachment.
       const text = draft.trim();
-      if (text) { await sendMessage(active.channelId, text); setDraft(''); }
-      await sendFile(active.channelId, file);
+      const id = await sendFile(active.channelId, file);
+      if (text && id) { sendMessage(active.channelId, packReply(id, text)); setDraft(''); }
     } catch (err) {
       console.error('[chat] Upload failed:', err);
       alert(t('attachment.uploadFailed'));

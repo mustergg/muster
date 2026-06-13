@@ -211,10 +211,14 @@ export default function DMChatArea({ partnerPublicKey }: Props): React.JSX.Eleme
     if (!partnerPublicKey) return;
     if (file.size > MAX_DM_FILE) { alert(`File too large. Max ${formatSize(MAX_DM_FILE)}.`); return; }
     setUploading(true);
-    try { await sendDMFile(partnerPublicKey, file); }
+    try {
+      const caption = draft.trim();
+      const id = await sendDMFile(partnerPublicKey, file);
+      if (caption && id) { sendDM(partnerPublicKey, packReply(id, caption)); setDraft(''); }
+    }
     catch (err) { console.error('[dm] upload failed:', err); alert('Failed to send file.'); }
     finally { setUploading(false); }
-  }, [partnerPublicKey, sendDMFile]);
+  }, [partnerPublicKey, sendDMFile, sendDM, draft]);
 
   const hasFiles = (e: React.DragEvent): boolean => Array.from(e.dataTransfer?.types || []).includes('Files');
   const onDragEnter = useCallback((e: React.DragEvent) => { if (!hasFiles(e)) return; e.preventDefault(); dragDepthRef.current += 1; setDragOver(true); }, []);
