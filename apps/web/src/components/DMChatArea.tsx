@@ -334,7 +334,7 @@ export default function DMChatArea({ partnerPublicKey }: Props): React.JSX.Eleme
           onChange={setDraft}
           onSubmit={handleSend}
           onPickFile={() => fileInputRef.current?.click()}
-          onSendVoice={(f) => void uploadFile(f)}
+          onSendMedia={(f) => void uploadFile(f)}
           voiceDisabled={uploading}
           showClear={!!(draft || replyTo)}
           onClear={clearComposer}

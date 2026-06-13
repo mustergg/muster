@@ -537,7 +537,7 @@ export default function ChatArea({ active }: Props): React.JSX.Element {
           onChange={setDraft}
           onSubmit={handleSend}
           onPickFile={() => fileInputRef.current?.click()}
-          onSendVoice={(f) => void uploadFile(f)}
+          onSendMedia={(f) => void uploadFile(f)}
           voiceDisabled={uploading}
           showClear={!!(draft || replyTo)}
           onClear={clearComposer}

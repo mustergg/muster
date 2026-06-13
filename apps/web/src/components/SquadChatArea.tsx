@@ -376,7 +376,7 @@ function SquadBody({ squadId, room }: { squadId: string; room: SquadRoom }): Rea
           onChange={setInput}
           onSubmit={handleSend}
           onPickFile={() => fileInputRef.current?.click()}
-          onSendVoice={(f) => void uploadFile(f)}
+          onSendMedia={(f) => void uploadFile(f)}
           voiceDisabled={uploading}
           showClear={!!(input || replyTo)}
           onClear={clearComposer}
