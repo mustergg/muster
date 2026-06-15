@@ -13,7 +13,7 @@ import { useDMStore } from '../stores/dmStore.js';
 import { useFriendStore } from '../stores/friendStore.js';
 import { useNetworkStore } from '../stores/networkStore.js';
 import { useSquadStore } from '../stores/squadStore.js';
-import { useNavRecency, orderByRecency } from '../stores/navRecencyStore.js';
+import { useChatPrefs, orderItems } from '../stores/chatPrefsStore.js';
 import CreateCommunityModal from '../pages/CreateCommunityModal.js';
 import JoinCommunityModal from '../pages/JoinCommunityModal.js';
 import CreateSquadGlobalModal from '../pages/CreateSquadGlobalModal.js';
@@ -55,8 +55,9 @@ export default function GuildsSidebar({ activeCommunityId, onSelectCommunity, dm
   const { publicKey: myKey } = useNetworkStore();
   const mySquads = useSquadStore((s) => s.allMySquads());
   const setSquadOrder = useSquadStore((s) => s.setSquadOrder);
-  const navLastUsed = useNavRecency((s) => s.lastUsed);
-  const navPinned = useNavRecency((s) => s.pinned);
+  const navLastUsed = useChatPrefs((s) => s.lastUsed);
+  const navPinned = useChatPrefs((s) => s.pins);
+  const navActivity = useChatPrefs((s) => s.activity);
   const [dragCommunityId, setDragCommunityId] = useState<string | null>(null);
   const [dragSquadId, setDragSquadId] = useState<string | null>(null);
   const [showCreateSquad, setShowCreateSquad] = useState(false);
@@ -153,8 +154,8 @@ export default function GuildsSidebar({ activeCommunityId, onSelectCommunity, dm
 
   // Mobile top bar orders communities/squads by pin → recency; the desktop
   // rail keeps its manual drag order.
-  const orderedSquads = horizontal ? orderByRecency(mySquads, navLastUsed, navPinned) : mySquads;
-  const orderedCommunities = horizontal ? orderByRecency(communityList, navLastUsed, navPinned) : communityList;
+  const orderedSquads = horizontal ? orderItems(mySquads, navPinned, navActivity, navLastUsed) : mySquads;
+  const orderedCommunities = horizontal ? orderItems(communityList, navPinned, navActivity, navLastUsed) : communityList;
 
   return (
     <>

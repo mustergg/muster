@@ -13,6 +13,7 @@ import { useReadReceiptStore } from '../stores/readReceiptStore.js';
 import { useLayoutPref } from '../stores/layoutPrefStore.js';
 import { useTextScale, TEXT_SCALES } from '../stores/textScaleStore.js';
 import { useIdlePref } from '../stores/idlePrefStore.js';
+import { useChatPrefs } from '../stores/chatPrefsStore.js';
 
 export default function GeneralSettings(): React.JSX.Element {
   const { t, i18n } = useTranslation();
@@ -25,6 +26,8 @@ export default function GeneralSettings(): React.JSX.Element {
   const setTextScale = useTextScale((st) => st.setScale);
   const idleMinutes = useIdlePref((st) => st.idleMinutes);
   const setIdleMinutes = useIdlePref((st) => st.setIdleMinutes);
+  const syncPrefs = useChatPrefs((st) => st.syncEnabled);
+  const setSyncPrefs = useChatPrefs((st) => st.setSyncEnabled);
 
   const pick = (loc: SupportedLocale): void => { void setLocale(loc); };
 
@@ -77,6 +80,15 @@ export default function GeneralSettings(): React.JSX.Element {
             ))}
           </div>
           <div style={s.note}>Go "idle" automatically after this long without activity on this device (Off = never). Whichever of your devices you used most recently sets your shown status.</div>
+        </div>
+
+        <div style={s.section}>
+          <div style={s.sectionTitle}>Chat order sync</div>
+          <label style={s.checkRow}>
+            <input type="checkbox" checked={syncPrefs} onChange={(e) => setSyncPrefs(e.target.checked)} style={{ accentColor: 'var(--color-accent)' }} />
+            <span>Sync pins, order &amp; notification settings across my devices</span>
+          </label>
+          <div style={s.note}>Off keeps pins/order/mutes on this device only.</div>
         </div>
 
         <div style={s.section}>

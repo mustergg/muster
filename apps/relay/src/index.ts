@@ -41,6 +41,7 @@ import { TierManager } from './nodeTier';
 import { handleTierMessage } from './tierHandler';
 import { GroupKeyDB } from './groupKeyDB';
 import { handleGroupKeyMessage } from './groupKeyHandler';
+import { UserPrefsDB } from './userPrefsDB';
 import { registerProxiedNode, handlePortCheck, getProxyStats } from './wsRelay';
 // R25 — Phase 1: two-layer envelope + blob model (always-on since Phase 10)
 import { EnvelopeDB } from './envelopeDB';
@@ -80,6 +81,7 @@ const clients = new Map<WebSocket, RelayClient>();
 const channels = new Map<string, Set<WebSocket>>();
 const messageDB = new RelayDB();
 const groupKeyDB = new GroupKeyDB(messageDB.getDatabase());
+const userPrefsDB = new UserPrefsDB(messageDB.getDatabase());
 const communityDB = new CommunityDB(messageDB.getDatabase());
 const dmDB = new DMDB(messageDB.getDatabase());
 const userDB = new UserDB(messageDB.getDatabase());
@@ -394,6 +396,22 @@ const GROUP_KEY_TYPES = new Set(['GROUP_KEY_REQUEST', 'GROUP_KEY_DISTRIBUTE', 'G
 if (GROUP_KEY_TYPES.has(msg.type)) {
   handleGroupKeyMessage(client, msg, groupKeyDB, communityDB, squadDB, sendToClient, clients,
     (communityId, payload) => peerManager.forwardGroupKey(communityId, payload));
+  return;
+}
+
+// Per-user prefs (pins / mutes / notification levels) — follow the user across
+// their devices.
+if (msg.type === 'USER_PREFS_GET') {
+  sendToClient(client, { type: 'USER_PREFS', payload: userPrefsDB.get(client.publicKey), timestamp: Date.now() });
+  return;
+}
+if (msg.type === 'USER_PREFS_SET') {
+  const prefs = (msg.payload as Record<string, unknown>) || {};
+  userPrefsDB.set(client.publicKey, prefs);
+  const sync = JSON.stringify({ type: 'USER_PREFS_SYNC', payload: prefs, timestamp: Date.now() });
+  for (const [ws, c] of clients) {
+    if (c.authenticated && c.publicKey === client.publicKey && ws !== client.ws && ws.readyState === WebSocket.OPEN) ws.send(sync);
+  }
   return;
 }
 

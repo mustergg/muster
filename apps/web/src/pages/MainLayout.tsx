@@ -7,7 +7,7 @@ import SquadSidebar from '../components/SquadSidebar.js';
 import MainContent from '../components/MainContent.js';
 import MobileShell from '../components/MobileShell.js';
 import { useIsMobile } from '../lib/useResponsive.js';
-import { useNavRecency } from '../stores/navRecencyStore.js';
+import { useChatPrefs } from '../stores/chatPrefsStore.js';
 import { useUiNav } from '../stores/uiNavStore.js';
 import type { SquadRoom } from '../stores/squadStore.js';
 import type { ActiveLocation, ViewMode } from '../components/layoutTypes.js';
@@ -85,10 +85,11 @@ export default function MainLayout(): React.JSX.Element {
       const c13 = reputationInit();
       const c14 = useReadReceiptStore.getState().init();
       const c15 = useStatusStore.getState().init();
+      const c16 = useChatPrefs.getState().init();
       loadCommunities();
       // Load top-level squads (personal + community) for the guild bar.
       setTimeout(() => useSquadStore.getState().loadMySquads(), 400);
-      return () => { c1(); c2(); c3(); c4(); c5(); c6(); c7(); c8(); c9(); c10(); c11(); c12(); c13(); c14(); c15(); };
+      return () => { c1(); c2(); c3(); c4(); c5(); c6(); c7(); c8(); c9(); c10(); c11(); c12(); c13(); c14(); c15(); c16(); };
     }
     return undefined;
   }, [status]);
@@ -120,10 +121,10 @@ export default function MainLayout(): React.JSX.Element {
   const handleOpenDM = (publicKey: string) => { setViewMode('dm'); setActiveDMPartner(publicKey); setActiveSquad(null); };
   const handleSelectDM = () => { setViewMode('dm'); setActiveCommunityId(null); setActive(null); setActiveSquad(null); };
   const handleSelectFriends = () => { setViewMode('friends'); setActiveCommunityId(null); setActive(null); setActiveDMPartner(null); setActiveSquad(null); };
-  const handleSelectCommunity = (id: string) => { useNavRecency.getState().touch(id); setViewMode('community'); setActiveCommunityId(id); setActiveDMPartner(null); setActiveSquad(null); };
+  const handleSelectCommunity = (id: string) => { useChatPrefs.getState().touch(id); setViewMode('community'); setActiveCommunityId(id); setActiveDMPartner(null); setActiveSquad(null); };
   const handleSelectSettings = () => { setViewMode('settings'); setActiveCommunityId(null); setActive(null); setActiveDMPartner(null); setActiveSquad(null); };
   const handleSelectSquad = (squadId: string) => {
-    useNavRecency.getState().touch(squadId);
+    useChatPrefs.getState().touch(squadId);
     const squad = useSquadStore.getState().allMySquads().find((s) => s.id === squadId);
     const cid = squad?.communityId || '';
     // Member of the parent community? Only members get the in-community view

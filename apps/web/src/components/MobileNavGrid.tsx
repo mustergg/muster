@@ -8,7 +8,7 @@
 import React, { useRef } from 'react';
 import { useCommunityStore } from '../stores/communityStore.js';
 import { useSquadStore } from '../stores/squadStore.js';
-import { useNavRecency, orderByRecency } from '../stores/navRecencyStore.js';
+import { useChatPrefs, orderItems } from '../stores/chatPrefsStore.js';
 
 interface Props {
   onSelectCommunity: (id: string) => void;
@@ -31,17 +31,18 @@ function tileColors(t: Tile): { color: string; bg: string } {
 export default function MobileNavGrid({ onSelectCommunity, onSelectSquad, onClose }: Props): React.JSX.Element {
   const communities = useCommunityStore((s) => s.communities);
   const squads = useSquadStore((s) => s.allMySquads());
-  const lastUsed = useNavRecency((s) => s.lastUsed);
-  const pinned = useNavRecency((s) => s.pinned);
-  const togglePin = useNavRecency((s) => s.togglePin);
+  const lastUsed = useChatPrefs((s) => s.lastUsed);
+  const activity = useChatPrefs((s) => s.activity);
+  const pinned = useChatPrefs((s) => s.pins);
+  const togglePin = useChatPrefs((s) => s.togglePin);
 
-  const squadTiles = orderByRecency(
+  const squadTiles = orderItems(
     squads.map((sq) => ({ id: sq.id, kind: 'squad' as const, name: sq.name })),
-    lastUsed, pinned,
+    pinned, activity, lastUsed,
   );
-  const communityTiles = orderByRecency(
+  const communityTiles = orderItems(
     Object.values(communities).map((c: any) => ({ id: c.id, kind: 'community' as const, name: c.name })),
-    lastUsed, pinned,
+    pinned, activity, lastUsed,
   );
 
   const select = (t: Tile): void => {
