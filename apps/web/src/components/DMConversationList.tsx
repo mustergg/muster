@@ -6,6 +6,9 @@
 import React, { useEffect } from 'react';
 import { useNetworkStore } from '../stores/networkStore.js';
 import { useDMStore, type DMConversation } from '../stores/dmStore.js';
+import { useFriendStore } from '../stores/friendStore.js';
+import { useChatPrefs, orderItems } from '../stores/chatPrefsStore.js';
+import { chatMenu } from './chatMenu.js';
 import ContextMenu from './ContextMenu.js';
 import UserPanel from './UserPanel.js';
 
@@ -26,6 +29,14 @@ function formatTime(ts: number): string {
 export default function DMConversationList({ activeConversation, onSelectConversation, mobile }: Props): React.JSX.Element {
   const { status } = useNetworkStore();
   const { conversations, loadConversations, clearConversation } = useDMStore();
+  const blockUser = useFriendStore((s) => s.blockUser);
+  const pins = useChatPrefs((s) => s.pins);
+  const mutes = useChatPrefs((s) => s.mutes);
+  const activity = useChatPrefs((s) => s.activity);
+  const orderedConvos = orderItems(
+    conversations.map((c) => ({ ...c, id: c.publicKey })),
+    pins, activity, Object.fromEntries(conversations.map((c) => [c.publicKey, c.lastTimestamp])),
+  );
 
   useEffect(() => {
     if (status === 'connected') loadConversations();
@@ -44,25 +55,19 @@ export default function DMConversationList({ activeConversation, onSelectConvers
             <p style={styles.emptyHint}>Click DM next to a member's name to start a conversation.</p>
           </div>
         ) : (
-          conversations.map((conv) => (
+          orderedConvos.map((conv) => (
             <ContextMenu
               key={conv.publicKey}
-              items={[
-                {
-                  label: 'Delete conversation',
-                  icon: '\u{1F5D1}',
-                  danger: true,
-                  onClick: () => {
-                    if (confirm(`Delete conversation with ${conv.username}? This only clears your local copy.`)) {
-                      clearConversation(conv.publicKey);
-                    }
-                  },
-                },
-              ]}
+              items={chatMenu('dm', conv.publicKey, {
+                onBlock: () => { if (confirm(`Block ${conv.username}? They won't be able to DM you.`)) blockUser(conv.publicKey); },
+                onDeleteChat: () => { if (confirm(`Delete conversation with ${conv.username}? This only clears your local copy.`)) clearConversation(conv.publicKey); },
+              })}
             >
               <ConversationItem
                 conv={conv}
                 isActive={activeConversation === conv.publicKey}
+                muted={(mutes[conv.publicKey] ?? 0) !== 0 && (mutes[conv.publicKey] === -1 || (mutes[conv.publicKey] ?? 0) > Date.now())}
+                pinned={pins.includes(conv.publicKey)}
                 onClick={() => onSelectConversation(conv.publicKey)}
               />
             </ContextMenu>
@@ -75,23 +80,23 @@ export default function DMConversationList({ activeConversation, onSelectConvers
   );
 }
 
-function ConversationItem({ conv, isActive, onClick }: { conv: DMConversation; isActive: boolean; onClick: () => void }): React.JSX.Element {
+function ConversationItem({ conv, isActive, onClick, muted, pinned }: { conv: DMConversation; isActive: boolean; onClick: () => void; muted?: boolean; pinned?: boolean }): React.JSX.Element {
   const hue = parseInt((conv.publicKey || '0000').slice(0, 4), 16) % 360;
   return (
-    <button onClick={onClick} className={isActive ? 'm-rail-selected' : undefined} style={{ ...styles.convItem, background: isActive ? 'var(--color-bg-hover)' : 'transparent' }}>
+    <button onClick={onClick} className={isActive ? 'm-rail-selected' : undefined} style={{ ...styles.convItem, background: isActive ? 'var(--color-bg-hover)' : 'transparent', opacity: muted ? 0.6 : 1 }}>
       <div style={{ ...styles.convAvatar, background: `hsl(${hue},40%,20%)`, color: `hsl(${hue},70%,65%)` }}>
         {(conv.username || '??').slice(0, 2).toUpperCase()}
       </div>
       <div style={styles.convMeta}>
         <div style={styles.convHeader}>
-          <span style={styles.convName}>{conv.username || conv.publicKey.slice(0, 12) + '...'}</span>
+          <span style={styles.convName}>{pinned ? '\u{1F4CC} ' : ''}{conv.username || conv.publicKey.slice(0, 12) + '...'}</span>
           {conv.lastTimestamp > 0 && <span style={styles.convTime}>{formatTime(conv.lastTimestamp)}</span>}
         </div>
         {conv.lastMessage && (
           <span style={styles.convPreview}>{conv.lastMessage.length > 40 ? conv.lastMessage.slice(0, 40) + '...' : conv.lastMessage}</span>
         )}
       </div>
-      {(conv.unreadCount || 0) > 0 && <span style={styles.unreadBadge}>{conv.unreadCount}</span>}
+      {muted ? <span style={styles.mutedIcon}>{'\u{1F507}'}</span> : (conv.unreadCount || 0) > 0 && <span style={styles.unreadBadge}>{conv.unreadCount}</span>}
     </button>
   );
 }
@@ -112,6 +117,7 @@ const styles = {
   convTime: { fontSize: '10px', color: 'var(--color-text-muted)', fontFamily: 'var(--font-mono)' } as React.CSSProperties,
   convPreview: { fontSize: '11px', color: 'var(--color-text-muted)', display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const } as React.CSSProperties,
   unreadBadge: { background: '#E24B4A', color: '#fff', fontSize: '10px', fontWeight: 700, minWidth: '18px', height: '18px', borderRadius: '9px', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 5px', flexShrink: 0 } as React.CSSProperties,
+  mutedIcon: { fontSize: '11px', color: 'var(--color-text-muted)', flexShrink: 0 } as React.CSSProperties,
   userBar: { padding: '8px 10px', borderTop: '1px solid var(--color-border)', background: 'var(--color-bg-tertiary)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' } as React.CSSProperties,
   userInfo: { display: 'flex', alignItems: 'center', gap: '8px' } as React.CSSProperties,
   userAvatar: { width: '28px', height: '28px', borderRadius: '50%', background: 'var(--color-accent)', color: '#fff', fontSize: '10px', fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center' } as React.CSSProperties,

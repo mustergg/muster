@@ -9,6 +9,9 @@ import React, { useRef } from 'react';
 import { useCommunityStore } from '../stores/communityStore.js';
 import { useSquadStore } from '../stores/squadStore.js';
 import { useChatPrefs, orderItems } from '../stores/chatPrefsStore.js';
+import { useNetworkStore } from '../stores/networkStore.js';
+import ContextMenu from './ContextMenu.js';
+import { chatMenu } from './chatMenu.js';
 
 interface Props {
   onSelectCommunity: (id: string) => void;
@@ -31,10 +34,35 @@ function tileColors(t: Tile): { color: string; bg: string } {
 export default function MobileNavGrid({ onSelectCommunity, onSelectSquad, onClose }: Props): React.JSX.Element {
   const communities = useCommunityStore((s) => s.communities);
   const squads = useSquadStore((s) => s.allMySquads());
+  const myKey = useNetworkStore((s) => s.publicKey);
+  const leaveSquad = useSquadStore((s) => s.leaveSquad);
+  const detachSquad = useSquadStore((s) => s.detachSquad);
+  const deleteSquad = useSquadStore((s) => s.deleteSquad);
+  const inviteSquadMember = useSquadStore((s) => s.inviteMember);
+  const leaveCommunity = useCommunityStore((s) => s.leaveCommunity);
   const lastUsed = useChatPrefs((s) => s.lastUsed);
   const activity = useChatPrefs((s) => s.activity);
   const pinned = useChatPrefs((s) => s.pins);
   const togglePin = useChatPrefs((s) => s.togglePin);
+
+  const menuFor = (t: Tile): ReturnType<typeof chatMenu> => {
+    if (t.kind === 'squad') {
+      const sq = squads.find((s) => s.id === t.id);
+      return chatMenu('squad', t.id, {
+        isOwner: sq?.ownerPublicKey === myKey,
+        onInvite: () => { const u = prompt(`Invite to "${t.name}" — username:`); if (u?.trim()) inviteSquadMember(t.id, u.trim()); },
+        onLeaveSquad: () => { if (confirm(`Leave "${t.name}"?`)) leaveSquad(t.id); },
+        onDetach: () => { if (confirm(`Detach "${t.name}" from its community?`)) detachSquad(t.id); },
+        onDeleteSquad: () => { if (confirm(`Delete "${t.name}"?`)) deleteSquad(t.id); },
+      });
+    }
+    const c: any = communities[t.id];
+    return chatMenu('community', t.id, {
+      isOwner: c?.ownerPublicKey === myKey,
+      onCopyInvite: () => navigator.clipboard.writeText(`${window.location.origin}/invite/${t.id}`),
+      onLeaveCommunity: () => { if (confirm(`Leave "${t.name}"?`)) leaveCommunity(t.id); },
+    });
+  };
 
   const squadTiles = orderItems(
     squads.map((sq) => ({ id: sq.id, kind: 'squad' as const, name: sq.name })),
@@ -55,19 +83,21 @@ export default function MobileNavGrid({ onSelectCommunity, onSelectSquad, onClos
     const { color, bg } = tileColors(t);
     const isPinned = pinned.includes(t.id);
     return (
-      <div key={`${t.kind}:${t.id}`} style={g.cell}>
-        <button style={{ ...g.tile, background: bg, color }} onClick={() => select(t)} title={t.name}>
-          {initials(t.name)}
-        </button>
-        <span style={g.name} title={t.name}>{t.name}</span>
-        <button
-          style={{ ...g.pin, color: isPinned ? 'var(--color-amber)' : 'var(--color-text-muted)' }}
-          onClick={(e) => { e.stopPropagation(); togglePin(t.id); }}
-          title={isPinned ? 'Unpin' : 'Pin'}
-        >
-          {isPinned ? '★' : '☆'}
-        </button>
-      </div>
+      <ContextMenu key={`${t.kind}:${t.id}`} items={menuFor(t)}>
+        <div style={g.cell}>
+          <button style={{ ...g.tile, background: bg, color }} onClick={() => select(t)} title={t.name}>
+            {initials(t.name)}
+          </button>
+          <span style={g.name} title={t.name}>{t.name}</span>
+          <button
+            style={{ ...g.pin, color: isPinned ? 'var(--color-amber)' : 'var(--color-text-muted)' }}
+            onClick={(e) => { e.stopPropagation(); togglePin(t.id); }}
+            title={isPinned ? 'Unpin' : 'Pin'}
+          >
+            {isPinned ? '★' : '☆'}
+          </button>
+        </div>
+      </ContextMenu>
     );
   };
 

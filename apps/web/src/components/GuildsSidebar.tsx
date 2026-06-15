@@ -14,6 +14,7 @@ import { useFriendStore } from '../stores/friendStore.js';
 import { useNetworkStore } from '../stores/networkStore.js';
 import { useSquadStore } from '../stores/squadStore.js';
 import { useChatPrefs, orderItems } from '../stores/chatPrefsStore.js';
+import { chatMenu } from './chatMenu.js';
 import CreateCommunityModal from '../pages/CreateCommunityModal.js';
 import JoinCommunityModal from '../pages/JoinCommunityModal.js';
 import CreateSquadGlobalModal from '../pages/CreateSquadGlobalModal.js';
@@ -55,6 +56,10 @@ export default function GuildsSidebar({ activeCommunityId, onSelectCommunity, dm
   const { publicKey: myKey } = useNetworkStore();
   const mySquads = useSquadStore((s) => s.allMySquads());
   const setSquadOrder = useSquadStore((s) => s.setSquadOrder);
+  const leaveSquad = useSquadStore((s) => s.leaveSquad);
+  const detachSquad = useSquadStore((s) => s.detachSquad);
+  const deleteSquad = useSquadStore((s) => s.deleteSquad);
+  const inviteSquadMember = useSquadStore((s) => s.inviteMember);
   const navLastUsed = useChatPrefs((s) => s.lastUsed);
   const navPinned = useChatPrefs((s) => s.pins);
   const navActivity = useChatPrefs((s) => s.activity);
@@ -201,27 +206,38 @@ export default function GuildsSidebar({ activeCommunityId, onSelectCommunity, dm
             {orderedSquads.map((sq) => {
               const isActive = activeSquadId === sq.id;
               const hue = parseInt((sq.id || '0000').slice(0, 4).replace(/[^0-9a-f]/gi, '0') || '0', 16) % 360;
+              const isSquadOwner = sq.ownerPublicKey === myKey;
               return (
-                <button
+                <ContextMenu
                   key={sq.id}
-                  title={sq.name}
-                  onClick={() => onSelectSquad?.(sq.id)}
-                  draggable
-                  onDragStart={(e) => { setDragSquadId(sq.id); e.dataTransfer.effectAllowed = 'move'; }}
-                  onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; }}
-                  onDrop={(e) => { e.preventDefault(); handleSquadDrop(sq.id); }}
-                  onDragEnd={() => setDragSquadId(null)}
-                  style={{
-                    ...styles.icon,
-                    background: `hsl(${hue},35%,20%)`, color: `hsl(${hue},60%,70%)`,
-                    borderRadius: isActive ? '14px' : '50%',
-                    border: isActive ? '2px solid var(--color-accent)' : '2px solid transparent',
-                    fontSize: '13px',
-                    opacity: dragSquadId === sq.id ? 0.4 : 1,
-                  }}
+                  items={chatMenu('squad', sq.id, {
+                    isOwner: isSquadOwner,
+                    onInvite: () => { const u = prompt(`Invite to "${sq.name}" — username:`); if (u?.trim()) inviteSquadMember(sq.id, u.trim()); },
+                    onLeaveSquad: () => { if (confirm(`Leave "${sq.name}"?`)) leaveSquad(sq.id); },
+                    onDetach: () => { if (confirm(`Detach "${sq.name}" from its community?`)) detachSquad(sq.id); },
+                    onDeleteSquad: () => { if (confirm(`Delete "${sq.name}"? This cannot be undone.`)) deleteSquad(sq.id); },
+                  })}
                 >
-                  {squadInitials(sq.name)}
-                </button>
+                  <button
+                    title={sq.name}
+                    onClick={() => onSelectSquad?.(sq.id)}
+                    draggable
+                    onDragStart={(e) => { setDragSquadId(sq.id); e.dataTransfer.effectAllowed = 'move'; }}
+                    onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; }}
+                    onDrop={(e) => { e.preventDefault(); handleSquadDrop(sq.id); }}
+                    onDragEnd={() => setDragSquadId(null)}
+                    style={{
+                      ...styles.icon,
+                      background: `hsl(${hue},35%,20%)`, color: `hsl(${hue},60%,70%)`,
+                      borderRadius: isActive ? '14px' : '50%',
+                      border: isActive ? '2px solid var(--color-accent)' : '2px solid transparent',
+                      fontSize: '13px',
+                      opacity: dragSquadId === sq.id ? 0.4 : 1,
+                    }}
+                  >
+                    {squadInitials(sq.name)}
+                  </button>
+                </ContextMenu>
               );
             })}
           </>
@@ -237,27 +253,12 @@ export default function GuildsSidebar({ activeCommunityId, onSelectCommunity, dm
           return (
             <ContextMenu
               key={c.id}
-              items={[
-                {
-                  label: 'Copy invite link',
-                  icon: '\u{1F517}',
-                  onClick: () => {
-                    const link = `${window.location.origin}/invite/${c.id}`;
-                    navigator.clipboard.writeText(link);
-                  },
-                },
-                ...(isOwner ? [{
-                  label: 'Transfer ownership',
-                  icon: '\u{1F451}',
-                  onClick: () => setTransferCommunity({ id: c.id, name: c.name }),
-                }] : []),
-                {
-                  label: isOwner ? 'Leave / Delete community' : 'Leave community',
-                  icon: '\u{1F6AA}',
-                  danger: true,
-                  onClick: () => handleLeaveCommunity(c.id, c.name),
-                },
-              ]}
+              items={chatMenu('community', c.id, {
+                isOwner,
+                onCopyInvite: () => navigator.clipboard.writeText(`${window.location.origin}/invite/${c.id}`),
+                onTransfer: () => setTransferCommunity({ id: c.id, name: c.name }),
+                onLeaveCommunity: () => handleLeaveCommunity(c.id, c.name),
+              })}
             >
               <button
                 title={c.name}
