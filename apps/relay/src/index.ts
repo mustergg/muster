@@ -97,6 +97,7 @@ tierManager.startPurgeScheduler(messageDB, dmDB);
 
 initNodeInfo(nodeDB);
 const peerManager = new PeerManager(nodeDB, messageDB, communityDB, dmDB, NODE_URL);
+peerManager.setGroupKeyDB(groupKeyDB); // mesh replication of encrypted key bundles
 
 // R25 — Phase 10. The full two-layer stack (envelope/blob/manifest/oplog
 // + swarm + DHT + POS + DM routing + bandwidth monitor) is the only
@@ -391,7 +392,8 @@ function handleMessage(client: RelayClient, msg: any): void {
 
 const GROUP_KEY_TYPES = new Set(['GROUP_KEY_REQUEST', 'GROUP_KEY_DISTRIBUTE', 'GROUP_KEY_ROTATE', 'GROUP_CRYPTO_CONFIG']);
 if (GROUP_KEY_TYPES.has(msg.type)) {
-  handleGroupKeyMessage(client, msg, groupKeyDB, communityDB, squadDB, sendToClient, clients);
+  handleGroupKeyMessage(client, msg, groupKeyDB, communityDB, squadDB, sendToClient, clients,
+    (communityId, payload) => peerManager.forwardGroupKey(communityId, payload));
   return;
 }
 

@@ -177,4 +177,21 @@ export class GroupKeyDB {
     const config = this.getConfig(channelId);
     return config?.currentEpoch || 0;
   }
+
+  /**
+   * Replication (mesh): upsert config + store bundles received from a peer
+   * relay, so any relay hosting the community holds the encrypted key bundles
+   * and a reconnecting member can recover its key from whichever relay it
+   * lands on. Epoch only moves forward (MAX) to tolerate out-of-order delivery.
+   */
+  replicate(
+    channelId: string,
+    config: { enabled: boolean; historyAccess: string; historyFromDate?: number; currentEpoch: number },
+    bundles: GroupKeyBundle[],
+  ): void {
+    this.setConfig(channelId, config.enabled, config.historyAccess || 'from_join', config.historyFromDate);
+    this.db.prepare('UPDATE group_key_config SET currentEpoch = MAX(currentEpoch, ?), updatedAt = ? WHERE channelId = ?')
+      .run(config.currentEpoch || 0, Date.now(), channelId);
+    if (bundles && bundles.length) this.storeBundles(bundles);
+  }
 }

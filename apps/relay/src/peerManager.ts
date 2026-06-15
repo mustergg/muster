@@ -16,6 +16,7 @@ import { NodeDB } from './nodeDB';
 import { RelayDB } from './database';
 import { CommunityDB } from './communityDB';
 import { DMDB } from './dmDB';
+import { GroupKeyDB } from './groupKeyDB';
 import { getCurrentVersion } from './nodeUpdater';
 
 /** Default seed nodes for first boot. */
@@ -55,6 +56,8 @@ export class PeerManager {
   private messageDB: RelayDB;
   private communityDB: CommunityDB;
   private dmDB: DMDB;
+  /** R26 — group-key mesh replication. Set after construction. */
+  private groupKeyDB: GroupKeyDB | null = null;
   private nodeId: string;
   private nodeUrl: string;
   private nodeName: string;
@@ -467,6 +470,7 @@ export class PeerManager {
         }
         if (peerMsg.type === 'MESSAGE_FORWARD') this.handleMessageForward(peerMsg);
         if (peerMsg.type === 'DM_FORWARD') this.handleDMForward(peerMsg);
+        if (peerMsg.type === 'GROUP_KEY_FORWARD') this.handleGroupKeyForward(peerMsg);
       } catch { /* ignore */ }
     });
   }
@@ -503,6 +507,10 @@ export class PeerManager {
 
       case 'DM_FORWARD':
         this.handleDMForward(msg);
+        break;
+
+      case 'GROUP_KEY_FORWARD':
+        this.handleGroupKeyForward(msg);
         break;
     }
   }
@@ -699,6 +707,37 @@ export class PeerManager {
     try {
       this.dmDB.storeDM(dm);
     } catch { /* duplicate */ }
+  }
+
+  /** R26 — wire the group-key DB so the mesh can replicate encrypted key
+   *  bundles to peer relays hosting the same community. */
+  setGroupKeyDB(db: GroupKeyDB): void { this.groupKeyDB = db; }
+
+  /** Replicate a channel/squad's encrypted key bundles + config to peers that
+   *  host the community, for availability when a member reconnects elsewhere.
+   *  Bundles are E2E per-recipient, so peers can't read the keys. */
+  forwardGroupKey(communityId: string, payload: {
+    channelId: string;
+    config: { enabled: boolean; historyAccess: string; historyFromDate?: number; currentEpoch: number };
+    bundles: Array<Record<string, unknown>>;
+  }): void {
+    const forwardMsg = JSON.stringify({
+      type: 'GROUP_KEY_FORWARD',
+      payload: { sourceNodeId: this.nodeId, communityId, ...payload },
+      timestamp: Date.now(),
+    });
+    // Personal-squad keys (no shared community) stay local.
+    if (communityId && !communityId.startsWith('personal:')) this.broadcastToPeers(forwardMsg, communityId);
+  }
+
+  /** Handle replicated key bundles from a peer. Store them so a member that
+   *  reconnects to us can recover its key. */
+  private handleGroupKeyForward(msg: any): void {
+    const { sourceNodeId, channelId, config, bundles } = msg.payload || {};
+    if (sourceNodeId === this.nodeId || !this.groupKeyDB || !channelId || !config) return;
+    try {
+      this.groupKeyDB.replicate(channelId, config, bundles || []);
+    } catch { /* ignore */ }
   }
 
   // =================================================================

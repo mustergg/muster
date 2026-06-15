@@ -22,13 +22,23 @@ export function handleGroupKeyMessage(
   squadDB: SquadDB,
   sendToClient: (client: RelayClient, msg: Record<string, unknown>) => void,
   clients: Map<WebSocket, RelayClient>,
+  replicate: (communityId: string, payload: any) => void = () => {},
 ): void {
   switch (msg.type) {
     case 'GROUP_KEY_REQUEST':    handleKeyRequest(client, msg, groupKeyDB, communityDB, squadDB, sendToClient); break;
-    case 'GROUP_KEY_DISTRIBUTE': handleKeyDistribute(client, msg, groupKeyDB, communityDB, squadDB, sendToClient); break;
-    case 'GROUP_KEY_ROTATE':     handleKeyRotate(client, msg, groupKeyDB, communityDB, squadDB, sendToClient, clients); break;
-    case 'GROUP_CRYPTO_CONFIG':  handleCryptoConfig(client, msg, groupKeyDB, communityDB, squadDB, sendToClient); break;
+    case 'GROUP_KEY_DISTRIBUTE': handleKeyDistribute(client, msg, groupKeyDB, communityDB, squadDB, sendToClient, replicate); break;
+    case 'GROUP_KEY_ROTATE':     handleKeyRotate(client, msg, groupKeyDB, communityDB, squadDB, sendToClient, clients, replicate); break;
+    case 'GROUP_CRYPTO_CONFIG':  handleCryptoConfig(client, msg, groupKeyDB, communityDB, squadDB, sendToClient, replicate); break;
   }
+}
+
+/** Resolve the community a channel/squad belongs to, for mesh replication. */
+function resolveCommunityId(channelId: string, communityDB: CommunityDB, squadDB: SquadDB): string | null {
+  for (const cid of communityDB.getAllCommunityIds()) {
+    if (communityDB.getChannels(cid).some((ch) => ch.id === channelId)) return cid;
+  }
+  const squad = squadDB.getSquad(channelId);
+  return squad?.communityId || null;
 }
 
 function handleKeyRequest(
@@ -87,6 +97,7 @@ function handleKeyDistribute(
   client: RelayClient, msg: any,
   groupKeyDB: GroupKeyDB, communityDB: CommunityDB, squadDB: SquadDB,
   sendToClient: (c: RelayClient, m: Record<string, unknown>) => void,
+  replicate: (communityId: string, payload: any) => void,
 ): void {
   const { channelId, epoch, bundles, distributorPublicKey } = msg.payload || {};
   if (!channelId || !bundles || !Array.isArray(bundles)) return;
@@ -125,6 +136,10 @@ function handleKeyDistribute(
 
   groupKeyDB.storeBundles(dbBundles);
 
+  // Mesh: replicate the encrypted bundles to peer relays hosting the community.
+  const distCid = resolveCommunityId(channelId, communityDB, squadDB);
+  if (distCid) replicate(distCid, { channelId, config: { enabled: true, historyAccess: config.historyAccess, currentEpoch: newEpoch }, bundles: dbBundles });
+
   console.log(`[group-key] ${client.username} distributed epoch ${newEpoch} for channel ${channelId.slice(0, 12)} to ${bundles.length} members`);
 
   sendToClient(client, {
@@ -139,6 +154,7 @@ function handleKeyRotate(
   groupKeyDB: GroupKeyDB, communityDB: CommunityDB, squadDB: SquadDB,
   sendToClient: (c: RelayClient, m: Record<string, unknown>) => void,
   allClients: Map<WebSocket, RelayClient>,
+  replicate: (communityId: string, payload: any) => void,
 ): void {
   const { channelId, reason, bundles, distributorPublicKey } = msg.payload || {};
   if (!channelId || !bundles || !Array.isArray(bundles)) return;
@@ -167,6 +183,9 @@ function handleKeyRotate(
   }));
 
   groupKeyDB.storeBundles(dbBundles);
+
+  const rotCid = resolveCommunityId(channelId, communityDB, squadDB);
+  if (rotCid) replicate(rotCid, { channelId, config: { enabled: true, historyAccess: groupKeyDB.getConfig(channelId)?.historyAccess || 'from_join', currentEpoch: newEpoch }, bundles: dbBundles });
 
   console.log(`[group-key] Key rotated for channel ${channelId.slice(0, 12)}: epoch ${newEpoch}, reason: ${reason}, ${bundles.length} members`);
 
@@ -203,6 +222,7 @@ function handleCryptoConfig(
   client: RelayClient, msg: any,
   groupKeyDB: GroupKeyDB, communityDB: CommunityDB, squadDB: SquadDB,
   sendToClient: (c: RelayClient, m: Record<string, unknown>) => void,
+  replicate: (communityId: string, payload: any) => void,
 ): void {
   const { channelId, communityId, enabled, historyAccess, historyFromDate } = msg.payload || {};
   if (!channelId) return;
@@ -217,6 +237,9 @@ function handleCryptoConfig(
   }
 
   groupKeyDB.setConfig(channelId, !!enabled, historyAccess || 'from_join', historyFromDate);
+
+  const cfgCid = communityId || resolveCommunityId(channelId, communityDB, squadDB);
+  if (cfgCid) replicate(cfgCid, { channelId, config: { enabled: !!enabled, historyAccess: historyAccess || 'from_join', historyFromDate: historyFromDate || 0, currentEpoch: groupKeyDB.getCurrentEpoch(channelId) }, bundles: [] });
 
   console.log(`[group-key] Config updated for channel ${channelId.slice(0, 12)}: enabled=${enabled}, history=${historyAccess}`);
 
