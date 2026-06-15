@@ -353,7 +353,7 @@ export const useDMStore = create<DMState>((set, get) => ({
   loadLocalConversations: () => {
     const myKey = useNetworkStore.getState().publicKey;
     if (!myKey) return;
-    void dmDB.getDmConversationSeeds().then((seeds) => {
+    void dmDB.getDmConversationSeeds(myKey).then((seeds) => {
       if (!seeds.length) return;
       set((state) => {
         const byKey = new Map(state.conversations.map((c) => [c.publicKey, c]));
@@ -365,7 +365,7 @@ export const useDMStore = create<DMState>((set, get) => ({
           const decrypted = tryDecryptDM(m.content, m.senderPublicKey, m.senderPublicKey === myKey ? partner : myKey, myKey);
           const preview = decrypted.length > 50 ? decrypted.slice(0, 50) + '...' : decrypted;
           const prev = byKey.get(partner);
-          const username = m.senderPublicKey !== myKey ? (m.senderUsername || prev?.username || partner.slice(0, 8) + '…') : (prev?.username || partner.slice(0, 8) + '…');
+          const username = m.partnerName || prev?.username || (m.senderPublicKey !== myKey ? m.senderUsername : '') || partner.slice(0, 8) + '…';
           if (!prev || (m.timestamp ?? 0) >= prev.lastTimestamp) {
             byKey.set(partner, { publicKey: partner, username, lastMessage: preview, lastTimestamp: m.timestamp, unreadCount: prev?.unreadCount ?? 0 });
           }

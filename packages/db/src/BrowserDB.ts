@@ -100,15 +100,22 @@ export class BrowserDB extends Dexie {
    * conversation list can be rebuilt locally on boot — important for sealed
    * DMs the relay can't list (it never sees their sender/recipient).
    */
-  async getDmConversationSeeds(): Promise<DBMessage[]> {
+  async getDmConversationSeeds(myKey?: string): Promise<Array<DBMessage & { partnerName?: string }>> {
     try {
       const all = await this.messages.where('channel').startsWith('dm:').toArray();
       const byChan = new Map<string, DBMessage>();
+      const partnerName = new Map<string, { name: string; ts: number }>();
       for (const m of all) {
         const prev = byChan.get(m.channel);
         if (!prev || m.timestamp > prev.timestamp) byChan.set(m.channel, m);
+        // Track the newest partner-authored username so the list shows their name
+        // even when our own message is the most recent.
+        if (m.senderPublicKey !== myKey && m.senderUsername) {
+          const pn = partnerName.get(m.channel);
+          if (!pn || m.timestamp > pn.ts) partnerName.set(m.channel, { name: m.senderUsername, ts: m.timestamp });
+        }
       }
-      return [...byChan.values()];
+      return [...byChan.values()].map((m) => ({ ...m, partnerName: partnerName.get(m.channel)?.name }));
     } catch (err) {
       console.warn('[db] Failed to get DM seeds:', err);
       return [];

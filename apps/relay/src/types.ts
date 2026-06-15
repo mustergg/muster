@@ -39,4 +39,8 @@ export interface RelayClient {
    *  most-recently-used device when the same account is online on several,
    *  so presence shows one entry with the freshest device's status. */
   lastActivity?: number;
+
+  /** Public keys this client wants status updates for (e.g. its DM partners),
+   *  even without a shared channel. */
+  statusSubs?: Set<string>;
 }

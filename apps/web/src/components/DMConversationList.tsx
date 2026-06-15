@@ -8,6 +8,8 @@ import { useNetworkStore } from '../stores/networkStore.js';
 import { useDMStore, type DMConversation } from '../stores/dmStore.js';
 import { useFriendStore } from '../stores/friendStore.js';
 import { useChatPrefs, orderItems } from '../stores/chatPrefsStore.js';
+import { useUserStatus } from '../stores/userStatusStore.js';
+import { statusMeta } from '../stores/statusStore.js';
 import { chatMenu } from './chatMenu.js';
 import ContextMenu from './ContextMenu.js';
 import UserPanel from './UserPanel.js';
@@ -38,9 +40,16 @@ export default function DMConversationList({ activeConversation, onSelectConvers
     pins, activity, Object.fromEntries(conversations.map((c) => [c.publicKey, c.lastTimestamp])),
   );
 
+  const userStatuses = useUserStatus((s) => s.statuses);
+
   useEffect(() => {
     if (status === 'connected') loadConversations();
   }, [status]);
+
+  // Subscribe to the presence of all DM partners so the list shows their state.
+  useEffect(() => {
+    if (status === 'connected') useUserStatus.getState().subscribe(conversations.map((c) => c.publicKey));
+  }, [status, conversations.length]);
 
   return (
     <div style={mobile ? { ...styles.sidebar, width: '100%', borderRight: 'none' } : styles.sidebar}>
@@ -69,6 +78,7 @@ export default function DMConversationList({ activeConversation, onSelectConvers
                 isActive={activeConversation === conv.publicKey}
                 muted={(mutes[conv.publicKey] ?? 0) !== 0 && (mutes[conv.publicKey] === -1 || (mutes[conv.publicKey] ?? 0) > Date.now())}
                 pinned={pins.includes(conv.publicKey)}
+                status={userStatuses[conv.publicKey]}
                 onClick={() => onSelectConversation(conv.publicKey)}
               />
             </ContextMenu>
@@ -81,12 +91,14 @@ export default function DMConversationList({ activeConversation, onSelectConvers
   );
 }
 
-function ConversationItem({ conv, isActive, onClick, muted, pinned }: { conv: DMConversation; isActive: boolean; onClick: () => void; muted?: boolean; pinned?: boolean }): React.JSX.Element {
+function ConversationItem({ conv, isActive, onClick, muted, pinned, status }: { conv: DMConversation; isActive: boolean; onClick: () => void; muted?: boolean; pinned?: boolean; status?: string }): React.JSX.Element {
   const hue = parseInt((conv.publicKey || '0000').slice(0, 4), 16) % 360;
+  const meta = statusMeta(status);
   return (
     <button onClick={onClick} className={isActive ? 'm-rail-selected' : undefined} style={{ ...styles.convItem, background: isActive ? 'var(--color-bg-hover)' : 'transparent', opacity: muted ? 0.6 : 1 }}>
-      <div style={{ ...styles.convAvatar, background: `hsl(${hue},40%,20%)`, color: `hsl(${hue},70%,65%)` }}>
+      <div style={{ ...styles.convAvatar, background: `hsl(${hue},40%,20%)`, color: `hsl(${hue},70%,65%)`, position: 'relative' }}>
         {(conv.username || '??').slice(0, 2).toUpperCase()}
+        <span style={{ ...styles.statusDot, background: meta.color }} title={meta.label} />
       </div>
       <div style={styles.convMeta}>
         <div style={styles.convHeader}>
@@ -119,6 +131,7 @@ const styles = {
   convPreview: { fontSize: '11px', color: 'var(--color-text-muted)', display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const } as React.CSSProperties,
   unreadBadge: { background: '#E24B4A', color: '#fff', fontSize: '10px', fontWeight: 700, minWidth: '18px', height: '18px', borderRadius: '9px', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 5px', flexShrink: 0 } as React.CSSProperties,
   mutedIcon: { fontSize: '11px', color: 'var(--color-text-muted)', flexShrink: 0 } as React.CSSProperties,
+  statusDot: { position: 'absolute' as const, right: '-1px', bottom: '-1px', width: '11px', height: '11px', borderRadius: '50%', border: '2px solid var(--color-bg-secondary)' } as React.CSSProperties,
   userBar: { padding: '8px 10px', borderTop: '1px solid var(--color-border)', background: 'var(--color-bg-tertiary)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' } as React.CSSProperties,
   userInfo: { display: 'flex', alignItems: 'center', gap: '8px' } as React.CSSProperties,
   userAvatar: { width: '28px', height: '28px', borderRadius: '50%', background: 'var(--color-accent)', color: '#fff', fontSize: '10px', fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center' } as React.CSSProperties,

@@ -9,6 +9,7 @@ import MobileShell from '../components/MobileShell.js';
 import NotifSettingsModal from '../components/NotifSettingsModal.js';
 import { useIsMobile } from '../lib/useResponsive.js';
 import { useChatPrefs } from '../stores/chatPrefsStore.js';
+import { useUserStatus } from '../stores/userStatusStore.js';
 import { useUiNav } from '../stores/uiNavStore.js';
 import type { SquadRoom } from '../stores/squadStore.js';
 import type { ActiveLocation, ViewMode } from '../components/layoutTypes.js';
@@ -87,10 +88,11 @@ export default function MainLayout(): React.JSX.Element {
       const c14 = useReadReceiptStore.getState().init();
       const c15 = useStatusStore.getState().init();
       const c16 = useChatPrefs.getState().init();
+      const c17 = useUserStatus.getState().init();
       loadCommunities();
       // Load top-level squads (personal + community) for the guild bar.
       setTimeout(() => useSquadStore.getState().loadMySquads(), 400);
-      return () => { c1(); c2(); c3(); c4(); c5(); c6(); c7(); c8(); c9(); c10(); c11(); c12(); c13(); c14(); c15(); c16(); };
+      return () => { c1(); c2(); c3(); c4(); c5(); c6(); c7(); c8(); c9(); c10(); c11(); c12(); c13(); c14(); c15(); c16(); c17(); };
     }
     return undefined;
   }, [status]);

@@ -399,6 +399,14 @@ if (GROUP_KEY_TYPES.has(msg.type)) {
   return;
 }
 
+// Status of arbitrary users (DM partners) — subscribe + initial bulk reply.
+if (msg.type === 'SUBSCRIBE_USER_STATUS') {
+  const keys: string[] = Array.isArray(msg.payload?.keys) ? msg.payload.keys : [];
+  client.statusSubs = new Set(keys);
+  sendToClient(client, { type: 'USER_STATUS_BULK', payload: { statuses: keys.map((k) => ({ publicKey: k, status: computeUserStatus(k) })) }, timestamp: Date.now() });
+  return;
+}
+
 // Per-user prefs (pins / mutes / notification levels) — follow the user across
 // their devices.
 if (msg.type === 'USER_PREFS_GET') {
@@ -456,6 +464,7 @@ async function handleAuth(client: RelayClient, msg: any): Promise<void> {
   client.authenticated = true; client.publicKey = publicKey; client.username = username;
   if (!client.status) client.status = 'online';
   client.lastActivity = Date.now();
+  pushUserStatus(publicKey);
   const user = userDB.ensureUser(publicKey, username);
   console.log(`[relay] Auth OK: ${username} (${publicKey.slice(0, 12)}...) tier=${user.tier} mode=${authMode || 'legacy'}`);
   sendToClient(client, { type: 'AUTH_RESULT', payload: { success: true }, timestamp: Date.now() });
@@ -486,6 +495,7 @@ function handleSetUserStatus(client: RelayClient, msg: any): void {
 
   for (const ch of client.channels) broadcastPresence(ch);
   broadcastSquadPresenceForWs(client.ws, clients);
+  pushUserStatus(client.publicKey);
 }
 
 async function handlePublish(client: RelayClient, msg: any): Promise<void> {
@@ -605,7 +615,28 @@ function broadcastPresence(channelId: string): void {
   for (const ws of subs) { if (ws.readyState === WebSocket.OPEN) ws.send(msg); }
 }
 
-function handleDisconnect(client: RelayClient): void { for (const ch of client.channels) { channels.get(ch)?.delete(client.ws); if (channels.get(ch)?.size) broadcastPresence(ch); else channels.delete(ch); } cleanupSquadSubscriptions(client.ws, clients); cleanupVoiceParticipant(client.ws, clients); if (dmRouting && client.publicKey) dmRouting.forgetClient(client.publicKey); clients.delete(client.ws); }
+/** Effective status for a user across all their connections (most-recently-used
+ *  device wins; invisible masks as offline; none online → offline). */
+function computeUserStatus(publicKey: string): string {
+  let best: RelayClient | null = null;
+  for (const c of clients.values()) {
+    if (c.authenticated && c.publicKey === publicKey && (!best || (c.lastActivity || 0) > (best.lastActivity || 0))) best = c;
+  }
+  if (!best) return 'offline';
+  const s = best.status || 'online';
+  return s === 'invisible' ? 'offline' : s;
+}
+
+/** Push a user's status to every client subscribed to it (e.g. DM partners). */
+function pushUserStatus(publicKey: string): void {
+  if (!publicKey) return;
+  const out = JSON.stringify({ type: 'USER_STATUS', payload: { publicKey, status: computeUserStatus(publicKey) }, timestamp: Date.now() });
+  for (const [ws, c] of clients) {
+    if (c.authenticated && c.statusSubs?.has(publicKey) && ws.readyState === WebSocket.OPEN) ws.send(out);
+  }
+}
+
+function handleDisconnect(client: RelayClient): void { for (const ch of client.channels) { channels.get(ch)?.delete(client.ws); if (channels.get(ch)?.size) broadcastPresence(ch); else channels.delete(ch); } cleanupSquadSubscriptions(client.ws, clients); cleanupVoiceParticipant(client.ws, clients); if (dmRouting && client.publicKey) dmRouting.forgetClient(client.publicKey); clients.delete(client.ws); pushUserStatus(client.publicKey); }
 function sendToClient(client: RelayClient, msg: Record<string, unknown>): void { if (client.ws.readyState === WebSocket.OPEN) client.ws.send(JSON.stringify(msg)); }
 function requireAuth(client: RelayClient): boolean { if (!client.authenticated) { sendToClient(client, { type: 'ERROR', payload: { code: 'NOT_AUTH', message: 'Authenticate first' }, timestamp: Date.now() }); return false; } return true; }
 
