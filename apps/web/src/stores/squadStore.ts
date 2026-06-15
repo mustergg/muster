@@ -50,6 +50,9 @@ export interface SquadMessage {
   timestamp: number;
   isOwn: boolean;
   edited?: boolean;
+  /** Raw E2E ciphertext kept when still undecryptable (🔒), so it can be
+   *  re-decrypted once the group key arrives. */
+  _enc?: string;
 }
 
 /** A squad has two independent text streams: its main text chat ('text') and
@@ -339,6 +342,18 @@ export const useSquadStore = create<SquadState>((set, get) => ({
       } catch { /* leave placeholder */ }
     };
 
+    // Re-attempt decryption of any still-locked (🔒) messages in a squad once
+    // its group key becomes available (recovered from the relay or rotated).
+    const redecryptSquad = (squadId: string): void => {
+      const st = get();
+      for (const room of ['text', 'voice'] as SquadRoom[]) {
+        const key = squadRoomKey(squadId, room);
+        for (const m of (st.messages[key] || [])) {
+          if (m._enc && m.content === '\u{1F512}…') decryptInto(squadId, key, m.messageId, m._enc);
+        }
+      }
+    };
+
     // Squads whose key the owner must rotate once the post-change member list
     // arrives (e.g. after detach drops ghost staff — rotation revokes them).
     const pendingRotate = new Set<string>();
@@ -364,8 +379,13 @@ export const useSquadStore = create<SquadState>((set, get) => ({
       const memberKeys = (get().members[squadId] || []).map((m) => m.publicKey);
       const keys = memberKeys.length > 0 ? memberKeys : [myKey];
       const gc = useGroupCryptoStore.getState();
+      // If we already hold the key, (re)hand it to the current members.
+      // If we DON'T (e.g. fresh reconnect, in-memory key lost), recover the
+      // EXISTING key from the relay — never generate a new one here, which
+      // would orphan all prior messages as undecryptable (🔒). First-time
+      // setup happens on SQUAD_CREATED.
       if (gc.isEncrypted(squadId)) gc.redistributeKey(squadId, keys).catch(() => {});
-      else gc.setupEncryption(squadId, squad.communityId, keys, 'from_join').catch(() => {});
+      else gc.requestKeys(squadId);
     };
 
     const unsubscribe = useNetworkStore.getState().onMessage((msg: TransportMessage) => {
@@ -443,7 +463,7 @@ export const useSquadStore = create<SquadState>((set, get) => ({
           const key = squadRoomKey(p.squadId, room);
           const raw: string = p.content || '';
           const enc = raw.startsWith(SQUAD_ENC_PREFIX);
-          const squadMsg: SquadMessage = { ...p, content: enc ? '\u{1F512}…' : raw, isOwn: p.senderPublicKey === myKey };
+          const squadMsg: SquadMessage = { ...p, content: enc ? '\u{1F512}…' : raw, _enc: enc ? raw : undefined, isOwn: p.senderPublicKey === myKey };
           set((s) => {
             const existing = s.messages[key] || [];
             if (existing.some((m) => m.messageId === p.messageId)) return s;
@@ -459,7 +479,7 @@ export const useSquadStore = create<SquadState>((set, get) => ({
           const msgs: SquadMessage[] = (p.messages || []).map((m: any) => {
             const raw: string = m.content || '';
             const enc = raw.startsWith(SQUAD_ENC_PREFIX);
-            return { ...m, squadId: p.squadId, content: enc ? '\u{1F512}…' : raw, isOwn: m.senderPublicKey === myKey };
+            return { ...m, squadId: p.squadId, content: enc ? '\u{1F512}…' : raw, _enc: enc ? raw : undefined, isOwn: m.senderPublicKey === myKey };
           });
           set((s) => ({ messages: { ...s.messages, [key]: msgs } }));
           for (const m of (p.messages || [])) {
@@ -483,9 +503,16 @@ export const useSquadStore = create<SquadState>((set, get) => ({
           const raw: string = p.content || '';
           const enc = raw.startsWith(SQUAD_ENC_PREFIX);
           set((s) => ({
-            messages: { ...s.messages, [key]: (s.messages[key] || []).map((m) => m.messageId === p.messageId ? { ...m, content: enc ? '\u{1F512}…' : raw, edited: true } : m) },
+            messages: { ...s.messages, [key]: (s.messages[key] || []).map((m) => m.messageId === p.messageId ? { ...m, content: enc ? '\u{1F512}…' : raw, _enc: enc ? raw : undefined, edited: true } : m) },
           }));
           if (enc) decryptInto(p.squadId, key, p.messageId, raw);
+          break;
+        }
+        case 'GROUP_KEY_RESPONSE':
+        case 'GROUP_KEY_ROTATED': {
+          // Group key just arrived/changed — re-decrypt any 🔒 messages.
+          const p = msg.payload as any;
+          if (p?.channelId) setTimeout(() => redecryptSquad(p.channelId), 80);
           break;
         }
         case 'SQUAD_DETACHED': {

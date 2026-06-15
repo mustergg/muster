@@ -169,6 +169,40 @@ async function decryptGroupKey(
 }
 
 // =================================================================
+// Persistence — keep decrypted group keys across sessions, per account, so a
+// reconnect after time away doesn't lose them (which previously left messages
+// stuck as 🔒, or worse, made the owner regenerate the key and orphan history).
+// =================================================================
+
+function persistChannels(channels: Map<string, ChannelCrypto>): void {
+  const myKey = useNetworkStore.getState().publicKey;
+  if (!myKey) return;
+  try {
+    const arr = [...channels.values()].map((ch) => ({
+      channelId: ch.channelId, enabled: ch.enabled, historyAccess: ch.historyAccess, currentEpoch: ch.currentEpoch,
+      keys: [...ch.keys.values()].map((k) => ({ epoch: k.epoch, key: toHex(k.key), createdAt: k.createdAt })),
+    }));
+    localStorage.setItem(`muster-group-keys:${myKey}`, JSON.stringify(arr));
+  } catch { /* ignore */ }
+}
+
+function loadPersistedChannels(): Map<string, ChannelCrypto> {
+  const map = new Map<string, ChannelCrypto>();
+  const myKey = useNetworkStore.getState().publicKey;
+  if (!myKey) return map;
+  try {
+    const raw = localStorage.getItem(`muster-group-keys:${myKey}`);
+    if (!raw) return map;
+    for (const ch of JSON.parse(raw) as any[]) {
+      const keys = new Map<number, GroupKey>();
+      for (const k of ch.keys) keys.set(k.epoch, { epoch: k.epoch, key: fromHex(k.key), createdAt: k.createdAt });
+      map.set(ch.channelId, { channelId: ch.channelId, enabled: ch.enabled, historyAccess: ch.historyAccess, currentEpoch: ch.currentEpoch, keys });
+    }
+  } catch { /* ignore */ }
+  return map;
+}
+
+// =================================================================
 // Store
 // =================================================================
 
@@ -228,6 +262,7 @@ export const useGroupCryptoStore = create<GroupCryptoState>((set, get) => ({
       channels.set(channelId, channelCrypto);
       return { channels };
     });
+    persistChannels(get().channels);
 
     console.log(`[group-crypto] Encryption setup for channel ${channelId.slice(0, 12)}: ${bundles.length} members, history=${historyAccess}`);
   },
@@ -265,6 +300,7 @@ export const useGroupCryptoStore = create<GroupCryptoState>((set, get) => ({
       channels.set(channelId, ch);
       return { channels };
     });
+    persistChannels(get().channels);
 
     console.log(`[group-crypto] Key rotated for ${channelId.slice(0, 12)}: epoch ${newEpoch}, reason: ${reason}`);
   },
@@ -377,6 +413,17 @@ export const useGroupCryptoStore = create<GroupCryptoState>((set, get) => ({
   init: () => {
     const network = useNetworkStore.getState();
 
+    // Restore persisted group keys for this account so we can decrypt history
+    // immediately on reconnect (before any GROUP_KEY_RESPONSE round-trip).
+    const persisted = loadPersistedChannels();
+    if (persisted.size > 0) {
+      set((state) => {
+        const channels = new Map(state.channels);
+        for (const [id, ch] of persisted) if (!channels.has(id)) channels.set(id, ch);
+        return { channels };
+      });
+    }
+
     const unsubscribe = network.onMessage(async (msg: TransportMessage) => {
       if (msg.type === 'GROUP_KEY_RESPONSE') {
         const p = msg.payload as any;
@@ -408,9 +455,13 @@ export const useGroupCryptoStore = create<GroupCryptoState>((set, get) => ({
 
         set((state) => {
           const channels = new Map(state.channels);
+          // Merge: keep any locally-held epoch keys, add the recovered ones.
+          const existing = channels.get(channelId);
+          if (existing) for (const [ep, k] of existing.keys) if (!keys.has(ep)) keys.set(ep, k);
           channels.set(channelId, channelCrypto);
           return { channels };
         });
+        persistChannels(get().channels);
 
         console.log(`[group-crypto] Loaded ${keys.size} key epochs for channel ${channelId.slice(0, 12)}`);
       }
@@ -433,6 +484,7 @@ export const useGroupCryptoStore = create<GroupCryptoState>((set, get) => ({
             channels.set(channelId, ch);
             return { channels };
           });
+          persistChannels(get().channels);
 
           console.log(`[group-crypto] Key rotated for ${channelId.slice(0, 12)}: epoch ${epoch}`);
         } catch (err) {
