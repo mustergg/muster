@@ -88,6 +88,9 @@ interface DMState {
   fetchDMAttachment: (partnerPublicKey: string, messageId: string) => Promise<void>;
   openConversation: (publicKey: string, username?: string) => void;
   loadConversations: () => void;
+  /** Rebuild the conversation list from the local cache (covers sealed DMs the
+   *  relay can't enumerate). */
+  loadLocalConversations: () => void;
   setActiveConversation: (publicKey: string | null) => void;
   clearConversation: (publicKey: string) => void;
   /** Delete one of your own DMs (both sides). */
@@ -347,6 +350,31 @@ export const useDMStore = create<DMState>((set, get) => ({
     network.transport.send({ type: 'DM_CONVERSATIONS_REQUEST', payload: {}, timestamp: Date.now() });
   },
 
+  loadLocalConversations: () => {
+    const myKey = useNetworkStore.getState().publicKey;
+    if (!myKey) return;
+    void dmDB.getDmConversationSeeds().then((seeds) => {
+      if (!seeds.length) return;
+      set((state) => {
+        const byKey = new Map(state.conversations.map((c) => [c.publicKey, c]));
+        for (const m of seeds) {
+          const parts = m.channel.slice(3).split(':'); // dm:<a>:<b>
+          const partner = parts[0] === myKey ? parts[1] : parts[0];
+          if (!partner || partner === myKey) continue;
+          if ((m.timestamp ?? 0) <= clearedAtFor(partner)) continue;
+          const decrypted = tryDecryptDM(m.content, m.senderPublicKey, m.senderPublicKey === myKey ? partner : myKey, myKey);
+          const preview = decrypted.length > 50 ? decrypted.slice(0, 50) + '...' : decrypted;
+          const prev = byKey.get(partner);
+          const username = m.senderPublicKey !== myKey ? (m.senderUsername || prev?.username || partner.slice(0, 8) + '…') : (prev?.username || partner.slice(0, 8) + '…');
+          if (!prev || (m.timestamp ?? 0) >= prev.lastTimestamp) {
+            byKey.set(partner, { publicKey: partner, username, lastMessage: preview, lastTimestamp: m.timestamp, unreadCount: prev?.unreadCount ?? 0 });
+          }
+        }
+        return { conversations: [...byKey.values()].sort((a, b) => b.lastTimestamp - a.lastTimestamp) };
+      });
+    }).catch(() => { /* ignore */ });
+  },
+
   setActiveConversation: (publicKey) => {
     set((state) => ({
       activeConversation: publicKey,
@@ -408,7 +436,9 @@ export const useDMStore = create<DMState>((set, get) => ({
     const inboxTimer = setInterval(sendInboxSubscribe, 60 * 60 * 1000);
 
     // Load conversations on connect so DM unread badges appear without having
-    // to open the DM view first.
+    // to open the DM view first. Local cache first (covers sealed DMs the relay
+    // can't list), then the relay's view.
+    get().loadLocalConversations();
     get().loadConversations();
 
     const unsubscribe = network.onMessage((msg: TransportMessage) => {

@@ -95,6 +95,26 @@ export class BrowserDB extends Dexie {
     }
   }
 
+  /**
+   * Latest cached message per DM channel (channels prefixed `dm:`), so the DM
+   * conversation list can be rebuilt locally on boot — important for sealed
+   * DMs the relay can't list (it never sees their sender/recipient).
+   */
+  async getDmConversationSeeds(): Promise<DBMessage[]> {
+    try {
+      const all = await this.messages.where('channel').startsWith('dm:').toArray();
+      const byChan = new Map<string, DBMessage>();
+      for (const m of all) {
+        const prev = byChan.get(m.channel);
+        if (!prev || m.timestamp > prev.timestamp) byChan.set(m.channel, m);
+      }
+      return [...byChan.values()];
+    } catch (err) {
+      console.warn('[db] Failed to get DM seeds:', err);
+      return [];
+    }
+  }
+
   /** Get the most recent message timestamp for a channel. */
   async getLatestTimestamp(channel: string): Promise<number> {
     try {
