@@ -13,6 +13,8 @@
 import { create } from 'zustand';
 import { useNetworkStore } from './networkStore';
 import { useGroupCryptoStore } from './groupCryptoStore';
+import { useChatPrefs } from './chatPrefsStore';
+import { useCommunityStore } from './communityStore';
 import { usePieceCacheStore } from './pieceCacheStore';
 import { BrowserDB, type DBMessage } from '@muster/db';
 import { sign as ed25519Sign, toHex, sha256, fromHex, decodeCanonical } from '@muster/crypto';
@@ -529,6 +531,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
             return { messages: { ...state.messages, [p.channel]: [...existing, chatMsg].sort((a, b) => a.timestamp - b.timestamp) } };
           });
           if (enc) decryptChannelInto(p.channel, p.messageId, p.content);
+          if (!chatMsg.isOwn) {
+            const comms = useCommunityStore.getState().communities;
+            const cid = Object.values(comms).find((c: any) => (c.channels || []).some((ch: any) => ch.id === p.channel))?.id;
+            if (cid) useChatPrefs.getState().bumpActivity(cid, p.timestamp || Date.now());
+          }
           break;
         }
 

@@ -59,6 +59,7 @@ export default function DMConversationList({ activeConversation, onSelectConvers
             <ContextMenu
               key={conv.publicKey}
               items={chatMenu('dm', conv.publicKey, {
+                name: conv.username,
                 onBlock: () => { if (confirm(`Block ${conv.username}? They won't be able to DM you.`)) blockUser(conv.publicKey); },
                 onDeleteChat: () => { if (confirm(`Delete conversation with ${conv.username}? This only clears your local copy.`)) clearConversation(conv.publicKey); },
               })}

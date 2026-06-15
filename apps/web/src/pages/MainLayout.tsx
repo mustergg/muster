@@ -6,6 +6,7 @@ import DMConversationList from '../components/DMConversationList.js';
 import SquadSidebar from '../components/SquadSidebar.js';
 import MainContent from '../components/MainContent.js';
 import MobileShell from '../components/MobileShell.js';
+import NotifSettingsModal from '../components/NotifSettingsModal.js';
 import { useIsMobile } from '../lib/useResponsive.js';
 import { useChatPrefs } from '../stores/chatPrefsStore.js';
 import { useUiNav } from '../stores/uiNavStore.js';
@@ -166,6 +167,7 @@ export default function MainLayout(): React.JSX.Element {
     return (
       <div style={styles.outerShell}>
         <VerificationBanner />
+        <NotifSettingsModal />
         <MobileShell
           viewMode={viewMode}
           active={active}
@@ -202,6 +204,7 @@ export default function MainLayout(): React.JSX.Element {
   return (
     <div style={styles.outerShell}>
       <VerificationBanner />
+      <NotifSettingsModal />
 
       <div style={styles.shell}>
         <GuildsSidebar

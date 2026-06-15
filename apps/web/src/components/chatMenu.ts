@@ -6,10 +6,13 @@
  */
 import type { ContextMenuItem } from './ContextMenu.js';
 import { useChatPrefs, PERMANENT } from '../stores/chatPrefsStore.js';
+import { useNotifModal } from '../stores/notifModalStore.js';
 
 export type ChatKind = 'dm' | 'squad' | 'community';
 
 export interface ChatMenuCtx {
+  /** Display name (for the notifications modal title). */
+  name?: string;
   // squad / community ownership gates
   isOwner?: boolean;
   // DM
@@ -59,6 +62,8 @@ export function chatMenu(kind: ChatKind, id: string, ctx: ChatMenuCtx): ContextM
     items.push({ label: 'Mute', icon: '\u{1F507}', onClick: () => useChatPrefs.getState().setMute(id, PERMANENT) });
     items.push({ label: 'Mute for…', icon: '\u{23F2}', onClick: () => { const u = promptMuteUntil(); if (u !== null) useChatPrefs.getState().setMute(id, u); } });
   }
+
+  items.push({ label: 'Notifications…', icon: '\u{1F514}', onClick: () => useNotifModal.getState().open(kind, id, ctx.name || id) });
 
   if (kind === 'dm') {
     if (ctx.onBlock) items.push({ label: 'Block user', icon: '\u{1F6AB}', danger: true, onClick: ctx.onBlock });

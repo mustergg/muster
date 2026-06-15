@@ -7,6 +7,7 @@
 import { create } from 'zustand';
 import { useNetworkStore } from './networkStore';
 import { useGroupCryptoStore } from './groupCryptoStore';
+import { useChatPrefs } from './chatPrefsStore';
 import { buildAndUploadBlob } from '../lib/blobUpload';
 import type { TransportMessage } from '@muster/transport';
 
@@ -473,6 +474,7 @@ export const useSquadStore = create<SquadState>((set, get) => ({
             return { messages: { ...s.messages, [key]: [...existing, squadMsg].sort((a, b) => a.timestamp - b.timestamp) } };
           });
           if (enc) decryptInto(p.squadId, key, p.messageId, raw);
+          if (!squadMsg.isOwn) useChatPrefs.getState().bumpActivity(p.squadId, p.timestamp || Date.now());
           break;
         }
         case 'SQUAD_HISTORY_RESPONSE': {

@@ -113,25 +113,40 @@ export default function GuildsSidebar({ activeCommunityId, onSelectCommunity, dm
     });
   })();
 
+  // Reorder pinned items (the only manually-orderable ones; the rest are
+  // activity-ordered). Reorders within the shared pins list, which syncs across
+  // devices/layouts via chatPrefs.
+  const reorderPins = (dragId: string, targetId: string): boolean => {
+    const cp = useChatPrefs.getState();
+    if (!cp.isPinned(dragId) || !cp.isPinned(targetId)) return false;
+    const ids = [...cp.pins];
+    const from = ids.indexOf(dragId);
+    const to = ids.indexOf(targetId);
+    if (from < 0 || to < 0) return false;
+    ids.splice(to, 0, ids.splice(from, 1)[0]!);
+    cp.setPinOrder(ids);
+    return true;
+  };
+
   const handleSquadDrop = (targetId: string): void => {
     if (!dragSquadId || dragSquadId === targetId) { setDragSquadId(null); return; }
-    const ids = mySquads.map((s) => s.id);
-    const from = ids.indexOf(dragSquadId);
-    const to = ids.indexOf(targetId);
-    if (from < 0 || to < 0) { setDragSquadId(null); return; }
-    ids.splice(to, 0, ids.splice(from, 1)[0]!);
-    setSquadOrder(ids);
+    if (!reorderPins(dragSquadId, targetId)) {
+      const ids = mySquads.map((s) => s.id);
+      const from = ids.indexOf(dragSquadId);
+      const to = ids.indexOf(targetId);
+      if (from >= 0 && to >= 0) { ids.splice(to, 0, ids.splice(from, 1)[0]!); setSquadOrder(ids); }
+    }
     setDragSquadId(null);
   };
 
   const handleCommunityDrop = (targetId: string): void => {
     if (!dragCommunityId || dragCommunityId === targetId) { setDragCommunityId(null); return; }
-    const ids = communityList.map((c) => c.id);
-    const from = ids.indexOf(dragCommunityId);
-    const to = ids.indexOf(targetId);
-    if (from < 0 || to < 0) { setDragCommunityId(null); return; }
-    ids.splice(to, 0, ids.splice(from, 1)[0]!);
-    setCommunityOrder(ids);
+    if (!reorderPins(dragCommunityId, targetId)) {
+      const ids = communityList.map((c) => c.id);
+      const from = ids.indexOf(dragCommunityId);
+      const to = ids.indexOf(targetId);
+      if (from >= 0 && to >= 0) { ids.splice(to, 0, ids.splice(from, 1)[0]!); setCommunityOrder(ids); }
+    }
     setDragCommunityId(null);
   };
 
@@ -211,6 +226,7 @@ export default function GuildsSidebar({ activeCommunityId, onSelectCommunity, dm
                 <ContextMenu
                   key={sq.id}
                   items={chatMenu('squad', sq.id, {
+                    name: sq.name,
                     isOwner: isSquadOwner,
                     onInvite: () => { const u = prompt(`Invite to "${sq.name}" — username:`); if (u?.trim()) inviteSquadMember(sq.id, u.trim()); },
                     onLeaveSquad: () => { if (confirm(`Leave "${sq.name}"?`)) leaveSquad(sq.id); },
@@ -254,6 +270,7 @@ export default function GuildsSidebar({ activeCommunityId, onSelectCommunity, dm
             <ContextMenu
               key={c.id}
               items={chatMenu('community', c.id, {
+                name: c.name,
                 isOwner,
                 onCopyInvite: () => navigator.clipboard.writeText(`${window.location.origin}/invite/${c.id}`),
                 onTransfer: () => setTransferCommunity({ id: c.id, name: c.name }),

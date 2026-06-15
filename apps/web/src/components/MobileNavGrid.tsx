@@ -49,6 +49,7 @@ export default function MobileNavGrid({ onSelectCommunity, onSelectSquad, onClos
     if (t.kind === 'squad') {
       const sq = squads.find((s) => s.id === t.id);
       return chatMenu('squad', t.id, {
+        name: t.name,
         isOwner: sq?.ownerPublicKey === myKey,
         onInvite: () => { const u = prompt(`Invite to "${t.name}" — username:`); if (u?.trim()) inviteSquadMember(t.id, u.trim()); },
         onLeaveSquad: () => { if (confirm(`Leave "${t.name}"?`)) leaveSquad(t.id); },
@@ -58,6 +59,7 @@ export default function MobileNavGrid({ onSelectCommunity, onSelectSquad, onClos
     }
     const c: any = communities[t.id];
     return chatMenu('community', t.id, {
+      name: t.name,
       isOwner: c?.ownerPublicKey === myKey,
       onCopyInvite: () => navigator.clipboard.writeText(`${window.location.origin}/invite/${t.id}`),
       onLeaveCommunity: () => { if (confirm(`Leave "${t.name}"?`)) leaveCommunity(t.id); },
