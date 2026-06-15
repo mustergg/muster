@@ -335,7 +335,7 @@ function handleMessage(client: RelayClient, msg: any): void {
   if (PROFILE_TYPES.has(msg.type)) { handleProfileMessage(client, msg, userDB, sendToClient); return; }
   if (FRIEND_TYPES.has(msg.type)) { handleFriendMessage(client, msg, friendDB, userDB, sendToClient, clients); return; }
   if (POST_TYPES.has(msg.type)) { handlePostMessage(client, msg, postDB, communityDB, sendToClient, clients, channels); return; }
-  if (SQUAD_TYPES.has(msg.type)) { handleSquadMessage(client, msg, squadDB, userDB, communityDB, sendToClient, clients); return; }
+  if (SQUAD_TYPES.has(msg.type)) { handleSquadMessage(client, msg, squadDB, userDB, communityDB, groupKeyDB, sendToClient, clients); return; }
   if (VOICE_TYPES.has(msg.type)) { handleVoiceMessage(client, msg, sendToClient, clients); return; }
   if (OWNERSHIP_TYPES.has(msg.type)) { handleOwnershipMessage(client, msg, communityDB, messageDB, userDB, sendToClient, clients, channels); return; }
 
@@ -391,7 +391,7 @@ function handleMessage(client: RelayClient, msg: any): void {
 
 const GROUP_KEY_TYPES = new Set(['GROUP_KEY_REQUEST', 'GROUP_KEY_DISTRIBUTE', 'GROUP_KEY_ROTATE', 'GROUP_CRYPTO_CONFIG']);
 if (GROUP_KEY_TYPES.has(msg.type)) {
-  handleGroupKeyMessage(client, msg, groupKeyDB, communityDB, sendToClient, clients);
+  handleGroupKeyMessage(client, msg, groupKeyDB, communityDB, squadDB, sendToClient, clients);
   return;
 }
 

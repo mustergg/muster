@@ -455,6 +455,9 @@ export const useSquadStore = create<SquadState>((set, get) => ({
           set((s) => ({
             members: { ...s.members, [p.squadId]: (s.members[p.squadId] || []).filter((m) => m.publicKey !== p.publicKey) },
           }));
+          // Owner rotates the key so the member who left/was kicked can no longer
+          // decrypt new messages (forward secrecy).
+          ownerSyncKey(p.squadId);
           break;
         }
         case 'SQUAD_MESSAGE': {

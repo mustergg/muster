@@ -11,6 +11,7 @@
 import { WebSocket } from 'ws';
 import { GroupKeyDB } from './groupKeyDB';
 import { CommunityDB } from './communityDB';
+import { SquadDB } from './squadDB';
 import type { RelayClient } from './types';
 
 export function handleGroupKeyMessage(
@@ -18,20 +19,21 @@ export function handleGroupKeyMessage(
   msg: any,
   groupKeyDB: GroupKeyDB,
   communityDB: CommunityDB,
+  squadDB: SquadDB,
   sendToClient: (client: RelayClient, msg: Record<string, unknown>) => void,
   clients: Map<WebSocket, RelayClient>,
 ): void {
   switch (msg.type) {
-    case 'GROUP_KEY_REQUEST':    handleKeyRequest(client, msg, groupKeyDB, communityDB, sendToClient); break;
-    case 'GROUP_KEY_DISTRIBUTE': handleKeyDistribute(client, msg, groupKeyDB, communityDB, sendToClient); break;
-    case 'GROUP_KEY_ROTATE':     handleKeyRotate(client, msg, groupKeyDB, communityDB, sendToClient, clients); break;
-    case 'GROUP_CRYPTO_CONFIG':  handleCryptoConfig(client, msg, groupKeyDB, communityDB, sendToClient); break;
+    case 'GROUP_KEY_REQUEST':    handleKeyRequest(client, msg, groupKeyDB, communityDB, squadDB, sendToClient); break;
+    case 'GROUP_KEY_DISTRIBUTE': handleKeyDistribute(client, msg, groupKeyDB, communityDB, squadDB, sendToClient); break;
+    case 'GROUP_KEY_ROTATE':     handleKeyRotate(client, msg, groupKeyDB, communityDB, squadDB, sendToClient, clients); break;
+    case 'GROUP_CRYPTO_CONFIG':  handleCryptoConfig(client, msg, groupKeyDB, communityDB, squadDB, sendToClient); break;
   }
 }
 
 function handleKeyRequest(
   client: RelayClient, msg: any,
-  groupKeyDB: GroupKeyDB, communityDB: CommunityDB,
+  groupKeyDB: GroupKeyDB, communityDB: CommunityDB, squadDB: SquadDB,
   sendToClient: (c: RelayClient, m: Record<string, unknown>) => void,
 ): void {
   const { channelId } = msg.payload || {};
@@ -52,7 +54,7 @@ function handleKeyRequest(
   }
 
   // Find when this member joined (for history filtering)
-  const memberJoinedAt = findMemberJoinDate(client.publicKey, channelId, communityDB);
+  const memberJoinedAt = findMemberJoinDate(client.publicKey, channelId, communityDB, squadDB);
 
   // Get filtered bundles based on history access policy
   const bundles = groupKeyDB.getBundlesForUserFiltered(channelId, client.publicKey, config, memberJoinedAt);
@@ -83,14 +85,14 @@ function handleKeyRequest(
 
 function handleKeyDistribute(
   client: RelayClient, msg: any,
-  groupKeyDB: GroupKeyDB, communityDB: CommunityDB,
+  groupKeyDB: GroupKeyDB, communityDB: CommunityDB, squadDB: SquadDB,
   sendToClient: (c: RelayClient, m: Record<string, unknown>) => void,
 ): void {
   const { channelId, epoch, bundles, distributorPublicKey } = msg.payload || {};
   if (!channelId || !bundles || !Array.isArray(bundles)) return;
 
   // Verify client is owner or admin of the community containing this channel
-  if (!isChannelAdmin(client.publicKey, channelId, communityDB)) {
+  if (!isChannelAdmin(client.publicKey, channelId, communityDB, squadDB)) {
     sendToClient(client, {
       type: 'ERROR',
       payload: { code: 'FORBIDDEN', message: 'Only owner/admin can distribute group keys' },
@@ -134,14 +136,14 @@ function handleKeyDistribute(
 
 function handleKeyRotate(
   client: RelayClient, msg: any,
-  groupKeyDB: GroupKeyDB, communityDB: CommunityDB,
+  groupKeyDB: GroupKeyDB, communityDB: CommunityDB, squadDB: SquadDB,
   sendToClient: (c: RelayClient, m: Record<string, unknown>) => void,
   allClients: Map<WebSocket, RelayClient>,
 ): void {
   const { channelId, reason, bundles, distributorPublicKey } = msg.payload || {};
   if (!channelId || !bundles || !Array.isArray(bundles)) return;
 
-  if (!isChannelAdmin(client.publicKey, channelId, communityDB)) {
+  if (!isChannelAdmin(client.publicKey, channelId, communityDB, squadDB)) {
     sendToClient(client, {
       type: 'ERROR',
       payload: { code: 'FORBIDDEN', message: 'Only owner/admin can rotate group keys' },
@@ -199,13 +201,13 @@ function handleKeyRotate(
 
 function handleCryptoConfig(
   client: RelayClient, msg: any,
-  groupKeyDB: GroupKeyDB, communityDB: CommunityDB,
+  groupKeyDB: GroupKeyDB, communityDB: CommunityDB, squadDB: SquadDB,
   sendToClient: (c: RelayClient, m: Record<string, unknown>) => void,
 ): void {
   const { channelId, communityId, enabled, historyAccess, historyFromDate } = msg.payload || {};
   if (!channelId) return;
 
-  if (!isChannelAdmin(client.publicKey, channelId, communityDB)) {
+  if (!isChannelAdmin(client.publicKey, channelId, communityDB, squadDB)) {
     sendToClient(client, {
       type: 'ERROR',
       payload: { code: 'FORBIDDEN', message: 'Only owner/admin can configure channel encryption' },
@@ -229,34 +231,45 @@ function handleCryptoConfig(
 // Helpers
 // =================================================================
 
-function isChannelAdmin(publicKey: string, channelId: string, communityDB: CommunityDB): boolean {
-  // Find which community this channel belongs to
+function communityStaff(publicKey: string, communityId: string, communityDB: CommunityDB): boolean {
+  const community = communityDB.getCommunity(communityId);
+  if (!community) return false;
+  if (community.ownerPublicKey === publicKey) return true;
+  const member = communityDB.getMembers(communityId).find((m) => m.publicKey === publicKey);
+  return member?.role === 'admin' || member?.role === 'owner';
+}
+
+function isChannelAdmin(publicKey: string, channelId: string, communityDB: CommunityDB, squadDB: SquadDB): boolean {
+  // Community channel: owner/admin of the owning community.
   const allCommunities = communityDB.getAllCommunityIds();
   for (const cid of allCommunities) {
     const channels = communityDB.getChannels(cid);
     if (channels.some((ch) => ch.id === channelId)) {
-      const community = communityDB.getCommunity(cid);
-      if (!community) return false;
-      // Owner always has permission
-      if (community.ownerPublicKey === publicKey) return true;
-      // Check for admin role
-      const members = communityDB.getMembers(cid);
-      const member = members.find((m) => m.publicKey === publicKey);
-      return member?.role === 'admin' || member?.role === 'owner';
+      return communityStaff(publicKey, cid, communityDB);
+    }
+  }
+  // Squad: channelId is the squadId. The squad owner, or staff of its parent
+  // community, may manage the squad's group key.
+  const squad = squadDB.getSquad(channelId);
+  if (squad) {
+    if (squad.ownerPublicKey === publicKey) return true;
+    if (squad.communityId && !squad.communityId.startsWith('personal:')) {
+      return communityStaff(publicKey, squad.communityId, communityDB);
     }
   }
   return false;
 }
 
-function findMemberJoinDate(publicKey: string, channelId: string, communityDB: CommunityDB): number {
+function findMemberJoinDate(publicKey: string, channelId: string, communityDB: CommunityDB, squadDB: SquadDB): number {
   const allCommunities = communityDB.getAllCommunityIds();
   for (const cid of allCommunities) {
     const channels = communityDB.getChannels(cid);
     if (channels.some((ch) => ch.id === channelId)) {
-      const members = communityDB.getMembers(cid);
-      const member = members.find((m) => m.publicKey === publicKey);
+      const member = communityDB.getMembers(cid).find((m) => m.publicKey === publicKey);
       return member?.joinedAt || 0;
     }
   }
+  const squad = squadDB.getSquad(channelId);
+  if (squad) return squadDB.getMember(channelId, publicKey)?.joinedAt || 0;
   return 0;
 }

@@ -9,6 +9,7 @@
 import { SquadDB } from './squadDB';
 import { UserDB } from './userDB';
 import { CommunityDB } from './communityDB';
+import { GroupKeyDB } from './groupKeyDB';
 import type { RelayClient } from './types';
 import { WebSocket } from 'ws';
 
@@ -75,6 +76,7 @@ export function handleSquadMessage(
   squadDB: SquadDB,
   userDB: UserDB,
   communityDB: CommunityDB,
+  groupKeyDB: GroupKeyDB,
   sendToClient: (client: RelayClient, msg: Record<string, unknown>) => void,
   clients: Map<WebSocket, RelayClient>,
 ): void {
@@ -84,8 +86,8 @@ export function handleSquadMessage(
     case 'GET_SQUADS':            handleGetSquads(client, msg, squadDB, communityDB, sendToClient); break;
     case 'GET_MY_SQUADS':         handleGetMySquads(client, squadDB, sendToClient); break;
     case 'INVITE_TO_SQUAD':       handleInvite(client, msg, squadDB, userDB, sendToClient, clients); break;
-    case 'LEAVE_SQUAD':           handleLeave(client, msg, squadDB, sendToClient); break;
-    case 'KICK_FROM_SQUAD':       handleKick(client, msg, squadDB, sendToClient, clients); break;
+    case 'LEAVE_SQUAD':           handleLeave(client, msg, squadDB, groupKeyDB, sendToClient); break;
+    case 'KICK_FROM_SQUAD':       handleKick(client, msg, squadDB, groupKeyDB, sendToClient, clients); break;
     case 'DELETE_SQUAD':          handleDelete(client, msg, squadDB, sendToClient); break;
     case 'DETACH_SQUAD':          handleDetach(client, msg, squadDB, communityDB, sendToClient); break;
     case 'GET_SQUAD_MEMBERS':     handleGetMembers(client, msg, squadDB, sendToClient); break;
@@ -282,7 +284,7 @@ function handleInvite(
 }
 
 function handleLeave(
-  client: RelayClient, msg: any, squadDB: SquadDB,
+  client: RelayClient, msg: any, squadDB: SquadDB, groupKeyDB: GroupKeyDB,
   sendToClient: (c: RelayClient, m: Record<string, unknown>) => void,
 ): void {
   const { squadId } = msg.payload || {};
@@ -302,12 +304,16 @@ function handleLeave(
   // Unsubscribe from squad channel
   squadChannels.get(squadId)?.delete(client.ws);
 
+  // Revoke: drop the leaver's stored key bundles so they can't re-fetch the key.
+  // The owner rotates to a new epoch (client-side) for forward secrecy.
+  groupKeyDB.deleteBundlesForUser(squadId, client.publicKey);
+
   sendToClient(client, { type: 'SQUAD_RESULT', payload: { action: 'LEAVE_SQUAD', success: true, message: 'Left the squad.' }, timestamp: Date.now() });
   broadcastToSquad(squadId, { type: 'SQUAD_MEMBER_LEFT', payload: { squadId, publicKey: client.publicKey }, timestamp: Date.now() });
 }
 
 function handleKick(
-  client: RelayClient, msg: any, squadDB: SquadDB,
+  client: RelayClient, msg: any, squadDB: SquadDB, groupKeyDB: GroupKeyDB,
   sendToClient: (c: RelayClient, m: Record<string, unknown>) => void,
   clients: Map<WebSocket, RelayClient>,
 ): void {
@@ -341,6 +347,9 @@ function handleKick(
 
   const removed = squadDB.removeMember(squadId, publicKey);
   if (!removed) return;
+
+  // Revoke the kicked member's stored key bundles (owner rotates client-side).
+  groupKeyDB.deleteBundlesForUser(squadId, publicKey);
 
   sendToClient(client, { type: 'SQUAD_RESULT', payload: { action: 'KICK_FROM_SQUAD', success: true, message: 'Member removed from squad.' }, timestamp: Date.now() });
   broadcastToSquad(squadId, { type: 'SQUAD_MEMBER_LEFT', payload: { squadId, publicKey }, timestamp: Date.now() });
