@@ -12,6 +12,7 @@ import { SUPPORTED_LOCALES, setLocale, getStoredLocale, type SupportedLocale } f
 import { useReadReceiptStore } from '../stores/readReceiptStore.js';
 import { useLayoutPref } from '../stores/layoutPrefStore.js';
 import { useTextScale, TEXT_SCALES } from '../stores/textScaleStore.js';
+import { useIdlePref } from '../stores/idlePrefStore.js';
 
 export default function GeneralSettings(): React.JSX.Element {
   const { t, i18n } = useTranslation();
@@ -22,6 +23,8 @@ export default function GeneralSettings(): React.JSX.Element {
   const setForceMobile = useLayoutPref((st) => st.setForceMobile);
   const textScale = useTextScale((st) => st.scale);
   const setTextScale = useTextScale((st) => st.setScale);
+  const idleMinutes = useIdlePref((st) => st.idleMinutes);
+  const setIdleMinutes = useIdlePref((st) => st.setIdleMinutes);
 
   const pick = (loc: SupportedLocale): void => { void setLocale(loc); };
 
@@ -52,6 +55,28 @@ export default function GeneralSettings(): React.JSX.Element {
             ))}
           </div>
           <div style={s.note}>{t('settings.languageNote')}</div>
+        </div>
+
+        <div style={s.section}>
+          <div style={s.sectionTitle}>Idle / away</div>
+          <div style={s.scaleRow}>
+            {[0, 5, 10, 15, 30, 60].map((m) => (
+              <button
+                key={m}
+                onClick={() => setIdleMinutes(m)}
+                style={{
+                  ...s.scaleBtn,
+                  minWidth: '52px',
+                  fontSize: '13px',
+                  borderColor: idleMinutes === m ? 'var(--color-accent)' : 'var(--color-border)',
+                  background: idleMinutes === m ? 'var(--color-accent-dim, rgba(46,117,182,0.1))' : 'var(--color-bg-secondary)',
+                }}
+              >
+                {m === 0 ? 'Off' : `${m}m`}
+              </button>
+            ))}
+          </div>
+          <div style={s.note}>Go "idle" automatically after this long without activity on this device (Off = never). Whichever of your devices you used most recently sets your shown status.</div>
         </div>
 
         <div style={s.section}>

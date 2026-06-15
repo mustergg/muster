@@ -34,4 +34,9 @@ export interface RelayClient {
 
   /** Free-text mood / activity line (Rich Presence placeholder). */
   mood?: string;
+
+  /** Client-reported last user-activity time (ms). Used to pick the
+   *  most-recently-used device when the same account is online on several,
+   *  so presence shows one entry with the freshest device's status. */
+  lastActivity?: number;
 }

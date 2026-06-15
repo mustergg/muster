@@ -437,6 +437,7 @@ async function handleAuth(client: RelayClient, msg: any): Promise<void> {
 
   client.authenticated = true; client.publicKey = publicKey; client.username = username;
   if (!client.status) client.status = 'online';
+  client.lastActivity = Date.now();
   const user = userDB.ensureUser(publicKey, username);
   console.log(`[relay] Auth OK: ${username} (${publicKey.slice(0, 12)}...) tier=${user.tier} mode=${authMode || 'legacy'}`);
   sendToClient(client, { type: 'AUTH_RESULT', payload: { success: true }, timestamp: Date.now() });
@@ -449,11 +450,22 @@ function handleUnsubscribe(client: RelayClient, msg: any): void { for (const ch 
 /** User changed availability / mood. Persist on the connection and refresh
  *  presence everywhere this client is visible (channels + squads). */
 function handleSetUserStatus(client: RelayClient, msg: any): void {
-  const { status, mood } = msg.payload || {};
+  const { status, mood, lastActivity, manual } = msg.payload || {};
   const allowed = new Set(['online', 'idle', 'dnd', 'invisible']);
   if (typeof status === 'string' && allowed.has(status)) client.status = status;
   if (typeof mood === 'string') client.mood = mood.slice(0, 120);
   else if (mood === null) client.mood = undefined;
+  client.lastActivity = typeof lastActivity === 'number' ? lastActivity : Date.now();
+
+  // A manual status change propagates to the user's OTHER open clients so every
+  // device reflects it. They apply it without re-flagging it manual (no loop).
+  if (manual && client.publicKey) {
+    const sync = JSON.stringify({ type: 'STATUS_SYNC', payload: { status: client.status, mood: client.mood ?? null }, timestamp: Date.now() });
+    for (const [ws, c] of clients) {
+      if (c.authenticated && c.publicKey === client.publicKey && ws !== client.ws && ws.readyState === WebSocket.OPEN) ws.send(sync);
+    }
+  }
+
   for (const ch of client.channels) broadcastPresence(ch);
   broadcastSquadPresenceForWs(client.ws, clients);
 }
@@ -556,10 +568,17 @@ function handleSyncRequest(client: RelayClient, msg: any): void {
 
 function broadcastPresence(channelId: string): void {
   const subs = channels.get(channelId); if (!subs) return;
-  const users: Array<{ publicKey: string; username: string; status: string; mood?: string }> = [];
+  // Dedupe by public key: a user logged in on several devices appears once,
+  // showing the status of the most-recently-used device (max lastActivity).
+  const byKey = new Map<string, RelayClient>();
   for (const ws of subs) {
     const c = clients.get(ws);
     if (!c?.authenticated) continue;
+    const prev = byKey.get(c.publicKey);
+    if (!prev || (c.lastActivity || 0) > (prev.lastActivity || 0)) byKey.set(c.publicKey, c);
+  }
+  const users: Array<{ publicKey: string; username: string; status: string; mood?: string }> = [];
+  for (const c of byKey.values()) {
     const status = c.status || 'online';
     if (status === 'invisible') continue; // masked — appears offline to others
     users.push({ publicKey: c.publicKey, username: c.username, status, mood: c.mood });

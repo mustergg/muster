@@ -47,10 +47,16 @@ export function forwardToSquad(squadId: string, msg: Record<string, unknown>, ex
 export function broadcastSquadPresence(squadId: string, clients: Map<WebSocket, RelayClient>): void {
   const subs = squadChannels.get(squadId);
   if (!subs) return;
-  const online: Array<{ publicKey: string; username: string; status: string; mood?: string }> = [];
+  // Dedupe by public key — most-recently-used device's status wins.
+  const byKey = new Map<string, RelayClient>();
   for (const ws of subs) {
     const c = clients.get(ws);
     if (!c?.authenticated) continue;
+    const prev = byKey.get(c.publicKey);
+    if (!prev || (c.lastActivity || 0) > (prev.lastActivity || 0)) byKey.set(c.publicKey, c);
+  }
+  const online: Array<{ publicKey: string; username: string; status: string; mood?: string }> = [];
+  for (const c of byKey.values()) {
     const status = c.status || 'online';
     if (status === 'invisible') continue; // masked
     // Ghost (community-staff) members are hidden from presence — they show in
