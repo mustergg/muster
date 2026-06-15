@@ -23,7 +23,7 @@ interface Props {
   /** Called after the user joins the squad's parent community. */
   onJoinCommunity?: (communityId: string) => void;
   /** Open a DM with a member (gated to verified accounts). */
-  onOpenDM?: (publicKey: string) => void;
+  onOpenDM?: (publicKey: string, username?: string) => void;
   /** Mobile drawer variant: full width, no internal user panel (it's global). */
   mobile?: boolean;
 }
@@ -49,7 +49,7 @@ export default function SquadSidebar({ squadId, activeMode, onSelectMode, onJoin
     { label: `Mention @${username}`, icon: '@', onClick: () => mention(username) },
     ...(publicKey !== myKey ? [{ label: 'Send DM', icon: '\u{1F4AC}', onClick: () => {
       if (!canDM) { alert('Verify your email to start direct messages.'); return; }
-      onOpenDM?.(publicKey);
+      onOpenDM?.(publicKey, username);
     } }] : []),
   ];
   const squads = useSquadStore((s) => s.squads);

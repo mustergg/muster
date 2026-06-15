@@ -70,8 +70,11 @@ export default function ComposerBar(props: Props): React.JSX.Element {
     if (handleMentionBackspace(e, value, onChange)) return;
     if (e.key === 'Escape') { e.preventDefault(); onClear(); return; }
     if (e.key === 'Enter') {
-      if (isMobile) return;                 // mobile: Enter = newline; send via button
-      if (!e.shiftKey) { e.preventDefault(); submit(); } // desktop: Enter sends, Shift+Enter newline
+      // A physical Enter reports e.code ('Enter'/'NumpadEnter'); the mobile
+      // virtual keyboard's Enter usually has an empty code → treat as newline.
+      const physical = e.code === 'Enter' || e.code === 'NumpadEnter';
+      if (isMobile && !physical) return;    // virtual keyboard: newline, send via button
+      if (!e.shiftKey) { e.preventDefault(); submit(); } // Enter sends, Shift+Enter newline
     }
   };
 

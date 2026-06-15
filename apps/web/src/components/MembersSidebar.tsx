@@ -8,7 +8,7 @@ import ContextMenu from './ContextMenu.js';
 
 interface Props {
   communityId: string | null;
-  onOpenDM?: (publicKey: string) => void;
+  onOpenDM?: (publicKey: string, username?: string) => void;
   /** Mobile drawer variant: full width. */
   mobile?: boolean;
 }
@@ -27,9 +27,9 @@ export default function MembersSidebar({ communityId, onOpenDM, mobile }: Props)
   const mention = useComposerStore((s) => s.mention);
   const canDM = accountInfo?.emailVerified ?? false;
 
-  const startDM = (key: string): void => {
+  const startDM = (key: string, username?: string): void => {
     if (!canDM) { alert('Verify your email to start direct messages.'); return; }
-    onOpenDM?.(key);
+    onOpenDM?.(key, username);
   };
 
   const members = communityId ? (onlineMembers[communityId] ?? []) : [];
@@ -51,7 +51,7 @@ export default function MembersSidebar({ communityId, onOpenDM, mobile }: Props)
               const dotColor = statusMeta(m.status).color;
               const menuItems = [
                 { label: `Mention @${m.username}`, icon: '@', onClick: () => mention(m.username) },
-                ...(!isMe ? [{ label: 'Send DM', icon: '\u{1F4AC}', onClick: () => startDM(key) }] : []),
+                ...(!isMe ? [{ label: 'Send DM', icon: '\u{1F4AC}', onClick: () => startDM(key, m.username) }] : []),
               ];
               return (
                 <ContextMenu key={key} items={menuItems}>
@@ -72,7 +72,7 @@ export default function MembersSidebar({ communityId, onOpenDM, mobile }: Props)
                     </div>
                     {!isMe && (
                       <button
-                        onClick={(e) => { e.stopPropagation(); startDM(key); }}
+                        onClick={(e) => { e.stopPropagation(); startDM(key, m.username); }}
                         style={styles.dmBtn}
                         title={`DM ${m.username}`}
                       >

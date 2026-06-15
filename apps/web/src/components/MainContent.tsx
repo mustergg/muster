@@ -26,7 +26,7 @@ interface Props {
   squadMode: SquadRoom;
   activeCommunityId: string | null;
   activeDMPartner: string | null;
-  onOpenDM: (publicKey: string) => void;
+  onOpenDM: (publicKey: string, username?: string) => void;
 }
 
 export default function MainContent({

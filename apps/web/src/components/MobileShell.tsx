@@ -51,7 +51,7 @@ interface Props {
   onSelectChannel: (communityId: string, channelId: string, channelName: string) => void;
   onSelectDMPartner: (publicKey: string) => void;
   onSelectSquadMode: (mode: SquadRoom) => void;
-  onOpenDM: (publicKey: string) => void;
+  onOpenDM: (publicKey: string, username?: string) => void;
 }
 
 const SWIPE_MIN = 60;     // px of horizontal travel to count as a swipe

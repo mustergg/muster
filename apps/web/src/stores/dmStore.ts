@@ -86,7 +86,7 @@ interface DMState {
   sendDMFile: (recipientPublicKey: string, file: File) => Promise<string>;
   /** R25: fetch + decrypt a DM attachment, attach its object URL. */
   fetchDMAttachment: (partnerPublicKey: string, messageId: string) => Promise<void>;
-  openConversation: (publicKey: string) => void;
+  openConversation: (publicKey: string, username?: string) => void;
   loadConversations: () => void;
   setActiveConversation: (publicKey: string | null) => void;
   clearConversation: (publicKey: string) => void;
@@ -303,13 +303,15 @@ export const useDMStore = create<DMState>((set, get) => ({
     }
   },
 
-  openConversation: (publicKey) => {
-    set((state) => ({
-      activeConversation: publicKey,
-      conversations: state.conversations.map((c) =>
-        c.publicKey === publicKey ? { ...c, unreadCount: 0 } : c
-      ),
-    }));
+  openConversation: (publicKey, username) => {
+    set((state) => {
+      const exists = state.conversations.some((c) => c.publicKey === publicKey);
+      const conversations = exists
+        ? state.conversations.map((c) => c.publicKey === publicKey ? { ...c, unreadCount: 0, username: username || c.username } : c)
+        // New/empty chat: add a stub so it shows in the DM list right away.
+        : [{ publicKey, username: username || (publicKey.slice(0, 8) + '…'), lastMessage: '', lastTimestamp: Date.now(), unreadCount: 0 }, ...state.conversations];
+      return { activeConversation: publicKey, conversations };
+    });
 
     // Load cached history from the local DB first so conversations persist
     // across reloads — including the Node Bot, which the relay does not store.

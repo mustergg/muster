@@ -119,13 +119,12 @@ export default function MainLayout(): React.JSX.Element {
     return () => usePieceCacheStore.getState().shutdown();
   }, []);
 
-  const handleOpenDM = (publicKey: string) => { setViewMode('dm'); setActiveDMPartner(publicKey); setActiveSquad(null); };
+  const handleOpenDM = (publicKey: string, username?: string) => { useDMStore.getState().openConversation(publicKey, username); setViewMode('dm'); setActiveDMPartner(publicKey); setActiveSquad(null); };
   const handleSelectDM = () => { setViewMode('dm'); setActiveCommunityId(null); setActive(null); setActiveSquad(null); };
   const handleSelectFriends = () => { setViewMode('friends'); setActiveCommunityId(null); setActive(null); setActiveDMPartner(null); setActiveSquad(null); };
-  const handleSelectCommunity = (id: string) => { useChatPrefs.getState().touch(id); setViewMode('community'); setActiveCommunityId(id); setActiveDMPartner(null); setActiveSquad(null); };
+  const handleSelectCommunity = (id: string) => { setViewMode('community'); setActiveCommunityId(id); setActiveDMPartner(null); setActiveSquad(null); };
   const handleSelectSettings = () => { setViewMode('settings'); setActiveCommunityId(null); setActive(null); setActiveDMPartner(null); setActiveSquad(null); };
   const handleSelectSquad = (squadId: string) => {
-    useChatPrefs.getState().touch(squadId);
     const squad = useSquadStore.getState().allMySquads().find((s) => s.id === squadId);
     const cid = squad?.communityId || '';
     // Member of the parent community? Only members get the in-community view

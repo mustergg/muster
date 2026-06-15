@@ -15,7 +15,7 @@ import React, { useState, useEffect } from 'react';
 import { useFriendStore } from '../stores/friendStore.js';
 
 interface Props {
-  onOpenDM?: (publicKey: string) => void;
+  onOpenDM?: (publicKey: string, username?: string) => void;
 }
 
 type Tab = 'friends' | 'requests' | 'blocked';
@@ -149,7 +149,7 @@ export default function FriendsPanel({ onOpenDM }: Props): React.JSX.Element {
                     {'\u{1F464}'}
                   </button>
                   <button
-                    onClick={() => onOpenDM?.(f.publicKey)}
+                    onClick={() => onOpenDM?.(f.publicKey, f.username)}
                     style={styles.btnAccept}
                     title="Send message"
                   >
