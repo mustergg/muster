@@ -80,6 +80,9 @@ interface SealedDmPayload {
   /** self-copy only: the actual recipient pubkey (hex), so our other devices
    *  file the message into the right conversation. */
   r?: string;
+  /** history request: ask the peer to re-send conversation messages older than
+   *  this timestamp (ms). Presence marks the frame as a request, not a message. */
+  q?: number;
 }
 
 export interface BuiltDmFrame {
@@ -103,8 +106,15 @@ export function buildSealedDmFrame(args: {
   nowMs?: number;
   /** Self-copy: tag the actual recipient so our own other devices route it. */
   recipientTagHex?: string;
+  /** History request: ask the recipient to re-send messages older than this ms. */
+  historyBefore?: number;
+  /** Override the *displayed* timestamp (payload.t) while the inbox window is
+   *  still derived from `nowMs`. Used to re-seal old history into a fresh frame
+   *  so it routes to a current inbox window but keeps its original timestamp. */
+  displayTs?: number;
 }): BuiltDmFrame | null {
   const now = args.nowMs ?? Date.now();
+  const displayTs = args.displayTs ?? now;
   const recipientEdPub = fromHex(args.recipientEdPubHex);
   const inbox = inboxHash(recipientEdPub, inboxWindowStart(now));
 
@@ -113,10 +123,11 @@ export function buildSealedDmFrame(args: {
   const shared = computeSharedSecret(ephemeral.privateKey, recipientX);
   const key = deriveSealedDmKey(shared, inbox);
 
-  const payload: SealedDmPayload = { i: args.messageId, s: args.senderEdPubHex, c: args.content, t: now };
+  const payload: SealedDmPayload = { i: args.messageId, s: args.senderEdPubHex, c: args.content, t: displayTs };
   if (args.senderUsername) payload.u = args.senderUsername;
   if (args.attachment) payload.a = args.attachment;
   if (args.recipientTagHex) payload.r = args.recipientTagHex;
+  if (typeof args.historyBefore === 'number') payload.q = args.historyBefore;
   const plaintext = encodeCanonical(payload as unknown as CborValue);
 
   const { nonce, ciphertext } = sealBytes(key, new Uint8Array(plaintext));
@@ -147,7 +158,7 @@ export function buildSealedDmFrame(args: {
 export function openSealedDmFrame(
   frameCborB64: string,
   myEdSeed: Uint8Array,
-): { messageId: string; senderPubkey: string; senderUsername?: string; content: string; ts: number; attachment?: SealedDmAttachment; recipient?: string } | null {
+): { messageId: string; senderPubkey: string; senderUsername?: string; content: string; ts: number; attachment?: SealedDmAttachment; recipient?: string; historyBefore?: number } | null {
   let frame: DmFrame;
   try {
     const bytes = b64ToBytes(frameCborB64);
@@ -162,7 +173,7 @@ export function openSealedDmFrame(
     const plain = openBytes(key, frame.nonce, frame.ciphertext);
     const payload = decodeCanonical(plain) as unknown as SealedDmPayload;
     if (!payload || typeof payload.c !== 'string' || typeof payload.s !== 'string') return null;
-    return { messageId: payload.i, senderPubkey: payload.s, senderUsername: payload.u, content: payload.c, ts: payload.t, attachment: payload.a, recipient: payload.r };
+    return { messageId: payload.i, senderPubkey: payload.s, senderUsername: payload.u, content: payload.c, ts: payload.t, attachment: payload.a, recipient: payload.r, historyBefore: payload.q };
   } catch {
     return null;
   }

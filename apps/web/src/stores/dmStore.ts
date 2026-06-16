@@ -184,6 +184,75 @@ function sendInboxSubscribe(): void {
   }
 }
 
+// ── Phase C — peer-device history sync ──────────────────────────────────────
+// The relay's blind cache only keeps 30 days. For older history we ask the
+// *partner's* online devices to re-send the conversation. The request is a
+// sealed frame (content empty, `q` = "older than this ms") to the partner's
+// inbox; the partner answers by re-sealing its cached messages back to us.
+
+const HIST_RESPONSE_CAP = 300;        // max messages re-sent per request
+const histReqAt: Record<string, number> = {}; // per-partner throttle
+
+/** Ask `publicKey`'s devices for conversation history older than `before`. */
+function sendPeerHistoryReq(publicKey: string, before: number): void {
+  const network = useNetworkStore.getState();
+  if (!network.transport?.isConnected || !network.publicKey) return;
+  const now = Date.now();
+  if (now - (histReqAt[publicKey] || 0) < 30_000) return; // throttle re-opens
+  histReqAt[publicKey] = now;
+  try {
+    const built = buildSealedDmFrame({
+      recipientEdPubHex: publicKey,
+      senderEdPubHex: network.publicKey,
+      senderUsername: network.username,
+      messageId: 'hq-' + Math.random().toString(36).slice(2),
+      content: '',
+      nowMs: now,
+      historyBefore: before > 0 ? before : now,
+    });
+    if (built) network.transport.send({ type: 'DM_FRAME', payload: { cbor: built.cborB64 }, timestamp: now });
+  } catch (err) {
+    console.warn('[dm] history request failed:', err);
+  }
+}
+
+/** A partner asked us for older history — re-seal our cached messages back to
+ *  them (current inbox window, original timestamps preserved). Text only:
+ *  attachment blob keys aren't re-derivable from the local cache. */
+function respondPeerHistory(requesterKey: string, before: number): void {
+  const network = useNetworkStore.getState();
+  const myKey = network.publicKey;
+  if (!network.transport?.isConnected || !myKey || requesterKey === myKey) return;
+  const channelKey = `dm:${[myKey, requesterKey].sort().join(':')}`;
+  void dmDB.getMessages(channelKey).then((dbMsgs) => {
+    if (!dbMsgs || !dbMsgs.length) return;
+    const older = dbMsgs
+      .filter((m) => m.timestamp < before && !!m.content)
+      .sort((a, b) => b.timestamp - a.timestamp)   // newest-of-the-old first (pagination)
+      .slice(0, HIST_RESPONSE_CAP);
+    const now = Date.now();
+    for (const m of older) {
+      const sender = m.senderPublicKey;
+      const counterpart = sender === myKey ? requesterKey : myKey;
+      const plain = tryDecryptDM(m.content, sender, counterpart, myKey);
+      if (!plain) continue;
+      const built = buildSealedDmFrame({
+        recipientEdPubHex: requesterKey,   // encrypt to the requester
+        senderEdPubHex: sender,            // preserve original author
+        senderUsername: m.senderUsername,
+        messageId: m.messageId,
+        content: plain,
+        nowMs: now,                        // route to a *current* inbox window
+        displayTs: m.timestamp,            // but keep the original timestamp
+        // If we're re-sending the requester's *own* old message, tag it with our
+        // key so their device files it back under this conversation.
+        recipientTagHex: sender === requesterKey ? myKey : undefined,
+      });
+      if (built) network.transport!.send({ type: 'DM_FRAME', payload: { cbor: built.cborB64 }, timestamp: now });
+    }
+  }).catch(() => { /* ignore */ });
+}
+
 export const useDMStore = create<DMState>((set, get) => ({
   messages: {},
   conversations: [],
@@ -374,21 +443,27 @@ export const useDMStore = create<DMState>((set, get) => ({
     const channelKey = `dm:${[myKey, publicKey].sort().join(':')}`;
     const clearedAt = clearedAtFor(publicKey);
     dmDB.getMessages(channelKey).then((dbMsgs) => {
-      if (!dbMsgs || dbMsgs.length === 0) return;
-      const cached: DMMessage[] = dbMsgs.filter((m) => m.timestamp > clearedAt).map((m) => ({
-        messageId: m.messageId,
-        content: tryDecryptDM(m.content, m.senderPublicKey, publicKey, myKey),
-        senderPublicKey: m.senderPublicKey, senderUsername: m.senderUsername,
-        recipientPublicKey: m.senderPublicKey === myKey ? publicKey : myKey,
-        timestamp: m.timestamp, isOwn: m.senderPublicKey === myKey,
-        encrypted: isE2EEncrypted(m.content),
-      }));
-      set((state) => {
-        const existing = state.messages[publicKey] || [];
-        const ids = new Set(existing.map((x) => x.messageId));
-        const merged = [...existing, ...cached.filter((x) => !ids.has(x.messageId))].sort((a, b) => a.timestamp - b.timestamp);
-        return { messages: { ...state.messages, [publicKey]: merged } };
-      });
+      let oldest = Date.now();
+      if (dbMsgs && dbMsgs.length > 0) {
+        const cached: DMMessage[] = dbMsgs.filter((m) => m.timestamp > clearedAt).map((m) => ({
+          messageId: m.messageId,
+          content: tryDecryptDM(m.content, m.senderPublicKey, publicKey, myKey),
+          senderPublicKey: m.senderPublicKey, senderUsername: m.senderUsername,
+          recipientPublicKey: m.senderPublicKey === myKey ? publicKey : myKey,
+          timestamp: m.timestamp, isOwn: m.senderPublicKey === myKey,
+          encrypted: isE2EEncrypted(m.content),
+        }));
+        if (cached.length) oldest = Math.min(...cached.map((c) => c.timestamp));
+        set((state) => {
+          const existing = state.messages[publicKey] || [];
+          const ids = new Set(existing.map((x) => x.messageId));
+          const merged = [...existing, ...cached.filter((x) => !ids.has(x.messageId))].sort((a, b) => a.timestamp - b.timestamp);
+          return { messages: { ...state.messages, [publicKey]: merged } };
+        });
+      }
+      // Phase C: pull history older than our oldest cached message from the
+      // partner's devices (covers the gap beyond the relay's 30-day cache).
+      sendPeerHistoryReq(publicKey, oldest);
     }).catch(() => { /* ignore cache errors */ });
 
     const network = useNetworkStore.getState();
@@ -676,6 +751,13 @@ export const useDMStore = create<DMState>((set, get) => ({
           if (!kp) break;
           const opened = openSealedDmFrame(frameB64, kp.privateKey);
           if (!opened) break; // not for us / corrupt
+          // Phase C: a peer asking us for older history — answer, don't render.
+          if (typeof opened.historyBefore === 'number') {
+            if (opened.senderPubkey && opened.senderPubkey !== myKey) {
+              respondPeerHistory(opened.senderPubkey, opened.historyBefore);
+            }
+            break;
+          }
           const fromMe = opened.senderPubkey === myKey;
           // For a self-copy (we sent it), the conversation partner is in `recipient`.
           const otherKey = fromMe ? opened.recipient : opened.senderPubkey;
