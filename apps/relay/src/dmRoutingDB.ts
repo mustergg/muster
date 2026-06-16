@@ -77,8 +77,24 @@ function initDmRoutingTables(db: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_orphan_inbox ON orphan_dm (inboxHashHex, ts);
     CREATE INDEX IF NOT EXISTS idx_orphan_ts    ON orphan_dm (ts);
+
+    -- Blind 30-day DM history per inbox hash (for cross-device backfill). The
+    -- relay never sees sender/recipient/content — only the rotating inbox hash
+    -- and the sealed frame.
+    CREATE TABLE IF NOT EXISTS dm_history (
+      dmId         TEXT PRIMARY KEY,
+      inboxHashHex TEXT NOT NULL,
+      frameCBOR    BLOB NOT NULL,
+      ts           INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_dmhist_inbox ON dm_history (inboxHashHex, ts);
+    CREATE INDEX IF NOT EXISTS idx_dmhist_ts    ON dm_history (ts);
   `);
 }
+
+/** Blind DM history retention + per-inbox cap. */
+const DM_HISTORY_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+const DM_HISTORY_LIMIT = 5000; // frames per inbox hash
 
 export class DmRoutingDB {
   private db: Database.Database;
@@ -197,6 +213,35 @@ export class DmRoutingDB {
   pruneExpiredOrphans(now = Date.now()): number {
     return this.db.prepare(`DELETE FROM orphan_dm WHERE (? - ts) > ?`)
       .run(now, DM_ORPHAN_TTL_MS).changes;
+  }
+
+  // ── Blind 30-day history (cross-device backfill) ────────────────────────
+
+  insertHistory(row: { dmId: string; inboxHashHex: string; frameCBOR: Buffer; ts: number }): void {
+    const count = this.db.prepare(`SELECT COUNT(*) AS n FROM dm_history WHERE inboxHashHex = ?`)
+      .get(row.inboxHashHex) as { n: number };
+    if (count.n >= DM_HISTORY_LIMIT) {
+      this.db.prepare(`
+        DELETE FROM dm_history WHERE dmId IN (
+          SELECT dmId FROM dm_history WHERE inboxHashHex = ? ORDER BY ts ASC LIMIT ?
+        )
+      `).run(row.inboxHashHex, count.n - DM_HISTORY_LIMIT + 1);
+    }
+    this.db.prepare(`
+      INSERT OR IGNORE INTO dm_history (dmId, inboxHashHex, frameCBOR, ts) VALUES (?, ?, ?, ?)
+    `).run(row.dmId, row.inboxHashHex, row.frameCBOR, row.ts);
+  }
+
+  /** Frames for an inbox hash newer than `since` (cursor backfill). */
+  historySince(inboxHashHex: string, since: number): Array<{ dmId: string; frameCBOR: Buffer; ts: number }> {
+    return this.db.prepare(`
+      SELECT dmId, frameCBOR, ts FROM dm_history WHERE inboxHashHex = ? AND ts > ? ORDER BY ts ASC LIMIT ?
+    `).all(inboxHashHex, since, DM_HISTORY_LIMIT) as Array<{ dmId: string; frameCBOR: Buffer; ts: number }>;
+  }
+
+  pruneExpiredHistory(now = Date.now()): number {
+    return this.db.prepare(`DELETE FROM dm_history WHERE (? - ts) > ?`)
+      .run(now, DM_HISTORY_TTL_MS).changes;
   }
 
   stats(): { subscriptions: number; localInboxes: number; orphans: number } {

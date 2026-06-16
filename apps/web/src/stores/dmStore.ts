@@ -165,6 +165,11 @@ function clearedAtFor(publicKey: string): number {
   return loadCleared()[publicKey] ?? 0;
 }
 
+// Relay-time cursor for the blind 30-day DM history backfill (per account).
+function dmCursorKey(): string { return `muster-dm-cursor:${useNetworkStore.getState().publicKey || 'anon'}`; }
+function loadDmCursor(): number { try { return parseInt(localStorage.getItem(dmCursorKey()) || '0', 10) || 0; } catch { return 0; } }
+function saveDmCursor(ts: number): void { try { if (ts > loadDmCursor()) localStorage.setItem(dmCursorKey(), String(ts)); } catch { /* ignore */ } }
+
 /** R25 — Phase 8. Send DM_SUBSCRIBE for our current/prev/next inbox hashes.
  *  Called on init + every window so a DM near a rotation boundary lands. */
 function sendInboxSubscribe(): void {
@@ -173,7 +178,7 @@ function sendInboxSubscribe(): void {
   try {
     const { prev, current, next } = currentInboxHashes(fromHex(network.publicKey));
     const inboxHashes = [toHex(prev), toHex(current), toHex(next)];
-    network.transport.send({ type: 'DM_SUBSCRIBE', payload: { inboxHashes }, timestamp: Date.now() });
+    network.transport.send({ type: 'DM_SUBSCRIBE', payload: { inboxHashes, since: loadDmCursor() }, timestamp: Date.now() });
   } catch (err) {
     console.warn('[dm] inbox subscribe failed:', err);
   }
@@ -650,6 +655,7 @@ export const useDMStore = create<DMState>((set, get) => ({
         // messageId (shared with the legacy DM_MESSAGE path).
         case 'DM_DELIVER': {
           const p = msg.payload as any;
+          if (typeof p?.ts === 'number') saveDmCursor(p.ts); // advance 30d backfill cursor
           const frameB64: string | undefined = p?.frame;
           if (typeof frameB64 !== 'string') break;
           const kp = getKeypair();

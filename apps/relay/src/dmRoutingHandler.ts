@@ -106,8 +106,9 @@ export class DmRoutingHandler {
     this.subPruneTimer = setInterval(() => {
       const subs = this.db.pruneExpiredSubscriptions();
       const orph = this.db.pruneExpiredOrphans();
-      if (subs > 0 || orph > 0) {
-        console.log(`[dm-route] prune: ${subs} subs, ${orph} orphans (>24h)`);
+      const hist = this.db.pruneExpiredHistory();
+      if (subs > 0 || orph > 0 || hist > 0) {
+        console.log(`[dm-route] prune: ${subs} subs, ${orph} orphans (>24h), ${hist} history (>30d)`);
       }
     }, 60 * 60 * 1000);
 
@@ -199,6 +200,12 @@ export class DmRoutingHandler {
 
     const cborBytes = encodeCanonical(dmFrameToCborMap(frame) as CborValue);
     const dmId = toHex(sha256(cborBytes));
+    const frameTs = Date.now();
+
+    // Always store in the blind 30-day history so any of the user's devices can
+    // backfill it later (cross-device DM history). Relay stays blind: only the
+    // rotating inbox hash + sealed frame.
+    this.db.insertHistory({ dmId, inboxHashHex, frameCBOR: Buffer.from(cborBytes), ts: frameTs });
 
     // 1. Local delivery — every browser client that subscribed to this hash.
     const subs = this.db.subscribersFor(inboxHashHex);
@@ -211,7 +218,7 @@ export class DmRoutingHandler {
         if (c && c.ws.readyState === WS_OPEN) {
           c.ws.send(JSON.stringify({
             type: 'DM_DELIVER',
-            payload: { frame: encodeFramePayload(frame), dmId },
+            payload: { frame: encodeFramePayload(frame), dmId, ts: frameTs },
             timestamp: Date.now(),
           }));
           localDelivered += 1;
@@ -286,6 +293,7 @@ export class DmRoutingHandler {
   private onSubscribe(client: DmRoutingClient, payload: unknown): boolean {
     const hashes = parseInboxHashList(payload);
     if (!hashes) return true; // Bad payload — silently drop, but consumed.
+    const since = typeof (payload as any)?.since === 'number' ? (payload as any).since : 0;
     this.clients.set(client.clientKey, client);
     const expiresAt = Date.now() + SUB_TTL_MS;
     let added = 0;
@@ -299,6 +307,19 @@ export class DmRoutingHandler {
       added += 1;
       // Drain orphans for this hash now that someone's listening.
       this.drainOrphansFor(h, client);
+      // Backfill blind 30-day history newer than the client's cursor so a
+      // returning / fresh device rebuilds its DM history. Client dedups by id.
+      for (const row of this.db.historySince(h, since)) {
+        try {
+          const map = decodeCanonical(new Uint8Array(row.frameCBOR)) as Record<string, unknown>;
+          const frame = dmFrameFromCborMap(map);
+          client.ws.send(JSON.stringify({
+            type: 'DM_DELIVER',
+            payload: { frame: encodeFramePayload(frame), dmId: row.dmId, ts: row.ts },
+            timestamp: Date.now(),
+          }));
+        } catch { /* skip corrupt */ }
+      }
     }
     // Fire-and-forget DHT advertisement for fresh hashes.
     if (this.dht) {
