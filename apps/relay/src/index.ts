@@ -414,9 +414,11 @@ if (msg.type === 'USER_PREFS_GET') {
   return;
 }
 if (msg.type === 'USER_PREFS_SET') {
-  const prefs = (msg.payload as Record<string, unknown>) || {};
-  userPrefsDB.set(client.publicKey, prefs);
-  const sync = JSON.stringify({ type: 'USER_PREFS_SYNC', payload: prefs, timestamp: Date.now() });
+  // Shallow-merge so independent subsystems (pins/mutes/notif vs the encrypted
+  // DM index) each set their own fields without clobbering the others.
+  const incoming = (msg.payload as Record<string, unknown>) || {};
+  userPrefsDB.set(client.publicKey, { ...userPrefsDB.get(client.publicKey), ...incoming });
+  const sync = JSON.stringify({ type: 'USER_PREFS_SYNC', payload: incoming, timestamp: Date.now() });
   for (const [ws, c] of clients) {
     if (c.authenticated && c.publicKey === client.publicKey && ws !== client.ws && ws.readyState === WebSocket.OPEN) ws.send(sync);
   }

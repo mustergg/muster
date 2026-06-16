@@ -13,6 +13,7 @@ import { sign as ed25519Sign, toHex, fromHex } from '@muster/crypto';
 import { encryptDM, decryptDM, isE2EEncrypted, currentInboxHashes } from '@muster/crypto/e2e';
 import { buildSealedDmFrame, openSealedDmFrame, type SealedDmAttachment } from '../lib/sealedDm';
 import { buildAndUploadBlob, fetchAndDecryptBlob } from '../lib/blobUpload';
+import { useChatPrefs } from './chatPrefsStore';
 import type { TransportMessage } from '@muster/transport';
 
 const encoder = new TextEncoder();
@@ -57,6 +58,40 @@ function tryDecryptDM(content: string, senderPublicKeyHex: string, recipientPubl
   } catch {
     return '[Encrypted message — decryption failed]';
   }
+}
+
+// ── Encrypted, self-synced conversation index ──────────────────────────────
+// The DM list (partner + name + last preview + timestamp) is encrypted to
+// ourselves (self-ECDH) and stored in the relay's user-prefs, so it follows us
+// across devices while the relay only ever sees ciphertext (sealed-sender
+// privacy preserved).
+interface DmIndexEntry { publicKey: string; username: string; lastMessage: string; lastTimestamp: number; }
+
+function encryptDmIndex(items: DmIndexEntry[]): string | null {
+  const kp = getKeypair();
+  if (!kp) return null;
+  try { return encryptDM(JSON.stringify(items), kp.privateKey, kp.publicKey); } catch { return null; }
+}
+function decryptDmIndex(blob: unknown): DmIndexEntry[] {
+  const kp = getKeypair();
+  if (!kp || typeof blob !== 'string') return [];
+  try { const j = decryptDM(blob, kp.privateKey, kp.publicKey); const arr = JSON.parse(j); return Array.isArray(arr) ? arr : []; } catch { return []; }
+}
+
+let dmIndexTimer: ReturnType<typeof setTimeout> | null = null;
+/** Debounced: encrypt the current conversation list + push to the relay. */
+function scheduleDmIndexPush(): void {
+  if (!useChatPrefs.getState().syncEnabled) return;
+  if (dmIndexTimer) clearTimeout(dmIndexTimer);
+  dmIndexTimer = setTimeout(() => {
+    const net = useNetworkStore.getState();
+    if (!net.transport?.isConnected) return;
+    const items: DmIndexEntry[] = useDMStore.getState().conversations.map((c) => ({
+      publicKey: c.publicKey, username: c.username, lastMessage: c.lastMessage, lastTimestamp: c.lastTimestamp,
+    }));
+    const blob = encryptDmIndex(items);
+    if (blob) net.transport.send({ type: 'USER_PREFS_SET', payload: { dmIndex: blob }, timestamp: Date.now() });
+  }, 1500);
 }
 
 export interface DMMessage {
@@ -584,6 +619,30 @@ export const useDMStore = create<DMState>((set, get) => ({
           break;
         }
 
+        // Encrypted self-synced DM index — rebuild the list cross-device.
+        case 'USER_PREFS':
+        case 'USER_PREFS_SYNC': {
+          if (!useChatPrefs.getState().syncEnabled) break;
+          const blob = (msg.payload as any)?.dmIndex;
+          const items = decryptDmIndex(blob);
+          if (!items.length) break;
+          set((state) => {
+            const byKey = new Map(state.conversations.map((c) => [c.publicKey, c]));
+            for (const it of items) {
+              if (!it.publicKey || it.publicKey === myKey) continue;
+              if ((it.lastTimestamp ?? 0) <= clearedAtFor(it.publicKey)) continue;
+              const prev = byKey.get(it.publicKey);
+              if (!prev) {
+                byKey.set(it.publicKey, { publicKey: it.publicKey, username: it.username || it.publicKey.slice(0, 8) + '…', lastMessage: it.lastMessage || '', lastTimestamp: it.lastTimestamp || 0, unreadCount: 0 });
+              } else if ((it.lastTimestamp ?? 0) > prev.lastTimestamp) {
+                byKey.set(it.publicKey, { ...prev, lastMessage: it.lastMessage || prev.lastMessage, lastTimestamp: it.lastTimestamp, username: prev.username || it.username });
+              }
+            }
+            return { conversations: [...byKey.values()].sort((a, b) => b.lastTimestamp - a.lastTimestamp) };
+          });
+          break;
+        }
+
         // R25 — Phase 8. Sealed-sender delivery. Open the frame with our
         // Ed25519 seed, reveal the sender + plaintext, render + dedup by
         // messageId (shared with the legacy DM_MESSAGE path).
@@ -655,7 +714,15 @@ export const useDMStore = create<DMState>((set, get) => ({
       }
     });
 
-    return () => { clearInterval(inboxTimer); unsubscribe(); };
+    // Fetch the encrypted DM index (cross-device list) + push ours on changes.
+    if (useChatPrefs.getState().syncEnabled && network.transport?.isConnected) {
+      network.transport.send({ type: 'USER_PREFS_GET', payload: {}, timestamp: Date.now() });
+    }
+    const unsubConv = useDMStore.subscribe((state, prev) => {
+      if (state.conversations !== prev.conversations) scheduleDmIndexPush();
+    });
+
+    return () => { clearInterval(inboxTimer); unsubscribe(); unsubConv(); };
   },
 }));
 
