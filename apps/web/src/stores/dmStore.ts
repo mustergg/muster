@@ -257,6 +257,14 @@ export const useDMStore = create<DMState>((set, get) => ({
       if (built) {
         network.transport.send({ type: 'DM_FRAME', payload: { cbor: built.cborB64 }, timestamp });
       }
+      // Self-copy to our own inbox so our other devices receive it live + the
+      // relay's 30-day history lets a fresh device recover our sent messages.
+      const selfCopy = buildSealedDmFrame({
+        recipientEdPubHex: network.publicKey, senderEdPubHex: network.publicKey,
+        senderUsername: network.username, messageId, content, nowMs: timestamp,
+        recipientTagHex: recipientPublicKey,
+      });
+      if (selfCopy) network.transport.send({ type: 'DM_FRAME', payload: { cbor: selfCopy.cborB64 }, timestamp });
     } catch (err) {
       console.warn('[dm] sealed frame send failed:', err);
     }
@@ -310,6 +318,12 @@ export const useDMStore = create<DMState>((set, get) => ({
         messageId, content: '', attachment, nowMs: timestamp,
       });
       if (built) network.transport.send({ type: 'DM_FRAME', payload: { cbor: built.cborB64 }, timestamp });
+      const selfCopy = buildSealedDmFrame({
+        recipientEdPubHex: network.publicKey, senderEdPubHex: network.publicKey,
+        senderUsername: network.username, messageId, content: '', attachment, nowMs: timestamp,
+        recipientTagHex: recipientPublicKey,
+      });
+      if (selfCopy) network.transport.send({ type: 'DM_FRAME', payload: { cbor: selfCopy.cborB64 }, timestamp });
     } catch (err) {
       console.warn('[dm] sealed file frame failed:', err);
     }
@@ -662,8 +676,10 @@ export const useDMStore = create<DMState>((set, get) => ({
           if (!kp) break;
           const opened = openSealedDmFrame(frameB64, kp.privateKey);
           if (!opened) break; // not for us / corrupt
-          const otherKey = opened.senderPubkey === myKey ? undefined : opened.senderPubkey;
-          if (!otherKey) break; // our own echo — ignore (already optimistic)
+          const fromMe = opened.senderPubkey === myKey;
+          // For a self-copy (we sent it), the conversation partner is in `recipient`.
+          const otherKey = fromMe ? opened.recipient : opened.senderPubkey;
+          if (!otherKey || otherKey === myKey) break; // own echo w/o tag — ignore
           // Drop replays of deleted history (older than the delete watermark).
           if (opened.ts <= clearedAtFor(otherKey)) break;
           const senderName = opened.senderUsername || opened.senderPubkey.slice(0, 8);
@@ -671,8 +687,8 @@ export const useDMStore = create<DMState>((set, get) => ({
           const dmMsg: DMMessage = {
             messageId: opened.messageId, content: opened.content,
             senderPublicKey: opened.senderPubkey, senderUsername: senderName,
-            recipientPublicKey: myKey, timestamp: opened.ts,
-            isOwn: false, encrypted: true,
+            recipientPublicKey: fromMe ? otherKey : myKey, timestamp: opened.ts,
+            isOwn: fromMe, encrypted: true,
             ...(opened.attachment ? {
               fileName: opened.attachment.name,
               mimeType: opened.attachment.mime,
@@ -707,7 +723,6 @@ export const useDMStore = create<DMState>((set, get) => ({
             const convs = [...state.conversations];
             const idx = convs.findIndex((c) => c.publicKey === otherKey);
             const isActive = state.activeConversation === otherKey;
-            const fromMe = opened.senderPubkey === myKey;
             const preview = opened.content.length > 50 ? opened.content.slice(0, 50) + '...' : opened.content;
             if (idx >= 0) {
               const prev = convs[idx]!;
