@@ -207,8 +207,6 @@ export const useDMStore = create<DMState>((set, get) => ({
       }
     }
 
-    const payload = { recipientPublicKey, content: encryptedContent, messageId, timestamp };
-    const payloadStr = JSON.stringify(payload);
 
     // Optimistic update — show plaintext locally
     const msg: DMMessage = {
@@ -239,21 +237,9 @@ export const useDMStore = create<DMState>((set, get) => ({
       senderUsername: network.username, timestamp, signature: '',
     });
 
-    // Sign and send
-    if (kp) {
-      signPayload(payloadStr, kp.privateKey).then((signature) => {
-        network.transport!.send({ type: 'SEND_DM', payload, signature, senderPublicKey: network.publicKey, timestamp });
-      }).catch(() => {
-        network.transport!.send({ type: 'SEND_DM', payload, signature: '', senderPublicKey: network.publicKey, timestamp });
-      });
-    } else {
-      network.transport!.send({ type: 'SEND_DM', payload, signature: '', senderPublicKey: network.publicKey, timestamp });
-    }
-
-    // R25 — Phase 8. Also publish a sealed-sender frame addressed to the
-    // recipient's rotating inbox hash. The relay routes it without ever
-    // seeing the recipient pubkey; the legacy SEND_DM above stays as the
-    // durable history path. Same messageId → recipient dedups the two.
+    // Sealed-sender only (legacy SEND_DM removed). Publish a sealed frame to the
+    // recipient's rotating inbox hash; the relay routes it without ever seeing
+    // the recipient pubkey or content.
     try {
       const built = buildSealedDmFrame({
         recipientEdPubHex: recipientPublicKey,

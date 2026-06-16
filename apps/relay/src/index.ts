@@ -84,6 +84,9 @@ const groupKeyDB = new GroupKeyDB(messageDB.getDatabase());
 const userPrefsDB = new UserPrefsDB(messageDB.getDatabase());
 const communityDB = new CommunityDB(messageDB.getDatabase());
 const dmDB = new DMDB(messageDB.getDatabase());
+// Legacy direct messages are retired in favour of sealed-sender DMs — wipe any
+// stored plaintext-addressed DM content on startup.
+try { messageDB.getDatabase().exec('DELETE FROM direct_messages'); console.log('[relay] Wiped legacy direct_messages.'); } catch { /* table absent */ }
 const userDB = new UserDB(messageDB.getDatabase());
 const fileDB = new FileDB(messageDB.getDatabase());
 const friendDB = new FriendDB(messageDB.getDatabase());
