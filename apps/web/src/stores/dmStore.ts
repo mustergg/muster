@@ -65,7 +65,7 @@ function tryDecryptDM(content: string, senderPublicKeyHex: string, recipientPubl
 // ourselves (self-ECDH) and stored in the relay's user-prefs, so it follows us
 // across devices while the relay only ever sees ciphertext (sealed-sender
 // privacy preserved).
-interface DmIndexEntry { publicKey: string; username: string; lastMessage: string; lastTimestamp: number; }
+interface DmIndexEntry { publicKey: string; username: string; lastMessage: string; lastTimestamp: number; lastFromMe?: boolean; }
 
 function encryptDmIndex(items: DmIndexEntry[]): string | null {
   const kp = getKeypair();
@@ -87,7 +87,7 @@ function scheduleDmIndexPush(): void {
     const net = useNetworkStore.getState();
     if (!net.transport?.isConnected) return;
     const items: DmIndexEntry[] = useDMStore.getState().conversations.map((c) => ({
-      publicKey: c.publicKey, username: c.username, lastMessage: c.lastMessage, lastTimestamp: c.lastTimestamp,
+      publicKey: c.publicKey, username: c.username, lastMessage: c.lastMessage, lastTimestamp: c.lastTimestamp, lastFromMe: c.lastFromMe,
     }));
     const blob = encryptDmIndex(items);
     if (blob) net.transport.send({ type: 'USER_PREFS_SET', payload: { dmIndex: blob }, timestamp: Date.now() });
@@ -109,7 +109,7 @@ export interface DMMessage {
 }
 
 export interface DMConversation {
-  publicKey: string; username: string; lastMessage: string; lastTimestamp: number; unreadCount: number;
+  publicKey: string; username: string; lastMessage: string; lastTimestamp: number; unreadCount: number; lastFromMe?: boolean;
 }
 
 interface DMState {
@@ -216,9 +216,21 @@ export const useDMStore = create<DMState>((set, get) => ({
       senderUsername: network.username, recipientPublicKey,
       timestamp, isOwn: true, encrypted,
     };
-    set((state) => ({
-      messages: { ...state.messages, [recipientPublicKey]: [...(state.messages[recipientPublicKey] || []), msg] },
-    }));
+    const ownPreview = content.length > 50 ? content.slice(0, 50) + '...' : content;
+    set((state) => {
+      const convs = [...state.conversations];
+      const idx = convs.findIndex((c) => c.publicKey === recipientPublicKey);
+      if (idx >= 0) {
+        convs[idx] = { ...convs[idx]!, lastMessage: ownPreview, lastTimestamp: timestamp, lastFromMe: true };
+      } else {
+        convs.unshift({ publicKey: recipientPublicKey, username: recipientPublicKey.slice(0, 8) + '…', lastMessage: ownPreview, lastTimestamp: timestamp, unreadCount: 0, lastFromMe: true });
+      }
+      convs.sort((a, b) => b.lastTimestamp - a.lastTimestamp);
+      return {
+        messages: { ...state.messages, [recipientPublicKey]: [...(state.messages[recipientPublicKey] || []), msg] },
+        conversations: convs,
+      };
+    });
 
     // Store encrypted content in local DB
     dmDB.addMessage({
@@ -402,7 +414,7 @@ export const useDMStore = create<DMState>((set, get) => ({
           const prev = byKey.get(partner);
           const username = m.partnerName || prev?.username || (m.senderPublicKey !== myKey ? m.senderUsername : '') || partner.slice(0, 8) + '…';
           if (!prev || (m.timestamp ?? 0) >= prev.lastTimestamp) {
-            byKey.set(partner, { publicKey: partner, username, lastMessage: preview, lastTimestamp: m.timestamp, unreadCount: prev?.unreadCount ?? 0 });
+            byKey.set(partner, { publicKey: partner, username, lastMessage: preview, lastTimestamp: m.timestamp, unreadCount: prev?.unreadCount ?? 0, lastFromMe: m.senderPublicKey === myKey });
           }
         }
         return { conversations: [...byKey.values()].sort((a, b) => b.lastTimestamp - a.lastTimestamp) };
@@ -521,7 +533,9 @@ export const useDMStore = create<DMState>((set, get) => ({
           set((state) => {
             const convs = [...state.conversations];
             const idx = convs.findIndex((c) => c.publicKey === otherKey);
-            const otherName = isOwn ? (p.recipientUsername || otherKey.slice(0, 8) + '...') : p.senderUsername;
+            // Only a partner-authored message carries a usable name — never
+            // downgrade a known name to a pubkey slice from our own message.
+            const partnerName = !isOwn ? p.senderUsername : undefined;
             const isActive = state.activeConversation === otherKey;
 
             // Show decrypted preview in conversation list
@@ -533,16 +547,18 @@ export const useDMStore = create<DMState>((set, get) => ({
                 ...prev,
                 lastMessage: previewContent,
                 lastTimestamp: p.timestamp,
-                username: otherName || prev.username,
+                username: partnerName || prev.username,
+                lastFromMe: isOwn,
                 unreadCount: (!isOwn && !isActive) ? (prev.unreadCount || 0) + 1 : prev.unreadCount,
               };
             } else {
               convs.unshift({
                 publicKey: otherKey,
-                username: otherName,
+                username: partnerName || otherKey.slice(0, 8) + '…',
                 lastMessage: previewContent,
                 lastTimestamp: p.timestamp,
                 unreadCount: (!isOwn && !isActive) ? 1 : 0,
+                lastFromMe: isOwn,
               });
             }
             convs.sort((a, b) => b.lastTimestamp - a.lastTimestamp);
@@ -611,7 +627,7 @@ export const useDMStore = create<DMState>((set, get) => ({
               // (ECDH is symmetric → works for both send/receive direction).
               const decrypted = tryDecryptDM(inc.lastMessage || '', inc.publicKey, myKey, myKey);
               const preview = decrypted.length > 50 ? decrypted.slice(0, 50) + '...' : decrypted;
-              byKey.set(inc.publicKey, { ...inc, lastMessage: preview, unreadCount: prev?.unreadCount ?? inc.unreadCount ?? 0 });
+              byKey.set(inc.publicKey, { ...inc, lastMessage: preview, username: inc.username || prev?.username || inc.publicKey.slice(0, 8) + '…', unreadCount: prev?.unreadCount ?? inc.unreadCount ?? 0, lastFromMe: prev?.lastFromMe });
             }
             const merged = [...byKey.values()].sort((a, b) => b.lastTimestamp - a.lastTimestamp);
             return { conversations: merged };
@@ -633,9 +649,9 @@ export const useDMStore = create<DMState>((set, get) => ({
               if ((it.lastTimestamp ?? 0) <= clearedAtFor(it.publicKey)) continue;
               const prev = byKey.get(it.publicKey);
               if (!prev) {
-                byKey.set(it.publicKey, { publicKey: it.publicKey, username: it.username || it.publicKey.slice(0, 8) + '…', lastMessage: it.lastMessage || '', lastTimestamp: it.lastTimestamp || 0, unreadCount: 0 });
+                byKey.set(it.publicKey, { publicKey: it.publicKey, username: it.username || it.publicKey.slice(0, 8) + '…', lastMessage: it.lastMessage || '', lastTimestamp: it.lastTimestamp || 0, unreadCount: 0, lastFromMe: it.lastFromMe });
               } else if ((it.lastTimestamp ?? 0) > prev.lastTimestamp) {
-                byKey.set(it.publicKey, { ...prev, lastMessage: it.lastMessage || prev.lastMessage, lastTimestamp: it.lastTimestamp, username: prev.username || it.username });
+                byKey.set(it.publicKey, { ...prev, lastMessage: it.lastMessage || prev.lastMessage, lastTimestamp: it.lastTimestamp, username: prev.username || it.username, lastFromMe: it.lastFromMe });
               }
             }
             return { conversations: [...byKey.values()].sort((a, b) => b.lastTimestamp - a.lastTimestamp) };
@@ -699,12 +715,13 @@ export const useDMStore = create<DMState>((set, get) => ({
             const convs = [...state.conversations];
             const idx = convs.findIndex((c) => c.publicKey === otherKey);
             const isActive = state.activeConversation === otherKey;
+            const fromMe = opened.senderPubkey === myKey;
             const preview = opened.content.length > 50 ? opened.content.slice(0, 50) + '...' : opened.content;
             if (idx >= 0) {
               const prev = convs[idx]!;
-              convs[idx] = { ...prev, lastMessage: preview, lastTimestamp: opened.ts, unreadCount: !isActive ? (prev.unreadCount || 0) + 1 : prev.unreadCount };
+              convs[idx] = { ...prev, lastMessage: preview, lastTimestamp: opened.ts, lastFromMe: fromMe, username: !fromMe ? (senderName || prev.username) : prev.username, unreadCount: (!fromMe && !isActive) ? (prev.unreadCount || 0) + 1 : prev.unreadCount };
             } else {
-              convs.unshift({ publicKey: otherKey, username: senderName, lastMessage: preview, lastTimestamp: opened.ts, unreadCount: !isActive ? 1 : 0 });
+              convs.unshift({ publicKey: otherKey, username: !fromMe ? senderName : otherKey.slice(0, 8) + '…', lastMessage: preview, lastTimestamp: opened.ts, unreadCount: (!fromMe && !isActive) ? 1 : 0, lastFromMe: fromMe });
             }
             convs.sort((a, b) => b.lastTimestamp - a.lastTimestamp);
             return { conversations: convs };

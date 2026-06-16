@@ -106,7 +106,7 @@ function ConversationItem({ conv, isActive, onClick, muted, pinned, status }: { 
           {conv.lastTimestamp > 0 && <span style={styles.convTime}>{formatTime(conv.lastTimestamp)}</span>}
         </div>
         {conv.lastMessage && (
-          <span style={styles.convPreview}>{conv.lastMessage.length > 40 ? conv.lastMessage.slice(0, 40) + '...' : conv.lastMessage}</span>
+          <span style={styles.convPreview}>{conv.lastFromMe ? 'Eu: ' : ''}{conv.lastMessage.length > 40 ? conv.lastMessage.slice(0, 40) + '...' : conv.lastMessage}</span>
         )}
       </div>
       {muted ? <span style={styles.mutedIcon}>{'\u{1F507}'}</span> : (conv.unreadCount || 0) > 0 && <span style={styles.unreadBadge}>{conv.unreadCount}</span>}
