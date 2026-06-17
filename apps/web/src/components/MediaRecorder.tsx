@@ -69,6 +69,13 @@ const MediaRecorderControl = forwardRef<MediaRecorderHandle, Props>(function Med
   const doSend = useCallback(() => { if (fileRef.current) onSend(fileRef.current); reset(); }, [onSend, reset]);
 
   const start = useCallback(async () => {
+    // getUserMedia is undefined outside a secure context (plain http over LAN).
+    if (!navigator.mediaDevices?.getUserMedia) {
+      alert(window.isSecureContext
+        ? 'Camera/microphone API unavailable in this environment.'
+        : 'Camera/microphone need a secure context — open the app over https or on localhost.');
+      return;
+    }
     try {
       const stream = await navigator.mediaDevices.getUserMedia(
         mode === 'video' ? { audio: true, video: { facingMode: 'user' } } : { audio: true },
@@ -95,7 +102,16 @@ const MediaRecorderControl = forwardRef<MediaRecorderHandle, Props>(function Med
       setState('recording');
     } catch (err) {
       console.error('[media] capture failed:', err);
-      alert(mode === 'video' ? 'Camera/mic access denied or unavailable.' : 'Microphone access denied or unavailable.');
+      const name = (err as { name?: string })?.name;
+      const dev = mode === 'video' ? 'Camera/microphone' : 'Microphone';
+      const reason = name === 'NotAllowedError' || name === 'SecurityError'
+        ? 'permission denied — grant access in your device/app settings.'
+        : name === 'NotFoundError' || name === 'DevicesNotFoundError'
+          ? 'no device found.'
+          : name === 'NotReadableError'
+            ? 'device is in use by another app.'
+            : 'access denied or unavailable.';
+      alert(`${dev} ${reason}`);
       stopStream();
     }
   }, [mode, onSend, reset, stopStream]);

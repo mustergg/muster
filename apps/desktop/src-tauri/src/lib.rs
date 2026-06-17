@@ -102,6 +102,39 @@ pub fn run() {
             let _ = handle.emit("deep-link", event.payload());
         });
 
+        // WebView2 (Windows) only grants clipboard by default in wry; getUserMedia
+        // camera/mic requests get no handler and default to deny. Register our own
+        // PermissionRequested handler so video/voice notes work in the desktop app.
+        #[cfg(target_os = "windows")]
+        {
+            use webview2_com::PermissionRequestedEventHandler;
+            use webview2_com::Microsoft::Web::WebView2::Win32::{
+                COREWEBVIEW2_PERMISSION_KIND, COREWEBVIEW2_PERMISSION_KIND_CAMERA,
+                COREWEBVIEW2_PERMISSION_KIND_MICROPHONE, COREWEBVIEW2_PERMISSION_STATE_ALLOW,
+            };
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.with_webview(|webview| unsafe {
+                    if let Ok(core) = webview.controller().CoreWebView2() {
+                        let mut token = std::mem::zeroed();
+                        let _ = core.add_PermissionRequested(
+                            &PermissionRequestedEventHandler::create(Box::new(|_, args| {
+                                let Some(args) = args else { return Ok(()) };
+                                let mut kind = COREWEBVIEW2_PERMISSION_KIND::default();
+                                args.PermissionKind(&mut kind)?;
+                                if kind == COREWEBVIEW2_PERMISSION_KIND_CAMERA
+                                    || kind == COREWEBVIEW2_PERMISSION_KIND_MICROPHONE
+                                {
+                                    args.SetState(COREWEBVIEW2_PERMISSION_STATE_ALLOW)?;
+                                }
+                                Ok(())
+                            })),
+                            &mut token,
+                        );
+                    }
+                });
+            }
+        }
+
         Ok(())
     });
 
