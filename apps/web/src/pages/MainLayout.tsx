@@ -37,6 +37,38 @@ import { useNatStore } from '../stores/natStore.js';
 
 export type { ActiveLocation };
 
+/** Pick which channel to auto-open when a community is selected:
+ *  most-recently-active unread channel → last-viewed channel → first text/feed.
+ *  "unread" is proxied by per-channel activity newer than the last open.
+ *  Returns null when the community's channels haven't loaded yet. */
+function resolveCommunityEntry(communityId: string): ActiveLocation | null {
+  const community = useCommunityStore.getState().communities[communityId];
+  const channels = (community?.channels ?? []) as Array<{ id: string; name: string; type?: string }>;
+  if (!channels.length) return null;
+  const { activity, lastUsed } = useChatPrefs.getState();
+  const unread = channels.filter((ch) => (activity[ch.id] ?? 0) > (lastUsed[ch.id] ?? 0));
+  if (unread.length) {
+    const best = unread.reduce((a, b) => ((activity[b.id] ?? 0) > (activity[a.id] ?? 0) ? b : a));
+    return { communityId, channelId: best.id, channelName: best.name };
+  }
+  const viewed = channels.filter((ch) => (lastUsed[ch.id] ?? 0) > 0);
+  if (viewed.length) {
+    const best = viewed.reduce((a, b) => ((lastUsed[b.id] ?? 0) > (lastUsed[a.id] ?? 0) ? b : a));
+    return { communityId, channelId: best.id, channelName: best.name };
+  }
+  const first = channels.find((c) => c.type === 'text' || c.type === 'feed') ?? channels[0]!;
+  return { communityId, channelId: first.id, channelName: first.name };
+}
+
+/** Squad-in-community entry: reopen the last-viewed room (text/voice), default text. */
+function resolveSquadEntry(communityId: string, squadId: string, name: string): ActiveLocation {
+  const { lastUsed } = useChatPrefs.getState();
+  const tKey = `__squad_text__${squadId}`;
+  const vKey = `__squad_voice__${squadId}`;
+  const voice = (lastUsed[vKey] ?? 0) > (lastUsed[tKey] ?? 0);
+  return { communityId, channelId: voice ? vKey : tKey, channelName: voice ? `${name} Voice` : name };
+}
+
 export default function MainLayout(): React.JSX.Element {
   const [viewMode, setViewMode] = useState<ViewMode>('community');
   const [active, setActive]                       = useState<ActiveLocation | null>(null);
@@ -121,10 +153,17 @@ export default function MainLayout(): React.JSX.Element {
     return () => usePieceCacheStore.getState().shutdown();
   }, []);
 
+  // Set the active channel and record the open (drives last-viewed ordering and
+  // the unread proxy). Pass null to clear (e.g. switching to a fresh community).
+  const openChannel = (loc: ActiveLocation | null): void => {
+    setActive(loc);
+    if (loc) useChatPrefs.getState().touch(loc.channelId);
+  };
+
   const handleOpenDM = (publicKey: string, username?: string) => { useDMStore.getState().openConversation(publicKey, username); setViewMode('dm'); setActiveDMPartner(publicKey); setActiveSquad(null); };
   const handleSelectDM = () => { setViewMode('dm'); setActiveCommunityId(null); setActive(null); setActiveSquad(null); };
   const handleSelectFriends = () => { setViewMode('friends'); setActiveCommunityId(null); setActive(null); setActiveDMPartner(null); setActiveSquad(null); };
-  const handleSelectCommunity = (id: string) => { setViewMode('community'); setActiveCommunityId(id); setActiveDMPartner(null); setActiveSquad(null); };
+  const handleSelectCommunity = (id: string) => { setViewMode('community'); setActiveCommunityId(id); setActiveDMPartner(null); setActiveSquad(null); openChannel(resolveCommunityEntry(id)); };
   const handleSelectSettings = () => { setViewMode('settings'); setActiveCommunityId(null); setActive(null); setActiveDMPartner(null); setActiveSquad(null); };
   const handleSelectSquad = (squadId: string) => {
     const squad = useSquadStore.getState().allMySquads().find((s) => s.id === squadId);
@@ -138,7 +177,7 @@ export default function MainLayout(): React.JSX.Element {
       setViewMode('community');
       setActiveCommunityId(cid);
       setActiveSquad(null);
-      setActive({ communityId: cid, channelId: `__squad_text__${squadId}`, channelName: squad?.name || 'Squad' });
+      openChannel(resolveSquadEntry(cid, squadId, squad?.name || 'Squad'));
     } else {
       setViewMode('squad');
       setActiveSquad(squadId);
@@ -148,6 +187,18 @@ export default function MainLayout(): React.JSX.Element {
     }
     useSquadStore.getState().openSquad(squadId);
   };
+
+  // Entering a community auto-opens a channel. Resolve here so it also works
+  // when channels arrive after selection (async COMMUNITY_DATA), and so a stale
+  // selection left over from another group (e.g. a squad's text channel) is
+  // replaced instead of lingering when switching communities.
+  useEffect(() => {
+    if (viewMode !== 'community' || !activeCommunityId) return;
+    if (active && active.communityId === activeCommunityId) return; // already on this community
+    const entry = resolveCommunityEntry(activeCommunityId);
+    if (entry) openChannel(entry);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewMode, activeCommunityId, communities]);
 
   // Determine what's active in the main area
   const isFeedActive = active?.channelId === '__feed__';
@@ -181,7 +232,7 @@ export default function MainLayout(): React.JSX.Element {
           onSelectFriends={handleSelectFriends}
           onSelectSettings={handleSelectSettings}
           onSelectSquad={handleSelectSquad}
-          onSelectChannel={(communityId, channelId, channelName) => setActive({ communityId, channelId, channelName })}
+          onSelectChannel={(communityId, channelId, channelName) => openChannel({ communityId, channelId, channelName })}
           onSelectDMPartner={(pk) => setActiveDMPartner(pk)}
           onSelectSquadMode={setSquadMode}
           onOpenDM={handleOpenDM}
@@ -244,7 +295,7 @@ export default function MainLayout(): React.JSX.Element {
               communityId={activeCommunityId}
               activeChannelId={active?.channelId ?? null}
               onSelectChannel={(communityId, channelId, channelName) =>
-                setActive({ communityId, channelId, channelName })
+                openChannel({ communityId, channelId, channelName })
               }
             />
             <div style={styles.main}>{mainContent}</div>

@@ -532,9 +532,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
           });
           if (enc) decryptChannelInto(p.channel, p.messageId, p.content);
           if (!chatMsg.isOwn) {
+            const ts = p.timestamp || Date.now();
+            // Per-channel activity drives the "unread" proxy (activity > lastUsed)
+            // used to pick which channel to auto-open for a community.
+            useChatPrefs.getState().bumpActivity(p.channel, ts);
             const comms = useCommunityStore.getState().communities;
             const cid = Object.values(comms).find((c: any) => (c.channels || []).some((ch: any) => ch.id === p.channel))?.id;
-            if (cid) useChatPrefs.getState().bumpActivity(cid, p.timestamp || Date.now());
+            if (cid) useChatPrefs.getState().bumpActivity(cid, ts);
           }
           break;
         }
