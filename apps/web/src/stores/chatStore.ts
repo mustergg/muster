@@ -534,8 +534,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
           if (!chatMsg.isOwn) {
             const ts = p.timestamp || Date.now();
             // Per-channel activity drives the "unread" proxy (activity > lastUsed)
-            // used to pick which channel to auto-open for a community.
+            // used for channel badges + which channel to auto-open.
             useChatPrefs.getState().bumpActivity(p.channel, ts);
+            // The channel currently on screen stays read.
+            if (get().activeChannel === p.channel) useChatPrefs.getState().touch(p.channel);
             const comms = useCommunityStore.getState().communities;
             const cid = Object.values(comms).find((c: any) => (c.channels || []).some((ch: any) => ch.id === p.channel))?.id;
             if (cid) useChatPrefs.getState().bumpActivity(cid, ts);
@@ -569,6 +571,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
             if (existing.some((m) => m.messageId === chatMsg.messageId)) return state;
             return { messages: { ...state.messages, [p.channel]: [...existing, chatMsg].sort((a, b) => a.timestamp - b.timestamp) } };
           });
+          if (!chatMsg.isOwn) {
+            const ts = p.timestamp || Date.now();
+            useChatPrefs.getState().bumpActivity(p.channel, ts);
+            if (get().activeChannel === p.channel) useChatPrefs.getState().touch(p.channel);
+            const comms = useCommunityStore.getState().communities;
+            const cid = Object.values(comms).find((c: any) => (c.channels || []).some((ch: any) => ch.id === p.channel))?.id;
+            if (cid) useChatPrefs.getState().bumpActivity(cid, ts);
+          }
           break;
         }
 

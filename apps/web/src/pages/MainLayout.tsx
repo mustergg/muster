@@ -200,6 +200,12 @@ export default function MainLayout(): React.JSX.Element {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [viewMode, activeCommunityId, communities]);
 
+  // Keep chatStore's active channel in sync so messages arriving for the channel
+  // on screen are marked read live (no lingering unread badge for what you view).
+  useEffect(() => {
+    useChatStore.getState().setActiveChannel(active?.channelId ?? null);
+  }, [active]);
+
   // Determine what's active in the main area
   const isFeedActive = active?.channelId === '__feed__';
   const squadTextMatch = active?.channelId?.match(/^__squad_text__(.+)$/);

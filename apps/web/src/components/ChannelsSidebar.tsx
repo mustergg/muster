@@ -20,6 +20,7 @@ import CreateSquadModal from '../pages/CreateSquadModal.js';
 import CommunityGovernanceModal from '../pages/CommunityGovernanceModal.js';
 import { useSquadStore } from '../stores/squadStore.js';
 import { useVoiceStore } from '../stores/voiceStore.js';
+import { useChatPrefs } from '../stores/chatPrefsStore.js';
 import ContextMenu from './ContextMenu.js';
 import UserPanel from './UserPanel.js';
 
@@ -47,6 +48,17 @@ export default function ChannelsSidebar({ communityId, activeChannelId, onSelect
   const { squads: allSquads, loadSquads: loadSquadsAction } = useSquadStore();
   const voiceRosters = useVoiceStore((st) => st.rosters);
   const requestRosters = useVoiceStore((st) => st.requestRosters);
+
+  // Unread badge: per-channel activity newer than the last time it was opened,
+  // unless it's muted or currently on screen. Subscribe to the maps so badges
+  // clear/appear reactively.
+  const prefsActivity = useChatPrefs((s) => s.activity);
+  const prefsLastUsed = useChatPrefs((s) => s.lastUsed);
+  useChatPrefs((s) => s.mutes); // re-render when mutes change
+  const isUnread = (chId: string): boolean =>
+    activeChannelId !== chId
+    && (prefsActivity[chId] ?? 0) > (prefsLastUsed[chId] ?? 0)
+    && !useChatPrefs.getState().isMuted(chId);
 
   const openCreateChannel = (type: 'text' | 'voice'): void => { setCreateChannelType(type); setShowCreateChannel(true); };
 
@@ -218,6 +230,7 @@ export default function ChannelsSidebar({ communityId, activeChannelId, onSelect
               </div>
               {textChannels.map((ch) => {
                 const menuItems = buildChannelContextMenu(ch);
+                const unread = isUnread(ch.id);
                 const channelButton = (
                   <button
                     key={ch.id}
@@ -227,12 +240,13 @@ export default function ChannelsSidebar({ communityId, activeChannelId, onSelect
                     style={{ ...styles.channelItem, ...(activeChannelId === ch.id ? styles.channelActive : {}), opacity: dragChannelId === ch.id ? 0.4 : 1, cursor: isAdmin ? 'grab' : 'pointer' }}
                   >
                     <span style={styles.chIcon}>#</span>
-                    <span style={styles.chName}>{ch.name}</span>
+                    <span style={{ ...styles.chName, ...(unread ? styles.chNameUnread : {}) }}>{ch.name}</span>
                     {ch.visibility !== 'public' && (
                       <span style={styles.visibilityBadge}>
                         {ch.visibility === 'private' ? '\u{1F512}' : ch.visibility === 'readonly' ? '\u{1F4D6}' : '\u{1F4E6}'}
                       </span>
                     )}
+                    {unread && <span style={styles.unreadDot} />}
                   </button>
                 );
 
@@ -414,6 +428,8 @@ const styles = {
   channelActive:{ background:'var(--color-bg-hover)', color:'var(--color-text-primary)' } as React.CSSProperties,
   chIcon:       { width:'16px', textAlign:'center' as const, fontSize:'13px', flexShrink:0, fontFamily:'var(--font-mono)', color:'var(--color-text-muted)' } as React.CSSProperties,
   chName:       { fontSize:'13px', flex:1 } as React.CSSProperties,
+  chNameUnread: { color:'var(--color-text-primary)', fontWeight:600 } as React.CSSProperties,
+  unreadDot:    { width:'8px', height:'8px', borderRadius:'50%', background:'var(--color-accent)', flexShrink:0, marginLeft:'4px' } as React.CSSProperties,
   visibilityBadge: { fontSize:'10px', flexShrink:0, opacity:0.6 } as React.CSSProperties,
   voiceCount:   { fontSize:'10px', flexShrink:0, color:'var(--color-green)', fontFamily:'var(--font-mono)' } as React.CSSProperties,
   voiceParticipant: { display:'flex', alignItems:'center', gap:'6px', padding:'2px 14px 2px 30px' } as React.CSSProperties,
