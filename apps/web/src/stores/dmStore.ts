@@ -12,6 +12,8 @@ import { BrowserDB } from '@muster/db';
 import { sign as ed25519Sign, toHex, fromHex } from '@muster/crypto';
 import { encryptDM, decryptDM, isE2EEncrypted, currentInboxHashes } from '@muster/crypto/e2e';
 import { buildSealedDmFrame, openSealedDmFrame, type SealedDmAttachment } from '../lib/sealedDm';
+import { useNotify } from './notifyStore';
+import { mentionsUser, parseReply } from '../lib/messageFx';
 import { buildAndUploadBlob, fetchAndDecryptBlob } from '../lib/blobUpload';
 import { useChatPrefs } from './chatPrefsStore';
 import type { TransportMessage } from '@muster/transport';
@@ -815,6 +817,18 @@ export const useDMStore = create<DMState>((set, get) => ({
             convs.sort((a, b) => b.lastTimestamp - a.lastTimestamp);
             return { conversations: convs };
           });
+
+          if (!fromMe) {
+            const text = parseReply(opened.content || '').text;
+            const activeFocused = get().activeConversation === otherKey && typeof document !== 'undefined' && document.hasFocus();
+            useNotify.getState().notify({
+              kind: 'dm', targetId: otherKey,
+              title: senderName || 'Direct message',
+              body: opened.attachment ? '📎 attachment' : text.slice(0, 120),
+              mentioned: mentionsUser(text, useNetworkStore.getState().username),
+              activeAndFocused: activeFocused,
+            });
+          }
           break;
         }
       }

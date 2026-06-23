@@ -8,6 +8,9 @@ import { create } from 'zustand';
 import { useNetworkStore } from './networkStore';
 import { useGroupCryptoStore } from './groupCryptoStore';
 import { useChatPrefs } from './chatPrefsStore';
+import { useNotify } from './notifyStore';
+import { useChatStore } from './chatStore';
+import { mentionsUser, parseReply } from '../lib/messageFx';
 import { buildAndUploadBlob } from '../lib/blobUpload';
 import type { TransportMessage } from '@muster/transport';
 
@@ -474,7 +477,20 @@ export const useSquadStore = create<SquadState>((set, get) => ({
             return { messages: { ...s.messages, [key]: [...existing, squadMsg].sort((a, b) => a.timestamp - b.timestamp) } };
           });
           if (enc) decryptInto(p.squadId, key, p.messageId, raw);
-          if (!squadMsg.isOwn) useChatPrefs.getState().bumpActivity(p.squadId, p.timestamp || Date.now());
+          if (!squadMsg.isOwn) {
+            useChatPrefs.getState().bumpActivity(p.squadId, p.timestamp || Date.now());
+            const sqName = get().allMySquads().find((s) => s.id === p.squadId)?.name || 'Squad';
+            const text = enc ? '' : parseReply(raw).text;
+            const activeChan = useChatStore.getState().activeChannel;
+            const activeFocused = activeChan === `__squad_${room}__${p.squadId}` && typeof document !== 'undefined' && document.hasFocus();
+            useNotify.getState().notify({
+              kind: 'squad', targetId: p.squadId,
+              title: sqName,
+              body: enc ? `${p.senderUsername || 'Someone'} sent a message` : `${p.senderUsername ? p.senderUsername + ': ' : ''}${text}`.slice(0, 120),
+              mentioned: !enc && mentionsUser(text, useNetworkStore.getState().username),
+              activeAndFocused: activeFocused,
+            });
+          }
           break;
         }
         case 'SQUAD_HISTORY_RESPONSE': {

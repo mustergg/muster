@@ -14,6 +14,7 @@ import { useLayoutPref } from '../stores/layoutPrefStore.js';
 import { useTextScale, TEXT_SCALES } from '../stores/textScaleStore.js';
 import { useIdlePref } from '../stores/idlePrefStore.js';
 import { useChatPrefs } from '../stores/chatPrefsStore.js';
+import { useNotify } from '../stores/notifyStore.js';
 
 export default function GeneralSettings(): React.JSX.Element {
   const { t, i18n } = useTranslation();
@@ -30,6 +31,10 @@ export default function GeneralSettings(): React.JSX.Element {
   const setIdleMinutes = useIdlePref((st) => st.setIdleMinutes);
   const syncPrefs = useChatPrefs((st) => st.syncEnabled);
   const setSyncPrefs = useChatPrefs((st) => st.setSyncEnabled);
+  const soundEnabled = useNotify((st) => st.soundEnabled);
+  const setSoundEnabled = useNotify((st) => st.setSoundEnabled);
+  const systemEnabled = useNotify((st) => st.systemEnabled);
+  const setSystemEnabled = useNotify((st) => st.setSystemEnabled);
 
   const pick = (loc: SupportedLocale): void => { void setLocale(loc); };
 
@@ -60,6 +65,19 @@ export default function GeneralSettings(): React.JSX.Element {
             ))}
           </div>
           <div style={s.note}>{t('settings.languageNote')}</div>
+        </div>
+
+        <div style={s.section}>
+          <div style={s.sectionTitle}>Notifications</div>
+          <label style={s.checkRow}>
+            <input type="checkbox" checked={soundEnabled} onChange={(e) => setSoundEnabled(e.target.checked)} style={{ accentColor: 'var(--color-accent)' }} />
+            <span>Play a sound for new messages</span>
+          </label>
+          <label style={{ ...s.checkRow, marginTop: '8px' }}>
+            <input type="checkbox" checked={systemEnabled} onChange={(e) => void setSystemEnabled(e.target.checked)} style={{ accentColor: 'var(--color-accent)' }} />
+            <span>System / push notifications</span>
+          </label>
+          <div style={s.note}>Sound + a tab/app badge fire for messages that match each chat's notification level (right-click a chat to change it). System notifications need your permission and show on desktop and supported mobiles; on the browser the unread count also appears in the tab title.</div>
         </div>
 
         <div style={s.section}>

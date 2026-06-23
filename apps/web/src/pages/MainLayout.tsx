@@ -31,6 +31,7 @@ import { useBandwidthStore } from '../stores/bandwidthStore.js';
 import { useReputationStore } from '../stores/reputationStore.js';
 import { useReadReceiptStore } from '../stores/readReceiptStore.js';
 import { useStatusStore } from '../stores/statusStore.js';
+import { useNotify } from '../stores/notifyStore.js';
 // clientNodeStore is imported dynamically (only registers global, no init needed)
 import '../stores/clientNodeStore.js';
 import { useNatStore } from '../stores/natStore.js';
@@ -121,10 +122,11 @@ export default function MainLayout(): React.JSX.Element {
       const c15 = useStatusStore.getState().init();
       const c16 = useChatPrefs.getState().init();
       const c17 = useUserStatus.getState().init();
+      const c18 = useNotify.getState().init();
       loadCommunities();
       // Load top-level squads (personal + community) for the guild bar.
       setTimeout(() => useSquadStore.getState().loadMySquads(), 400);
-      return () => { c1(); c2(); c3(); c4(); c5(); c6(); c7(); c8(); c9(); c10(); c11(); c12(); c13(); c14(); c15(); c16(); c17(); };
+      return () => { c1(); c2(); c3(); c4(); c5(); c6(); c7(); c8(); c9(); c10(); c11(); c12(); c13(); c14(); c15(); c16(); c17(); c18(); };
     }
     return undefined;
   }, [status]);

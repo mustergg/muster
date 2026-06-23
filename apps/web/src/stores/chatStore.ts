@@ -16,6 +16,8 @@ import { useGroupCryptoStore } from './groupCryptoStore';
 import { useChatPrefs } from './chatPrefsStore';
 import { useCommunityStore } from './communityStore';
 import { usePieceCacheStore } from './pieceCacheStore';
+import { useNotify } from './notifyStore';
+import { mentionsUser, parseReply } from '../lib/messageFx';
 import { BrowserDB, type DBMessage } from '@muster/db';
 import { sign as ed25519Sign, toHex, sha256, fromHex, decodeCanonical } from '@muster/crypto';
 import type { TransportMessage } from '@muster/transport';
@@ -294,6 +296,29 @@ async function sendAsEnvelope(
   }, built);
 }
 
+/** Fire a new-message notification for a community channel (sound + badge +
+ *  system notification), respecting per-community level/mute via notifyStore. */
+function notifyChannel(
+  cid: string, channelId: string, senderUsername: string | undefined,
+  rawContent: string, encrypted: boolean, get: () => ChatState,
+): void {
+  const comm = useCommunityStore.getState().communities[cid] as any;
+  const chName = comm?.channels?.find((c: any) => c.id === channelId)?.name || 'channel';
+  const myName = useNetworkStore.getState().username;
+  const parsed = encrypted ? { text: '', replyTo: undefined as string | undefined } : parseReply(rawContent);
+  const mentioned = !encrypted && mentionsUser(parsed.text, myName);
+  const isReplyToMe = !!parsed.replyTo && (get().messages[channelId] || []).some((m) => m.messageId === parsed.replyTo && m.isOwn);
+  const body = encrypted
+    ? `${senderUsername || 'Someone'} sent a message`
+    : `${senderUsername ? senderUsername + ': ' : ''}${parsed.text}`.slice(0, 120);
+  const activeAndFocused = get().activeChannel === channelId && typeof document !== 'undefined' && document.hasFocus();
+  useNotify.getState().notify({
+    kind: 'community', targetId: cid,
+    title: `${comm?.name || 'Community'} · #${chName}`,
+    body, mentioned, isReplyToMe, activeAndFocused,
+  });
+}
+
 export const useChatStore = create<ChatState>((set, get) => ({
   messages: {},
   presence: {},
@@ -540,7 +565,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
             if (get().activeChannel === p.channel) useChatPrefs.getState().touch(p.channel);
             const comms = useCommunityStore.getState().communities;
             const cid = Object.values(comms).find((c: any) => (c.channels || []).some((ch: any) => ch.id === p.channel))?.id;
-            if (cid) useChatPrefs.getState().bumpActivity(cid, ts);
+            if (cid) {
+              useChatPrefs.getState().bumpActivity(cid, ts);
+              notifyChannel(cid, p.channel, p.senderUsername, enc ? '' : p.content, enc, get);
+            }
           }
           break;
         }
@@ -577,7 +605,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
             if (get().activeChannel === p.channel) useChatPrefs.getState().touch(p.channel);
             const comms = useCommunityStore.getState().communities;
             const cid = Object.values(comms).find((c: any) => (c.channels || []).some((ch: any) => ch.id === p.channel))?.id;
-            if (cid) useChatPrefs.getState().bumpActivity(cid, ts);
+            if (cid) {
+              useChatPrefs.getState().bumpActivity(cid, ts);
+              notifyChannel(cid, p.channel, p.senderUsername, p.messageText || '📎 attachment', false, get);
+            }
           }
           break;
         }
