@@ -137,6 +137,28 @@ input, textarea, button { font-family: inherit; font-size: inherit; }
   background: rgba(0, 0, 0, 0.5);
   pointer-events: none;
 }
+/* Hint that the collapsed rail can be opened — a faint chevron centred over it. */
+.m-rail-slot::before {
+  content: '\203A';            /* › */
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 2;
+  font-size: 24px;
+  font-weight: 700;
+  line-height: 1;
+  color: rgba(255, 255, 255, 0.5);
+  pointer-events: none;
+}
+/* Attention blink when the rail (re)appears after a selection — the same idea as
+   the message jump flash, adapted to the darkened rail as an accent glow. */
+@keyframes m-rail-flash {
+  0%   { box-shadow: 0 0 0 2px var(--color-accent), 0 0 16px 1px var(--color-accent); }
+  45%  { box-shadow: 0 0 0 2px var(--color-accent), 0 0 16px 1px var(--color-accent); }
+  100% { box-shadow: 0 0 0 0 rgba(0, 0, 0, 0); }
+}
+.m-rail-flash { animation: m-rail-flash 1.4s ease-out; z-index: 61; }
 /* Selected channel/DM stays larger than its siblings in the rail (≈75% vs
    50%) so the current location reads at a glance. */
 .m-rail-inner .m-rail-selected {

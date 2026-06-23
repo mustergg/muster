@@ -65,6 +65,9 @@ export default function MobileShell(props: Props): React.JSX.Element {
   const [leftState, setLeftState] = useState<LeftState>('closed');
   const [rightOpen, setRightOpen] = useState(false);
   const [navGridOpen, setNavGridOpen] = useState(false);
+  // Bumped on every new selection so the collapsed rail remounts and replays its
+  // attention blink (keyed below), regardless of whether it was already a rail.
+  const [flashNonce, setFlashNonce] = useState(0);
 
   const communities = useCommunityStore((s) => s.communities);
   const squadName = useSquadStore((s) =>
@@ -90,10 +93,17 @@ export default function MobileShell(props: Props): React.JSX.Element {
     setRightOpen(false);
     if (viewMode === 'community') setLeftState(!activeCommunityId ? 'closed' : active ? 'rail' : 'open');
     else if (viewMode === 'dm') setLeftState(activeDMPartner ? 'rail' : 'open');
-    else if (viewMode === 'squad') setLeftState('open');
+    else if (viewMode === 'squad') setLeftState(activeSquad ? 'rail' : 'open');
     else setLeftState('closed');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [viewMode, activeCommunityId]);
+
+  // Blink the collapsed rail whenever the selected location changes (community,
+  // squad, channel or squad room) so the user notices the channel list is there.
+  useEffect(() => {
+    setFlashNonce((n) => n + 1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewMode, activeCommunityId, activeSquad, active?.channelId, squadMode]);
 
   const title =
     viewMode === 'settings' ? 'Settings'
@@ -218,7 +228,7 @@ export default function MobileShell(props: Props): React.JSX.Element {
 
           <div style={s.main} onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
             {hasLeft && leftState === 'rail' && (
-              <div className="m-rail-slot" onClick={() => setLeftState('open')} title="Open">
+              <div key={flashNonce} className="m-rail-slot m-rail-flash" onClick={() => setLeftState('open')} title="Open">
                 <div className="m-rail-inner">{leftContent}</div>
               </div>
             )}
