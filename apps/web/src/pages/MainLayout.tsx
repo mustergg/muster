@@ -270,6 +270,8 @@ export default function MainLayout(): React.JSX.Element {
           onSelectCommunity={handleSelectCommunity}
           dmActive={viewMode === 'dm'}
           onSelectDM={handleSelectDM}
+          activeDMPartner={activeDMPartner}
+          onOpenDM={handleOpenDM}
           friendsActive={viewMode === 'friends'}
           onSelectFriends={handleSelectFriends}
           settingsActive={viewMode === 'settings'}

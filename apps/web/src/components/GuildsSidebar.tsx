@@ -14,6 +14,7 @@ import { useFriendStore } from '../stores/friendStore.js';
 import { useNetworkStore } from '../stores/networkStore.js';
 import { useSquadStore } from '../stores/squadStore.js';
 import { useChatPrefs, orderItems } from '../stores/chatPrefsStore.js';
+import { useLayoutPref } from '../stores/layoutPrefStore.js';
 import { chatMenu } from './chatMenu.js';
 import CreateCommunityModal from '../pages/CreateCommunityModal.js';
 import JoinCommunityModal from '../pages/JoinCommunityModal.js';
@@ -26,6 +27,10 @@ interface Props {
   onSelectCommunity: (id: string) => void;
   dmActive?: boolean;
   onSelectDM?: () => void;
+  /** Currently open DM partner (so its bubble stays while you're in it). */
+  activeDMPartner?: string | null;
+  /** Open a DM conversation directly from its guild-bar bubble. */
+  onOpenDM?: (publicKey: string, username?: string) => void;
   friendsActive?: boolean;
   onSelectFriends?: () => void;
   settingsActive?: boolean;
@@ -40,6 +45,13 @@ function squadInitials(name: string): string {
   return name.split(/\s+/).map((w) => w[0] ?? '').join('').toUpperCase().slice(0, 2) || 'SQ';
 }
 
+function dmInitials(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return '?';
+  if (parts.length === 1) return parts[0]!.slice(0, 2).toUpperCase();
+  return (parts[0]![0]! + parts[1]![0]!).toUpperCase();
+}
+
 function communityInitials(name: string): string {
   return name.split(/\s+/).map((w) => w[0] ?? '').join('').toUpperCase().slice(0, 2);
 }
@@ -49,10 +61,12 @@ function communityColor(id: string): { color: string; bg: string } {
   return { color: `hsl(${hue},60%,65%)`, bg: `hsl(${hue},40%,18%)` };
 }
 
-export default function GuildsSidebar({ activeCommunityId, onSelectCommunity, dmActive, onSelectDM, friendsActive, onSelectFriends, settingsActive, onSelectSettings, activeSquadId, onSelectSquad, horizontal }: Props): React.JSX.Element {
+export default function GuildsSidebar({ activeCommunityId, onSelectCommunity, dmActive, onSelectDM, activeDMPartner, onOpenDM, friendsActive, onSelectFriends, settingsActive, onSelectSettings, activeSquadId, onSelectSquad, horizontal }: Props): React.JSX.Element {
   const { t } = useTranslation();
   const { communities, loadCommunities, leaveCommunity, myRoles, communityOrder, setCommunityOrder } = useCommunityStore();
   const { conversations } = useDMStore();
+  const clearConversation = useDMStore((s) => s.clearConversation);
+  const blockUser = useFriendStore((s) => s.blockUser);
   const { publicKey: myKey } = useNetworkStore();
   const mySquads = useSquadStore((s) => s.allMySquads());
   const setSquadOrder = useSquadStore((s) => s.setSquadOrder);
@@ -63,6 +77,8 @@ export default function GuildsSidebar({ activeCommunityId, onSelectCommunity, dm
   const navLastUsed = useChatPrefs((s) => s.lastUsed);
   const navPinned = useChatPrefs((s) => s.pins);
   const navActivity = useChatPrefs((s) => s.activity);
+  const navMutes = useChatPrefs((s) => s.mutes);
+  const maxDmBubbles = useLayoutPref((s) => s.maxDmBubbles);
   const [dragCommunityId, setDragCommunityId] = useState<string | null>(null);
   const [dragSquadId, setDragSquadId] = useState<string | null>(null);
   const [showCreateSquad, setShowCreateSquad] = useState(false);
@@ -150,8 +166,36 @@ export default function GuildsSidebar({ activeCommunityId, onSelectCommunity, dm
     setDragCommunityId(null);
   };
 
-  const unreadDMs = conversations.reduce((sum, c) => sum + (c.unreadCount || 0), 0);
   const pendingFriends = useFriendStore((s) => s.incomingRequests.length);
+
+  // DM bubbles in the guild bar: pinned chats always show; on top of those, the
+  // most-recent unread (unopened) chats up to the user's limit; anything unread
+  // beyond that collapses into a "+N" badge on the DM button. The conversation
+  // you're currently in stays shown until you leave it.
+  const dmMuted = (pk: string): boolean => {
+    const m = navMutes[pk];
+    if (m == null) return false;
+    if (m === -1) return true;
+    return m > Date.now();
+  };
+  const pinPos = new Map(navPinned.map((id, i) => [id, i]));
+  const pinnedDMs = conversations
+    .filter((c) => navPinned.includes(c.publicKey))
+    .sort((a, b) => (pinPos.get(a.publicKey)! - pinPos.get(b.publicKey)!));
+  const unreadDMsList = conversations
+    .filter((c) => !navPinned.includes(c.publicKey) && (c.unreadCount || 0) > 0 && !dmMuted(c.publicKey))
+    .sort((a, b) => b.lastTimestamp - a.lastTimestamp);
+  const shownUnreadDMs = unreadDMsList.slice(0, maxDmBubbles);
+  const dmOverflow = unreadDMsList.length - shownUnreadDMs.length;
+  const seenDM = new Set<string>();
+  const visibleDMs: typeof conversations = [];
+  for (const c of [...pinnedDMs, ...shownUnreadDMs]) {
+    if (!seenDM.has(c.publicKey)) { seenDM.add(c.publicKey); visibleDMs.push(c); }
+  }
+  if (dmActive && activeDMPartner && !seenDM.has(activeDMPartner)) {
+    const ac = conversations.find((c) => c.publicKey === activeDMPartner);
+    if (ac) { seenDM.add(ac.publicKey); visibleDMs.push(ac); }
+  }
 
   const handleLeaveCommunity = (id: string, name: string) => {
     // Check if the user is the owner
@@ -211,8 +255,47 @@ export default function GuildsSidebar({ activeCommunityId, onSelectCommunity, dm
           }}
         >
           DM
-          {unreadDMs > 0 && <span style={styles.badge}>{unreadDMs > 9 ? '9+' : unreadDMs}</span>}
+          {dmOverflow > 0 && <span style={styles.badge}>+{dmOverflow > 99 ? 99 : dmOverflow}</span>}
         </button>
+
+        {/* DM conversation bubbles: pinned + recent unread (capped), plus the
+            one you're currently viewing. */}
+        {visibleDMs.length > 0 && (
+          <>
+            <div style={dividerStyle} />
+            {visibleDMs.map((c) => {
+              const isActive = !!dmActive && activeDMPartner === c.publicKey;
+              const hue = parseInt((c.publicKey || '0000').slice(0, 4).replace(/[^0-9a-f]/gi, '0') || '0', 16) % 360;
+              const unread = c.unreadCount || 0;
+              const name = c.username || c.publicKey.slice(0, 8);
+              return (
+                <ContextMenu
+                  key={c.publicKey}
+                  items={chatMenu('dm', c.publicKey, {
+                    name,
+                    onBlock: () => { if (confirm(`Block ${name}? They won't be able to DM you.`)) blockUser(c.publicKey); },
+                    onDeleteChat: () => { if (confirm(`Delete conversation with ${name}? This only clears your local copy.`)) clearConversation(c.publicKey); },
+                  })}
+                >
+                  <button
+                    title={name}
+                    onClick={() => onOpenDM?.(c.publicKey, c.username)}
+                    style={{
+                      ...styles.icon,
+                      background: `hsl(${hue},35%,22%)`, color: `hsl(${hue},65%,72%)`,
+                      borderRadius: isActive ? '14px' : '50%',
+                      border: isActive ? '2px solid var(--color-accent)' : '2px solid transparent',
+                      position: 'relative' as const, fontSize: '13px',
+                    }}
+                  >
+                    {dmInitials(name)}
+                    {unread > 0 && <span style={styles.badge}>{unread > 9 ? '9+' : unread}</span>}
+                  </button>
+                </ContextMenu>
+              );
+            })}
+          </>
+        )}
 
         {/* Squads (personal + community) */}
         {mySquads.length > 0 && (

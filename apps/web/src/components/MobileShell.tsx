@@ -193,6 +193,8 @@ export default function MobileShell(props: Props): React.JSX.Element {
             onSelectCommunity={props.onSelectCommunity}
             dmActive={viewMode === 'dm'}
             onSelectDM={props.onSelectDM}
+            activeDMPartner={activeDMPartner}
+            onOpenDM={props.onOpenDM}
             friendsActive={viewMode === 'friends'}
             onSelectFriends={props.onSelectFriends}
             settingsActive={viewMode === 'settings'}

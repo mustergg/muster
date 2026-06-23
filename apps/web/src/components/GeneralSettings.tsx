@@ -22,6 +22,8 @@ export default function GeneralSettings(): React.JSX.Element {
   const setDefaultOn = useReadReceiptStore((st) => st.setDefaultOn);
   const forceMobile = useLayoutPref((st) => st.forceMobile);
   const setForceMobile = useLayoutPref((st) => st.setForceMobile);
+  const maxDmBubbles = useLayoutPref((st) => st.maxDmBubbles);
+  const setMaxDmBubbles = useLayoutPref((st) => st.setMaxDmBubbles);
   const textScale = useTextScale((st) => st.scale);
   const setTextScale = useTextScale((st) => st.setScale);
   const idleMinutes = useIdlePref((st) => st.idleMinutes);
@@ -119,6 +121,28 @@ export default function GeneralSettings(): React.JSX.Element {
             ))}
           </div>
           <div style={s.note}>Scales the whole interface — useful when text looks too small on your device.</div>
+        </div>
+
+        <div style={s.section}>
+          <div style={s.sectionTitle}>DM bubbles</div>
+          <div style={s.scaleRow}>
+            {[0, 1, 2, 3, 5, 8].map((n) => (
+              <button
+                key={n}
+                onClick={() => setMaxDmBubbles(n)}
+                style={{
+                  ...s.scaleBtn,
+                  minWidth: '44px',
+                  fontSize: '13px',
+                  borderColor: maxDmBubbles === n ? 'var(--color-accent)' : 'var(--color-border)',
+                  background: maxDmBubbles === n ? 'var(--color-accent-dim, rgba(46,117,182,0.1))' : 'var(--color-bg-secondary)',
+                }}
+              >
+                {n}
+              </button>
+            ))}
+          </div>
+          <div style={s.note}>How many unread DM conversations appear as bubbles in the guild bar. Pinned chats always show; extra unread ones collapse into a “+N” badge on the DM button.</div>
         </div>
 
         <div style={s.section}>
