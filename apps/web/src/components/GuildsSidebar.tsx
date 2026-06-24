@@ -41,20 +41,18 @@ interface Props {
   horizontal?: boolean;
 }
 
-function squadInitials(name: string): string {
-  return name.split(/\s+/).map((w) => w[0] ?? '').join('').toUpperCase().slice(0, 2) || 'SQ';
-}
-
-function dmInitials(name: string): string {
-  const parts = name.trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return '?';
+/** Avatar initials: ≥2 words → first letter of the first two words; a single
+ *  word → its first two letters. Shared by DMs, squads and communities. */
+function initials(name: string, fallback = '?'): string {
+  const parts = (name || '').trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return fallback;
   if (parts.length === 1) return parts[0]!.slice(0, 2).toUpperCase();
   return (parts[0]![0]! + parts[1]![0]!).toUpperCase();
 }
 
-function communityInitials(name: string): string {
-  return name.split(/\s+/).map((w) => w[0] ?? '').join('').toUpperCase().slice(0, 2);
-}
+function squadInitials(name: string): string { return initials(name, 'SQ'); }
+function dmInitials(name: string): string { return initials(name); }
+function communityInitials(name: string): string { return initials(name); }
 
 function communityColor(id: string): { color: string; bg: string } {
   const hue = parseInt(id.slice(0, 4), 16) % 360;
