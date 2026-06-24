@@ -19,6 +19,12 @@
  */
 import { create } from 'zustand';
 import { useChatPrefs, type NotifLevel } from './chatPrefsStore';
+import { isPermissionGranted, requestPermission, sendNotification } from '@tauri-apps/plugin-notification';
+
+/** Inside the Tauri shell (desktop WebView2 / Android WebView) the web
+ *  Notification API is unavailable or a no-op, so we route system notifications
+ *  through the Tauri notification plugin instead. */
+const IS_TAURI = typeof window !== 'undefined' && ('__TAURI_INTERNALS__' in window || '__TAURI__' in window);
 
 const BASE_TITLE = 'MusterGG';
 const LS_SOUND = 'muster-notif-sound';
@@ -99,11 +105,30 @@ function applyBadge(n: number): void {
   } catch { /* ignore */ }
 }
 
-function showSystem(title: string, body: string, sound: boolean): void {
+/** Ask for system-notification permission via the right backend. */
+async function requestSystemPermission(): Promise<boolean> {
+  if (IS_TAURI) {
+    try {
+      let granted = await isPermissionGranted();
+      if (!granted) granted = (await requestPermission()) === 'granted';
+      return granted;
+    } catch { return false; }
+  }
+  if (typeof Notification === 'undefined') return false;
+  try { return (await Notification.requestPermission()) === 'granted'; } catch { return false; }
+}
+
+function showSystem(title: string, body: string): void {
+  if (IS_TAURI) {
+    void (async () => {
+      try { if (await isPermissionGranted()) sendNotification({ title, body }); } catch { /* ignore */ }
+    })();
+    return;
+  }
   try {
     if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
     // eslint-disable-next-line no-new
-    new Notification(title, { body, tag: 'muster-msg', silent: sound, icon: '/icon.png' });
+    new Notification(title, { body, tag: 'muster-msg', silent: true, icon: '/icon.png' });
   } catch { /* ignore */ }
 }
 
@@ -126,9 +151,9 @@ export const useNotify = create<NotifyState>((set, get) => ({
   setSoundEnabled: (v) => { saveBool(LS_SOUND, v); set({ soundEnabled: v }); if (v) resumeCtx(); },
 
   setSystemEnabled: async (v) => {
-    if (v && typeof Notification !== 'undefined' && Notification.permission !== 'granted') {
-      try { const p = await Notification.requestPermission(); if (p !== 'granted') { saveBool(LS_SYSTEM, false); set({ systemEnabled: false }); return; } }
-      catch { saveBool(LS_SYSTEM, false); set({ systemEnabled: false }); return; }
+    if (v) {
+      const granted = await requestSystemPermission();
+      if (!granted) { saveBool(LS_SYSTEM, false); set({ systemEnabled: false }); return; }
     }
     saveBool(LS_SYSTEM, v);
     set({ systemEnabled: v });
@@ -150,7 +175,7 @@ export const useNotify = create<NotifyState>((set, get) => ({
       const n = st.unread + 1;
       set({ unread: n });
       applyBadge(n);
-      if (st.systemEnabled) showSystem(title, body || 'New message', st.soundEnabled);
+      if (st.systemEnabled) showSystem(title, body || 'New message');
     }
   },
 

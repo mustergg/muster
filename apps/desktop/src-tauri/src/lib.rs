@@ -24,6 +24,7 @@ pub fn run() {
     builder = builder.plugin(tauri_plugin_shell::init());
     builder = builder.plugin(tauri_plugin_process::init());
     builder = builder.plugin(tauri_plugin_deep_link::init());
+    builder = builder.plugin(tauri_plugin_notification::init());
 
     // Single instance (desktop only)
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
