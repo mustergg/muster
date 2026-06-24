@@ -13,6 +13,7 @@ import { sign as ed25519Sign, toHex, fromHex } from '@muster/crypto';
 import { encryptDM, decryptDM, isE2EEncrypted, currentInboxHashes } from '@muster/crypto/e2e';
 import { buildSealedDmFrame, openSealedDmFrame, type SealedDmAttachment } from '../lib/sealedDm';
 import { useNotify } from './notifyStore';
+import { useFriendStore } from './friendStore';
 import { mentionsUser, parseReply } from '../lib/messageFx';
 import { buildAndUploadBlob, fetchAndDecryptBlob } from '../lib/blobUpload';
 import { useChatPrefs } from './chatPrefsStore';
@@ -94,6 +95,34 @@ function scheduleDmIndexPush(): void {
     const blob = encryptDmIndex(items);
     if (blob) net.transport.send({ type: 'USER_PREFS_SET', payload: { dmIndex: blob }, timestamp: Date.now() });
   }, 1500);
+}
+
+/** A conversation name we never resolved — just a pubkey stub like "0c34997f…".
+ *  Such names propagate through the synced index, so we re-resolve them from the
+ *  friend list whenever possible. */
+function isHashName(name: string | undefined, pubkey: string): boolean {
+  if (!name) return true;
+  if (name === pubkey) return true;
+  if (name === pubkey.slice(0, 8) + '…') return true;
+  return /^[0-9a-f]{6,16}…$/i.test(name);
+}
+
+/** Upgrade any pubkey-stub conversation names using the friend list (which has
+ *  real usernames). Idempotent — only writes when something actually changes. */
+function upgradeDmNamesFromFriends(): void {
+  const friends = useFriendStore.getState().friends;
+  if (!friends.length) return;
+  const fmap = new Map(friends.map((f) => [f.publicKey, f.username]));
+  const { conversations } = useDMStore.getState();
+  let changed = false;
+  const next = conversations.map((c) => {
+    if (isHashName(c.username, c.publicKey)) {
+      const fn = fmap.get(c.publicKey);
+      if (fn && fn !== c.username) { changed = true; return { ...c, username: fn }; }
+    }
+    return c;
+  });
+  if (changed) useDMStore.setState({ conversations: next });
 }
 
 export interface DMMessage {
@@ -839,10 +868,15 @@ export const useDMStore = create<DMState>((set, get) => ({
       network.transport.send({ type: 'USER_PREFS_GET', payload: {}, timestamp: Date.now() });
     }
     const unsubConv = useDMStore.subscribe((state, prev) => {
-      if (state.conversations !== prev.conversations) scheduleDmIndexPush();
+      if (state.conversations !== prev.conversations) { scheduleDmIndexPush(); upgradeDmNamesFromFriends(); }
     });
 
-    return () => { clearInterval(inboxTimer); unsubscribe(); unsubConv(); };
+    // Resolve pubkey-stub DM names from the friend list — runs now and whenever
+    // the friend list changes (e.g. FRIEND_LIST arrives after the DM index).
+    upgradeDmNamesFromFriends();
+    const unsubFriends = useFriendStore.subscribe(() => upgradeDmNamesFromFriends());
+
+    return () => { clearInterval(inboxTimer); unsubscribe(); unsubConv(); unsubFriends(); };
   },
 }));
 
