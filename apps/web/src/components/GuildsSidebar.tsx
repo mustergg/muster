@@ -85,6 +85,23 @@ export default function GuildsSidebar({ activeCommunityId, onSelectCommunity, dm
   const [showMenu,   setShowMenu]   = useState(false);
   const [transferCommunity, setTransferCommunity] = useState<{ id: string; name: string } | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const addBtnRef = useRef<HTMLButtonElement>(null);
+  // Add-menu popover position, anchored to the + button each open. Uses fixed
+  // positioning so it escapes the guild bar's overflow clip (vertical scroll
+  // forces horizontal clipping too) and sits right next to the button.
+  const [menuPos, setMenuPos] = useState<React.CSSProperties>({});
+  const toggleAddMenu = (): void => {
+    setShowMenu((v) => {
+      const next = !v;
+      const r = addBtnRef.current?.getBoundingClientRect();
+      if (next && r) {
+        setMenuPos(horizontal
+          ? { position: 'fixed', top: Math.round(r.bottom + 8), right: Math.max(8, Math.round(window.innerWidth - r.right)) }
+          : { position: 'fixed', left: Math.round(r.right + 8), bottom: Math.max(8, Math.round(window.innerHeight - r.bottom)) });
+      }
+      return next;
+    });
+  };
 
   useEffect(() => { loadCommunities(); }, []);
   useEffect(() => {
@@ -389,8 +406,9 @@ export default function GuildsSidebar({ activeCommunityId, onSelectCommunity, dm
         {/* Add button */}
         <div ref={menuRef} style={{ position: 'relative' as const }}>
           <button
+            ref={addBtnRef}
             title={t('nav.addCommunity')}
-            onClick={() => setShowMenu((v) => !v)}
+            onClick={toggleAddMenu}
             style={{
               ...styles.icon,
               background: showMenu ? 'var(--color-accent-dim)' : 'var(--color-bg-hover)',
@@ -402,8 +420,7 @@ export default function GuildsSidebar({ activeCommunityId, onSelectCommunity, dm
             +
           </button>
           {showMenu && (
-            <div style={horizontal ? styles.menuH : styles.menu}>
-              <div style={horizontal ? styles.menuArrowH : styles.menuArrow} />
+            <div style={{ ...styles.menuBase, ...menuPos }}>
               <button style={styles.menuItem} onClick={() => { setShowCreate(true); setShowMenu(false); }}>
                 <span style={styles.menuIcon}>+</span> Create a community
               </button>
@@ -452,11 +469,8 @@ const styles = {
   dividerH: { width: '1px', height: '28px', background: 'var(--color-border)', margin: '0 2px', flexShrink: 0, alignSelf: 'center' } as React.CSSProperties,
   emptyHint: { fontSize: '9px', color: 'var(--color-text-muted)', textAlign: 'center' as const, padding: '4px', lineHeight: 1.4 } as React.CSSProperties,
   badge: { position: 'absolute' as const, bottom: '-2px', right: '-2px', background: '#E24B4A', color: '#fff', fontSize: '9px', fontWeight: 700, minWidth: '16px', height: '16px', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 4px', border: '2px solid var(--color-bg-tertiary)' } as React.CSSProperties,
-  menu: { position: 'fixed' as const, left: 'calc(var(--sidebar-guilds-w) + 8px)', bottom: '60px', background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-lg)', minWidth: '200px', zIndex: 500, boxShadow: '0 8px 24px rgba(0,0,0,0.5)', overflow: 'hidden' } as React.CSSProperties,
-  menuArrow: { position: 'absolute' as const, left: '-6px', top: '16px', width: '10px', height: '10px', background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)', borderRight: 'none', borderTop: 'none', transform: 'rotate(45deg)' } as React.CSSProperties,
-  // Horizontal top-bar variant: drop the add-menu down from the + button.
-  menuH: { position: 'absolute' as const, top: 'calc(100% + 10px)', right: 0, background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-lg)', minWidth: '200px', zIndex: 500, boxShadow: '0 8px 24px rgba(0,0,0,0.5)', overflow: 'hidden' } as React.CSSProperties,
-  menuArrowH: { position: 'absolute' as const, top: '-6px', right: '16px', width: '10px', height: '10px', background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)', borderRight: 'none', borderBottom: 'none', transform: 'rotate(45deg)' } as React.CSSProperties,
+  // Add-menu popover — positioned (fixed) at runtime next to the + button.
+  menuBase: { background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-lg)', minWidth: '200px', zIndex: 3000, boxShadow: '0 8px 24px rgba(0,0,0,0.5)', overflow: 'hidden' } as React.CSSProperties,
   menuItem: { display: 'flex', alignItems: 'center', gap: '10px', width: '100%', padding: '12px 16px', background: 'transparent', border: 'none', color: 'var(--color-text-secondary)', cursor: 'pointer', fontSize: '13px', textAlign: 'left' as const } as React.CSSProperties,
   menuIcon: { fontSize: '16px', flexShrink: 0 } as React.CSSProperties,
   menuDivider: { height: '1px', background: 'var(--color-border)' } as React.CSSProperties,
