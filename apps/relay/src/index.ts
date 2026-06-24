@@ -337,7 +337,7 @@ function handleMessage(client: RelayClient, msg: any): void {
     return;
   }
 
-  if (EMAIL_TYPES.has(msg.type)) { handleEmailMessage(client, msg, userDB, sendToClient); return; }
+  if (EMAIL_TYPES.has(msg.type)) { handleEmailMessage(client, msg, userDB, sendToClient, deliverToOwner); return; }
   if (PROFILE_TYPES.has(msg.type)) { handleProfileMessage(client, msg, userDB, sendToClient); return; }
   if (FRIEND_TYPES.has(msg.type)) { handleFriendMessage(client, msg, friendDB, userDB, sendToClient, clients); return; }
   if (POST_TYPES.has(msg.type)) { handlePostMessage(client, msg, postDB, communityDB, sendToClient, clients, channels); return; }
@@ -643,6 +643,31 @@ function pushUserStatus(publicKey: string): void {
 
 function handleDisconnect(client: RelayClient): void { for (const ch of client.channels) { channels.get(ch)?.delete(client.ws); if (channels.get(ch)?.size) broadcastPresence(ch); else channels.delete(ch); } cleanupSquadSubscriptions(client.ws, clients); cleanupVoiceParticipant(client.ws, clients); if (dmRouting && client.publicKey) dmRouting.forgetClient(client.publicKey); clients.delete(client.ws); pushUserStatus(client.publicKey); }
 function sendToClient(client: RelayClient, msg: Record<string, unknown>): void { if (client.ws.readyState === WebSocket.OPEN) client.ws.send(JSON.stringify(msg)); }
+
+/** Fallback verification delivery while no SMTP is configured: DM `content` to
+ *  the relay owner (admin) via the node bot, so they can pass codes to alpha
+ *  testers without reading the relay logs. Returns false if the owner isn't
+ *  set or isn't currently connected (caller then relies on the console log). */
+function deliverToOwner(content: string): boolean {
+  const ownerKey = nodeDB.getConfig('adminPublicKey');
+  if (!ownerKey) return false;
+  const ownerClient = [...clients.values()].find((c) => c.authenticated && c.publicKey === ownerKey);
+  if (!ownerClient) return false;
+  const ts = Date.now();
+  sendToClient(ownerClient, {
+    type: 'DM_MESSAGE',
+    payload: {
+      messageId: 'bot-verify-' + randomBytes(8).toString('hex'),
+      senderPublicKey: NODE_BOT_KEY,
+      senderUsername: NODE_BOT_USERNAME,
+      recipientPublicKey: ownerKey,
+      content,
+      timestamp: ts,
+    },
+    timestamp: ts,
+  });
+  return true;
+}
 function requireAuth(client: RelayClient): boolean { if (!client.authenticated) { sendToClient(client, { type: 'ERROR', payload: { code: 'NOT_AUTH', message: 'Authenticate first' }, timestamp: Date.now() }); return false; } return true; }
 
 setInterval(() => {

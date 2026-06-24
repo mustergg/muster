@@ -15,6 +15,23 @@ import type { RelayClient } from './types';
 // Optional: nodemailer for real email sending
 let transporter: any = null;
 
+/** Delivers verification codes to the relay owner via the node bot. Returns
+ *  false when the owner isn't reachable (caller falls back to the console). */
+type DeliverToOwner = (content: string) => boolean;
+
+/** Node-bot message handed to the owner while no SMTP exists, so they can pass
+ *  the code to the alpha tester who requested it. */
+function ownerCodeMessage(username: string, pubkey: string, code: string): string {
+  return [
+    '🔐 Verification code (no mail server)',
+    '━━━━━━━━━━━━━━━━━━━━',
+    `User:  ${username} (${pubkey.slice(0, 12)}…)`,
+    `Code:  ${code}`,
+    '',
+    'Pass this to them — they enter it in Settings → Account. Expires in 24h.',
+  ].join('\n');
+}
+
 async function initMailer(): Promise<void> {
   const host = process.env.SMTP_HOST;
   if (!host) {
@@ -72,16 +89,17 @@ export function handleEmailMessage(
   msg: any,
   userDB: UserDB,
   sendToClient: (client: RelayClient, msg: Record<string, unknown>) => void,
+  deliverToOwner: DeliverToOwner,
 ): void {
   switch (msg.type) {
     case 'REGISTER_EMAIL':
-      handleRegisterEmail(client, msg, userDB, sendToClient);
+      handleRegisterEmail(client, msg, userDB, sendToClient, deliverToOwner);
       break;
     case 'VERIFY_EMAIL':
       handleVerifyEmail(client, msg, userDB, sendToClient);
       break;
     case 'RESEND_VERIFICATION':
-      handleResendVerification(client, userDB, sendToClient);
+      handleResendVerification(client, userDB, sendToClient, deliverToOwner);
       break;
     case 'ACCOUNT_INFO_REQUEST':
       handleAccountInfoRequest(client, userDB, sendToClient);
@@ -92,6 +110,7 @@ export function handleEmailMessage(
 function handleRegisterEmail(
   client: RelayClient, msg: any, userDB: UserDB,
   sendToClient: (client: RelayClient, msg: Record<string, unknown>) => void,
+  deliverToOwner: DeliverToOwner,
 ): void {
   const { email } = msg.payload || {};
 
@@ -115,12 +134,22 @@ function handleRegisterEmail(
     return;
   }
 
-  // Send the code
+  // Send the code via email if SMTP is up; always log to console.
   sendVerificationEmail(email, result.code, client.username);
+
+  // Fallback while no SMTP: DM the code to the relay owner via the node bot.
+  const ownerNotified = !transporter && deliverToOwner(ownerCodeMessage(client.username, client.publicKey, result.code));
 
   sendToClient(client, {
     type: 'EMAIL_REGISTERED',
-    payload: { success: true, message: 'Verification code sent! Check your email (or relay console).' },
+    payload: {
+      success: true,
+      message: transporter
+        ? 'Verification code sent! Check your email.'
+        : ownerNotified
+          ? 'Verification code generated. The node owner has it — ask them for your code.'
+          : 'Verification code generated. Ask the node owner for your code (no email server yet).',
+    },
     timestamp: Date.now(),
   });
 }
@@ -170,6 +199,7 @@ function handleVerifyEmail(
 function handleResendVerification(
   client: RelayClient, userDB: UserDB,
   sendToClient: (client: RelayClient, msg: Record<string, unknown>) => void,
+  deliverToOwner: DeliverToOwner,
 ): void {
   const user = userDB.getUser(client.publicKey);
   if (!user || user.tier === 'verified') {
@@ -205,9 +235,17 @@ function handleResendVerification(
     'UPDATE users SET verificationCode = ?, verificationExpiry = ? WHERE publicKey = ?'
   ).run(code, expiry, client.publicKey);
 
+  // Fallback while no SMTP: DM the new code to the relay owner via the node bot.
+  const ownerNotified = !transporter && deliverToOwner(ownerCodeMessage(user.username, client.publicKey, code));
+
   sendToClient(client, {
     type: 'EMAIL_REGISTERED',
-    payload: { success: true, message: 'New verification code generated. Check relay console or email.' },
+    payload: {
+      success: true,
+      message: ownerNotified
+        ? 'New code generated. The node owner has it — ask them for your code.'
+        : 'New verification code generated. Ask the node owner for your code (or check the relay console).',
+    },
     timestamp: Date.now(),
   });
 }
