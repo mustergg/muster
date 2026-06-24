@@ -155,6 +155,28 @@ export default function MainLayout(): React.JSX.Element {
     return () => usePieceCacheStore.getState().shutdown();
   }, []);
 
+  // Reconnect after the app wakes (Android Doze silently kills the socket and
+  // the old reconnect only ran on mount). On resume/network-up we revalidate the
+  // socket and reconnect if it died or went stale; a watchdog keeps retrying
+  // while we're authenticated but disconnected.
+  useEffect(() => {
+    const onResume = (): void => { if (document.visibilityState === 'visible') useNetworkStore.getState().ensureConnected(); };
+    const onOnline = (): void => useNetworkStore.getState().ensureConnected();
+    document.addEventListener('visibilitychange', onResume);
+    window.addEventListener('focus', onResume);
+    window.addEventListener('online', onOnline);
+    const watchdog = setInterval(() => {
+      const ns = useNetworkStore.getState();
+      if (useAuthStore.getState().isAuthenticated && ns.status === 'disconnected') void ns.connect();
+    }, 8000);
+    return () => {
+      document.removeEventListener('visibilitychange', onResume);
+      window.removeEventListener('focus', onResume);
+      window.removeEventListener('online', onOnline);
+      clearInterval(watchdog);
+    };
+  }, []);
+
   // Set the active channel and record the open (drives last-viewed ordering and
   // the unread proxy). Pass null to clear (e.g. switching to a fresh community).
   const openChannel = (loc: ActiveLocation | null): void => {

@@ -52,6 +52,9 @@ interface NetworkState {
 
   connect: () => Promise<void>;
   disconnect: () => void;
+  /** Re-establish the connection if it died or went stale (e.g. after the phone
+   *  woke from Doze). Safe to call often — no-ops when already healthy. */
+  ensureConnected: () => void;
   onMessage: (handler: (msg: TransportMessage) => void) => () => void;
 }
 
@@ -66,6 +69,11 @@ export const useNetworkStore = create<NetworkState>((set, get) => {
   let fallbackTimeout: ReturnType<typeof setTimeout> | null = null;
   let intentionalDisconnect = false;
   let connectionGen = 0; // bump on every new connection attempt
+  let lastRecvTs = Date.now(); // last time any message arrived (liveness)
+
+  /** Treat a socket with no traffic for this long as stale (Android Doze kills
+   *  the TCP connection silently — readyState can still report OPEN). */
+  const STALE_MS = 40_000;
 
   /** Try connecting to the next available node. */
   async function tryNextNode(): Promise<void> {
@@ -108,6 +116,7 @@ export const useNetworkStore = create<NetworkState>((set, get) => {
     set({ transport, status: 'connecting', error: null, publicKey, username, peerId: publicKey, connectedNodeUrl: url });
 
     transport.on('message', (msg) => {
+      lastRecvTs = Date.now(); // liveness marker for stale-socket detection
       if (msg.type === 'AUTH_CHALLENGE') {
         set({ status: 'authenticating' });
         const challenge = (msg.payload as any).challenge as string;
@@ -283,6 +292,21 @@ export const useNetworkStore = create<NetworkState>((set, get) => {
       get().transport?.disconnect();
       useNodeDiscovery.getState().setCurrentNode(null);
       set({ status: 'disconnected', transport: null, error: null, peerCount: 0, accountInfo: null, connectedNodeUrl: '', fallbackActive: false });
+    },
+
+    ensureConnected: () => {
+      if (intentionalDisconnect) return;                 // user logged out — stay off
+      const st = get();
+      if (st.status === 'connecting' || st.status === 'authenticating') return; // in progress
+      if (st.status === 'disconnected') { void get().connect(); return; }
+      // status === 'connected': verify the socket is actually alive.
+      const live = !!st.transport?.isConnected;
+      const stale = Date.now() - lastRecvTs > STALE_MS;
+      if (!live || stale) {
+        get().disconnect();   // clean teardown (suppresses the old socket's fallback)
+        intentionalDisconnect = false;
+        void get().connect();
+      }
     },
 
     onMessage: (handler) => {
