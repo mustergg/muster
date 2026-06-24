@@ -68,6 +68,12 @@ function tryDecryptDM(content: string, senderPublicKeyHex: string, recipientPubl
 // ourselves (self-ECDH) and stored in the relay's user-prefs, so it follows us
 // across devices while the relay only ever sees ciphertext (sealed-sender
 // privacy preserved).
+/** Relay-side node bot — a pseudo-contact handled by the relay, not a real E2E
+ *  peer. Its DMs must use the legacy plaintext SEND_DM path so the relay can
+ *  read the command (sealed frames are encrypted to a real recipient key the
+ *  bot doesn't have). Mirrors NODE_BOT_KEY in apps/relay/src/adminBot.ts. */
+const NODE_BOT_KEY = '__NODE_BOT__';
+
 interface DmIndexEntry { publicKey: string; username: string; lastMessage: string; lastTimestamp: number; lastFromMe?: boolean; }
 
 function encryptDmIndex(items: DmIndexEntry[]): string | null {
@@ -292,6 +298,27 @@ export const useDMStore = create<DMState>((set, get) => ({
   sendDM: (recipientPublicKey, content) => {
     const network = useNetworkStore.getState();
     if (!network.transport?.isConnected) return;
+
+    // Node bot: relay-handled pseudo-contact — send the command in plaintext via
+    // the legacy SEND_DM path (the relay intercepts NODE_BOT_KEY and replies via
+    // DM_MESSAGE). Sealed frames can't reach it (no real recipient key).
+    if (recipientPublicKey === NODE_BOT_KEY) {
+      const messageId = uuid();
+      const timestamp = Date.now();
+      const ownPreview = content.length > 50 ? content.slice(0, 50) + '...' : content;
+      const msg: DMMessage = { messageId, content, senderPublicKey: network.publicKey, senderUsername: network.username, recipientPublicKey, timestamp, isOwn: true, encrypted: false };
+      set((state) => {
+        const convs = [...state.conversations];
+        const idx = convs.findIndex((c) => c.publicKey === recipientPublicKey);
+        if (idx >= 0) convs[idx] = { ...convs[idx]!, lastMessage: ownPreview, lastTimestamp: timestamp, lastFromMe: true };
+        else convs.unshift({ publicKey: recipientPublicKey, username: 'Node Bot', lastMessage: ownPreview, lastTimestamp: timestamp, unreadCount: 0, lastFromMe: true });
+        convs.sort((a, b) => b.lastTimestamp - a.lastTimestamp);
+        return { messages: { ...state.messages, [recipientPublicKey]: [...(state.messages[recipientPublicKey] || []), msg] }, conversations: convs };
+      });
+      dmDB.addMessage({ messageId, channel: `dm:${[network.publicKey, recipientPublicKey].sort().join(':')}`, content, senderPublicKey: network.publicKey, senderUsername: network.username, timestamp, signature: '' });
+      network.transport.send({ type: 'SEND_DM', payload: { recipientPublicKey, content, messageId, timestamp }, timestamp });
+      return;
+    }
 
     const messageId = uuid();
     const timestamp = Date.now();
